@@ -1,11 +1,24 @@
 # @kufayeka/nexa-component-ui-library — Nexa UI
 
-A themed component library for **Nexa Dashboard**: 30 form, display and feedback components in the spirit of Chakra UI. It is a normal Nexa plugin, built only on the Nexa component SDK, so it is also the example to follow when you **build your own UI library**.
+A themed component library for **Nexa Dashboard**: 30 form, display and feedback components. It is a normal Nexa plugin, built only on the Nexa component SDK, so it is also the example to follow when you **build your own UI library**.
 
 - **Form**: Button, Input, Textarea, Number Input, Password Input, Checkbox, Switch, Radio Group, Segmented Control, Select, Combobox, Slider, Tags Input, Pin Input, Rating.
 - **Display & feedback**: Text, Heading, Badge, Tag, Card, Avatar, Stat, Alert, Progress (a bar or a circle), Spinner, Skeleton, Separator, Empty State, Timeline, Fieldset.
 
 In the editor they are in the palette under **UI · Form** and **UI · Display**.
+
+## The look
+
+Nexa UI's look is based on **IBM Carbon**: sharp and clear, made a little softer (4px corners, clear focus rings, a little depth on tiles and menus). You can tell it apart by:
+
+- **fields** with a gray fill and a line along the bottom; a 2px ring when focused;
+- **buttons** with the text on the left and the icon on the right (Primary / Secondary / Tertiary / Ghost);
+- small, slightly spaced-out **labels** (12px) above the controls;
+- a **checkbox** filled with the text colour, a **green toggle**, a **content switcher** whose chosen segment is inverted;
+- **notifications** with a coloured bar on the left and a light tint behind them;
+- **IBM Plex Sans** for text and **IBM Plex Mono** for numbers and readouts (Stat, the slider's value, times).
+
+IBM Plex comes with the package (`dist/fonts`, SIL Open Font License, see `OFL-IBM-Plex.txt`). The dashboard's default theme uses the Carbon palettes (blue 60 `#0f62fe` as primary, the Carbon grays) and Carbon's White and Gray 100 as light and dark. If you want another look, change the theme (Theme tab) or install another UI-library plugin.
 
 ## Install
 
@@ -44,7 +57,12 @@ The SDK's property kit does this for every field of every component, with no cod
 A component's structure is the library's: accessible (keyboard, focus, ARIA; the Select, Combobox, Slider, Tags / Pin Input and Rating use zag.js through the SDK) and consistent. You change its look in three layers, from the most common to the most special:
 
 1. **Its props**:
-   - `variant` (solid / subtle / surface / outline / ghost / plain for a button; outline / subtle / flushed for a field…);
+   - `variant`:
+     - for a button: solid (primary) / secondary / outline (tertiary) / ghost / subtle / plain (link);
+     - for a field: filled / outline / flushed;
+     - for a checkbox, radio, segmented control or slider: neutral / brand (palette);
+     - for an alert: inline / subtle / outline / solid (high contrast);
+     - for a card: tile / accent / outline / elevated;
    - `size` (xs … xl: height, padding, font, icons);
    - `colorPalette` (any palette of the theme: primary, gray, red, green…);
    - `radius` (a radius token).

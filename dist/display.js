@@ -42,7 +42,7 @@ class TextView extends UIElement {
     tag() { return "p"; }
     render() {
         const p = this.p, clamp = num(p.lineClamp, 0);
-        const style = `font-size:${px(p.fontSize, 14)};font-weight:${num(p.fontWeight, 400)};color:${p.color || "inherit"};line-height:${num(p.lineHeight, 1.5)};text-align:${p.align || "left"};font-style:${p.italic ? "italic" : "normal"};${clamp > 0 ? "-webkit-line-clamp:" + clamp + ";" : ""}`;
+        const style = `font-size:${px(p.fontSize, 14)};font-weight:${num(p.fontWeight, 400)};letter-spacing:${this.tag() === "h" ? "0" : "0.16px"};color:${p.color || "inherit"};line-height:${num(p.lineHeight, 1.5)};text-align:${p.align || "left"};font-style:${p.italic ? "italic" : "normal"};${clamp > 0 ? "-webkit-line-clamp:" + clamp + ";" : ""}`;
         const cls = "in " + (p.truncate ? "truncate" : clamp > 0 ? "clamp" : "");
         const body = this.tag() === "h" ? html`<h2 class="${cls}" part="text" style="${style}">${p.text}</h2>` : html`<p class="${cls}" part="text" style="${style}">${p.text}</p>`;
         return html`<div class="t" part="root" style="justify-content:${JUST[p.verticalAlign] || "flex-start"}">${body}</div>`;
@@ -56,7 +56,7 @@ export const text = defineComponent({
 });
 export const heading = defineComponent({
     ...common, id: PREFIX + "heading", label: "Heading", icon: "fa fa-header", size: { w: 280, h: 40 },
-    properties: Object.assign(typeProps("Heading", "2xl", "semibold", "fg"), {
+    properties: Object.assign(typeProps("Heading", "3xl", "normal", "fg"), {
         lineHeight: { type: "number", default: "{token:lineHeights.shorter}", tokens: "lineHeights", min: 0.5, step: 0.05, group: "Style", label: "Line height" },
         fontFamily: { type: "string", default: "{token:fonts.heading}", tokens: "fonts", group: "Style", label: "Font" }
     }),
@@ -72,15 +72,23 @@ export const heading = defineComponent({
 // =================================================================================================
 const CHIP_CSS = css`
     .wrap { width: 100%; height: 100%; display: flex; align-items: center; justify-content: var(--jc, flex-start); }
-    .chip { display: inline-flex; align-items: center; gap: calc(var(--gap) * 0.6); max-width: 100%; height: calc(var(--h) * 0.6); padding: 0 calc(var(--px) * 0.5);
-        border-radius: var(--r); border: 1px solid transparent; font-weight: 500; font-size: 0.86em; white-space: nowrap; user-select: none; }
+    .chip { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; height: 24px; padding: 0 8px;
+        border-radius: var(--r); border: 1px solid transparent; font-weight: 400; font-size: var(--fs-label); letter-spacing: 0.32px; line-height: 1;
+        white-space: nowrap; user-select: none; transition: background-color var(--t) var(--ease); }
+    :host([data-size="xs"]) .chip { height: 18px; padding: 0 6px; }
+    :host([data-size="md"]) .chip { height: 32px; padding: 0 12px; font-size: var(--fs); letter-spacing: 0.16px; }
+    :host([data-size="lg"]) .chip, :host([data-size="xl"]) .chip { height: 40px; padding: 0 16px; font-size: var(--fs); letter-spacing: 0.16px; }
+    .badge .chip { font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; font-size: 11px; }
+    .chip .icon svg { width: 12px; height: 12px; }
     .chip .txt { overflow: hidden; text-overflow: ellipsis; }
     :host([data-variant="solid"]) .chip { background: var(--cp-solid); color: var(--cp-contrast); }
     :host([data-variant="subtle"]) .chip { background: var(--cp-subtle); color: var(--cp-fg); }
     :host([data-variant="surface"]) .chip { background: var(--cp-subtle); color: var(--cp-fg); border-color: var(--cp-muted); }
-    :host([data-variant="outline"]) .chip { background: transparent; color: var(--cp-fg); border-color: var(--cp-border); }
-    .close { all: unset; display: inline-flex; cursor: pointer; opacity: 0.7; border-radius: 3px; margin-right: -2px; }
-    .close:hover { opacity: 1; }
+    :host([data-variant="outline"]) .chip { background: transparent; color: var(--cp-fg); border-color: var(--cp-fg); }
+    .clickable:hover { filter: brightness(0.96); }
+    .close { all: unset; display: inline-flex; cursor: pointer; border-radius: 50%; padding: 2px; margin-right: -4px; }
+    .close:hover { background: var(--cp-muted); }
+    .close:focus-visible { outline: 2px solid var(--ring); outline-offset: 0; }
     .clickable { cursor: pointer; }
 `;
 const chipProps = (textDefault, palette) => ({
@@ -88,18 +96,18 @@ const chipProps = (textDefault, palette) => ({
     startIcon: iconProp("Icon"),
     align: ALIGN,
     variant: variantProp(["subtle", "solid", "surface", "outline"].map((v) => ({ value: v, label: v })), "subtle"),
-    size: sizeProp("sm"), colorPalette: paletteProp(palette), radius: radiusProp("sm")
+    size: sizeProp("sm"), colorPalette: paletteProp(palette), radius: radiusProp("full")
 });
 export const badge = defineComponent({
     ...common, id: PREFIX + "badge", label: "Badge", icon: "fa fa-certificate", size: { w: 90, h: 28 },
-    properties: chipProps("Badge", "gray"),
+    properties: Object.assign(chipProps("Badge", "gray"), { radius: radiusProp("sm") }),
     parts: { chip: part("The badge", "chip") },
     view: class extends UIElement {
         static styles = [BASE_CSS, CHIP_CSS];
         static palette = "gray";
         render() {
             const p = this.p;
-            return html`<div class="wrap" style="--jc:${JUST[p.align] || "flex-start"}"><span class="chip" part="chip">${icon(p.startIcon)}<span class="txt">${p.text}</span></span></div>`;
+            return html`<div class="wrap badge" style="--jc:${JUST[p.align] || "flex-start"}"><span class="chip" part="chip">${icon(p.startIcon)}<span class="txt">${p.text}</span></span></div>`;
         }
     }
 });
@@ -130,21 +138,26 @@ export const tag = defineComponent({
 // Card
 // =================================================================================================
 const CARD_CSS = css`
-    .card { width: 100%; height: 100%; display: flex; flex-direction: column; overflow: hidden; border-radius: var(--r); background: var(--panel); color: var(--fg); border: 1px solid transparent; }
-    :host([data-variant="elevated"]) .card { box-shadow: var(--nexa-shadows-md, 0 4px 6px -1px rgba(0,0,0,0.1)); }
+    .card { width: 100%; height: 100%; display: flex; flex-direction: column; overflow: hidden; border-radius: var(--r); background: var(--panel); color: var(--fg); border: 1px solid transparent;
+        transition: box-shadow var(--t) var(--ease), border-color var(--t) var(--ease); }
+    :host([data-variant="tile"]) .card { background: var(--bg-subtle); }
+    :host([data-variant="elevated"]) .card { box-shadow: var(--nexa-shadows-sm, 0 1px 2px rgba(0,0,0,0.2)); }
+    :host([data-variant="elevated"]) .card:hover { box-shadow: var(--nexa-shadows-md, 0 2px 6px rgba(0,0,0,0.3)); }
     :host([data-variant="outline"]) .card { border-color: var(--bd); }
-    :host([data-variant="subtle"]) .card { background: var(--bg-muted); }
+    :host([data-variant="accent"]) .card { background: var(--bg-subtle); box-shadow: inset 0 3px 0 0 var(--cp-solid); }
     .img { flex: 0 0 auto; width: 100%; object-fit: cover; display: block; }
-    .content { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 6px; padding: var(--pad); overflow: auto; }
-    .title { margin: 0; font-size: 1.15em; font-weight: 600; }
+    .content { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 8px; padding: var(--pad); overflow: auto; }
+    .title { margin: 0; font-size: 1.43em; line-height: 1.3; font-weight: 400; letter-spacing: 0; }
     .desc { margin: 0; color: var(--fg-muted); }
     .body { margin: 0; white-space: pre-wrap; }
-    .foot { flex: 0 0 auto; display: flex; gap: var(--gap); justify-content: flex-end; padding: 0 var(--pad) var(--pad); }
-    .act { all: unset; box-sizing: border-box; height: calc(var(--h) * 0.85); padding: 0 var(--px); border-radius: calc(var(--r) - 2px); font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; }
+    .foot { flex: 0 0 auto; display: flex; }
+    .act { all: unset; box-sizing: border-box; flex: 1 1 0; min-width: 0; height: var(--h); padding: 0 var(--px); font-weight: 500; cursor: pointer;
+        display: inline-flex; align-items: center; justify-content: space-between; gap: var(--gap); transition: background-color var(--t) var(--ease); }
+    .act:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
     .act.primary { background: var(--cp-solid); color: var(--cp-contrast); }
-    .act.primary:hover { background: color-mix(in srgb, var(--cp-solid) 86%, #000); }
-    .act.secondary { color: var(--cp-fg); border: 1px solid var(--bd); }
-    .act.secondary:hover { background: var(--bg-muted); }
+    .act.primary:hover { background: color-mix(in srgb, var(--cp-solid) 88%, #000); }
+    .act.secondary { background: var(--nexa-colors-gray-700, #393939); color: var(--nexa-colors-white, #fff); }
+    .act.secondary:hover { background: var(--nexa-colors-gray-600, #525252); }
 `;
 export const card = defineComponent({
     ...common, id: PREFIX + "card", label: "Card", icon: "fa fa-id-card-o", size: { w: 300, h: 220 },
@@ -157,9 +170,9 @@ export const card = defineComponent({
         body: { type: "text", default: "", group: "Content", label: "Body text", rows: 3 },
         primaryAction: { type: "string", default: "Open", group: "Content", label: "Primary action (a button; empty = none)" },
         secondaryAction: { type: "string", default: "", group: "Content", label: "Secondary action" },
-        variant: variantProp(["elevated", "outline", "subtle"].map((v) => ({ value: v, label: v })), "outline"),
-        size: sizeProp(), colorPalette: paletteProp(), radius: radiusProp("lg"),
-        padding: { type: "number", default: "{token:spacing.5}", tokens: "spacing", min: 0, unit: "px", group: "Style", label: "Padding" }
+        variant: variantProp([{ value: "tile", label: "Tile" }, { value: "accent", label: "Tile, a coloured top" }, { value: "outline", label: "Outline" }, { value: "elevated", label: "Elevated" }], "tile"),
+        size: sizeProp(), colorPalette: paletteProp(), radius: radiusProp("md"),
+        padding: { type: "number", default: "{token:spacing.4}", tokens: "spacing", min: 0, unit: "px", group: "Style", label: "Padding" }
     },
     events: { action: { label: "On Action (a button)", payload: { action: "string" } }, primary: { label: "On Primary Action" }, secondary: { label: "On Secondary Action" } },
     parts: { card: part("The card", "card"), title: part("Title", "title"), description: part("Description", "description"), body: part("Body", "body"), footer: part("Footer", "footer") },
@@ -168,7 +181,7 @@ export const card = defineComponent({
         act(which) { this.fire(which); this.fire("action", { action: which }); }
         render() {
             const p = this.p, src = p.image ? assetUrl(p.image) : "";
-            return html`<div class="card" part="card" style="--pad:${px(p.padding, 20)}">
+            return html`<div class="card" part="card" style="--pad:${px(p.padding, 16)}">
                 ${src ? html`<img class="img" src="${src}" alt="" style="height:${px(p.imageHeight, 120)}" loading="lazy" />` : nothing}
                 <div class="content">
                     ${p.title ? html`<h3 class="title" part="title">${p.title}</h3>` : nothing}
@@ -177,7 +190,7 @@ export const card = defineComponent({
                 </div>
                 ${p.primaryAction || p.secondaryAction ? html`<div class="foot" part="footer">
                     ${p.secondaryAction ? html`<button class="act secondary" type="button" @click="${() => this.act("secondary")}">${p.secondaryAction}</button>` : nothing}
-                    ${p.primaryAction ? html`<button class="act primary" type="button" @click="${() => this.act("primary")}">${p.primaryAction}</button>` : nothing}
+                    ${p.primaryAction ? html`<button class="act primary" type="button" @click="${() => this.act("primary")}">${p.primaryAction}${icon("arrow-right")}</button>` : nothing}
                 </div>` : nothing}
             </div>`;
         }
@@ -198,10 +211,10 @@ const AVATAR_CSS = css`
     .initials { font-size: calc(min(100cqw, 100cqh) * 0.38); line-height: 1; }
     .av .icon svg { width: calc(min(100cqw, 100cqh) * 0.5); height: calc(min(100cqw, 100cqh) * 0.5); }
     .status { position: absolute; right: 4%; bottom: 4%; width: 24%; height: 24%; border-radius: 50%; border: 2px solid var(--bg); }
-    .status.online { background: var(--nexa-colors-green-500, #22c55e); }
-    .status.offline { background: var(--nexa-colors-gray-400, #a1a1aa); }
-    .status.busy { background: var(--nexa-colors-red-500, #ef4444); }
-    .status.away { background: var(--nexa-colors-orange-400, #fb923c); }
+    .status.online { background: var(--nexa-colors-green-500, #24a148); }
+    .status.offline { background: var(--nexa-colors-gray-400, #8d8d8d); }
+    .status.busy { background: var(--nexa-colors-red-600, #da1e28); }
+    .status.away { background: var(--nexa-colors-yellow-300, #f1c21b); }
 `;
 function initialsOf(name) {
     const parts = String(name || "").trim().split(/\s+/).filter(Boolean);
@@ -251,16 +264,16 @@ export const avatar = defineComponent({
 // Stat
 // =================================================================================================
 const STAT_CSS = css`
-    .stat { width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; gap: 2px; overflow: hidden; }
-    .lbl { color: var(--fg-muted); font-size: 0.93em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .stat { width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; gap: 4px; overflow: hidden; }
+    .lbl { color: var(--fg-muted); font-size: var(--fs-label); letter-spacing: 0.32px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .row { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
-    .val { font-size: 1.9em; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .unit { color: var(--fg-muted); }
-    .help { display: flex; align-items: center; gap: 4px; font-size: 0.86em; color: var(--fg-muted); white-space: nowrap; overflow: hidden; }
-    .chg { display: inline-flex; align-items: center; gap: 2px; font-weight: 500; }
-    .chg.good { color: var(--nexa-colors-fg-success, #16a34a); }
-    .chg.bad { color: var(--nexa-colors-fg-error, #ef4444); }
-    .chg .icon svg { width: 0.95em; height: 0.95em; }
+    .val { font-family: var(--mono); font-size: 2em; font-weight: 400; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; line-height: 1.15; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .unit { color: var(--fg-muted); font-size: 0.93em; }
+    .help { display: flex; align-items: center; gap: 6px; font-size: var(--fs-label); letter-spacing: 0.32px; color: var(--fg-muted); white-space: nowrap; overflow: hidden; }
+    .chg { display: inline-flex; align-items: center; gap: 2px; font-family: var(--mono); letter-spacing: 0; }
+    .chg.good { color: var(--nexa-colors-fg-success, #198038); }
+    .chg.bad { color: var(--nexa-colors-fg-error, #da1e28); }
+    .chg .icon svg { width: 1em; height: 1em; }
     .unknown { color: var(--fg-subtle); }
 `;
 export const stat = defineComponent({
@@ -306,21 +319,24 @@ export const stat = defineComponent({
 // =================================================================================================
 // Alert
 // =================================================================================================
-const STATUS_PALETTE = { info: "blue", success: "green", warning: "orange", error: "red", neutral: "gray" };
+const STATUS_PALETTE = { info: "blue", success: "green", warning: "yellow", error: "red", neutral: "gray" };
 const STATUS_ICON = { info: "info", success: "check-circle", warning: "alert-triangle", error: "alert-circle", neutral: "info" };
 const ALERT_CSS = css`
-    .alert { width: 100%; height: 100%; display: flex; align-items: flex-start; gap: var(--gap); padding: calc(var(--px) * 0.75); border-radius: var(--r); border: 1px solid transparent; overflow: hidden; }
-    :host([data-variant="subtle"]) .alert { background: var(--cp-subtle); color: var(--fg); }
-    :host([data-variant="surface"]) .alert { background: var(--cp-subtle); color: var(--fg); border-color: var(--cp-muted); }
-    :host([data-variant="outline"]) .alert { background: transparent; color: var(--fg); border-color: var(--cp-border); }
-    :host([data-variant="solid"]) .alert { background: var(--cp-solid); color: var(--cp-contrast); }
-    .ico { color: var(--cp-solid); padding-top: 1px; }
-    :host([data-variant="solid"]) .ico { color: inherit; }
-    .txt { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+    .alert { width: 100%; height: 100%; display: flex; align-items: flex-start; gap: var(--gap); padding: 14px var(--px) 14px calc(var(--px) - 3px);
+        border-radius: var(--r); border: 1px solid transparent; overflow: hidden; color: var(--fg); position: relative; }
+    :host([data-variant="inline"]) .alert { background: var(--cp-soft); border-color: color-mix(in srgb, var(--cp-solid) 40%, transparent); border-left: 3px solid var(--cp-solid); }
+    :host([data-variant="subtle"]) .alert { background: var(--cp-subtle); padding-left: var(--px); }
+    :host([data-variant="outline"]) .alert { background: var(--bg); border-color: var(--bd); border-left: 3px solid var(--cp-solid); }
+    :host([data-variant="solid"]) .alert { background: var(--nexa-colors-gray-800, #262626); color: var(--nexa-colors-gray-50, #f4f4f4); border-left: 3px solid var(--cp-solid); }
+    :host([data-size="xs"]) .alert, :host([data-size="sm"]) .alert { padding-top: 8px; padding-bottom: 8px; }
+    .ico { color: var(--cp-solid); display: inline-flex; padding-top: 1px; }
+    .ico .icon svg { width: calc(var(--icon) + 4px); height: calc(var(--icon) + 4px); }
+    .txt { flex: 1 1 auto; min-width: 0; display: flex; flex-wrap: wrap; column-gap: 6px; row-gap: 2px; align-items: baseline; }
     .title { font-weight: 600; }
-    .desc { opacity: 0.9; white-space: pre-wrap; }
-    .close { all: unset; cursor: pointer; opacity: 0.7; display: inline-flex; }
-    .close:hover { opacity: 1; }
+    .desc { white-space: pre-wrap; }
+    .close { all: unset; cursor: pointer; display: inline-flex; padding: 2px; border-radius: 2px; }
+    .close:hover { background: color-mix(in srgb, currentColor 12%, transparent); }
+    .close:focus-visible { outline: 2px solid var(--ring); }
 `;
 export const alert = defineComponent({
     ...common, id: PREFIX + "alert", label: "Alert", icon: "fa fa-exclamation-circle", size: { w: 360, h: 72 },
@@ -330,8 +346,8 @@ export const alert = defineComponent({
         description: { type: "text", default: "Something needs your attention.", group: "Content", label: "Description", rows: 2 },
         showIcon: { type: "boolean", default: true, group: "Content", label: "Its icon" },
         closable: { type: "boolean", default: false, group: "Behaviour", label: "× to close it (On Close)" },
-        variant: variantProp(["subtle", "surface", "outline", "solid"].map((v) => ({ value: v, label: v })), "subtle"),
-        size: sizeProp(), radius: radiusProp("md"),
+        variant: variantProp([{ value: "inline", label: "Inline (a bar at the start)" }, { value: "subtle", label: "Subtle" }, { value: "outline", label: "Outline" }, { value: "solid", label: "High contrast" }], "inline"),
+        size: sizeProp(), radius: radiusProp("sm"),
         colorPalette: { ...paletteProp("auto"), options: [{ value: "auto", label: "auto (from the status)" }].concat(PALETTES.map((p) => ({ value: p, label: p }))) }
     },
     events: { close: { label: "On Close (×)" } },
@@ -360,12 +376,12 @@ export const alert = defineComponent({
 // =================================================================================================
 const PROGRESS_CSS = css`
     .pw { width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; gap: 4px; }
-    .top { display: flex; justify-content: space-between; gap: var(--gap); font-size: 0.93em; }
-    .top .lbl { color: var(--fg); font-weight: 500; }
-    .top .out { color: var(--fg-muted); font-variant-numeric: tabular-nums; }
+    .top { display: flex; justify-content: space-between; gap: var(--gap); font-size: var(--fs-label); letter-spacing: 0.32px; }
+    .top .lbl { color: var(--fg-muted); }
+    .top .out { color: var(--fg); font-family: var(--mono); font-variant-numeric: tabular-nums; letter-spacing: 0; }
     .track { position: relative; width: 100%; height: var(--thick); border-radius: var(--r); background: var(--bg-muted); overflow: hidden; }
     :host([data-variant="subtle"]) .track { background: var(--cp-subtle); }
-    .bar { position: absolute; top: 0; bottom: 0; left: 0; background: var(--cp-solid); border-radius: inherit; transition: width 0.3s ease; }
+    .bar { position: absolute; top: 0; bottom: 0; left: 0; background: var(--cp-solid); border-radius: inherit; transition: width var(--nexa-durations-moderate, 240ms) var(--ease); }
     .striped .bar { background-image: linear-gradient(45deg, rgba(255,255,255,0.2) 25%, transparent 25%, transparent 50%, rgba(255,255,255,0.2) 50%, rgba(255,255,255,0.2) 75%, transparent 75%); background-size: 1rem 1rem; }
     .animated .bar { animation: nx-ui-stripes 1s linear infinite; }
     @keyframes nx-ui-stripes { from { background-position: 1rem 0; } to { background-position: 0 0; } }
@@ -376,7 +392,7 @@ const PROGRESS_CSS = css`
     .circle .ring { stroke: var(--bg-muted); }
     .circle .arc { stroke: var(--cp-solid); transition: stroke-dashoffset 0.3s ease; }
     .circle.indeterminate svg { animation: nx-ui-spin 1s linear infinite; }
-    .circle .mid { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-weight: 600; font-variant-numeric: tabular-nums; }
+    .circle .mid { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-family: var(--mono); font-variant-numeric: tabular-nums; }
 `;
 export const progress = defineComponent({
     ...common, id: PREFIX + "progress", label: "Progress", icon: "fa fa-tasks", size: { w: 240, h: 36 },
@@ -389,11 +405,11 @@ export const progress = defineComponent({
         label: { type: "string", default: "", group: "Content", label: "Label" },
         showValue: { type: "boolean", default: true, group: "Content", label: "Show the value" },
         valueText: { type: "enum", default: "percent", group: "Content", label: "The value as", style: "segmented", options: [{ value: "percent", label: "%" }, { value: "value", label: "Value" }] },
-        thickness: { type: "number", default: 8, min: 1, unit: "px", group: "Style", label: "Thickness" },
+        thickness: { type: "number", default: 8, min: 1, unit: "px", group: "Style", label: "Thickness", help: "The bar's height; the circle's line." },
         striped: { type: "boolean", default: false, group: "Style", label: "Striped" },
         animated: { type: "boolean", default: false, group: "Style", label: "Moving stripes", visibleWhen: (p) => !!p.striped },
         variant: variantProp([{ value: "outline", label: "Outline" }, { value: "subtle", label: "Subtle" }], "outline"),
-        size: sizeProp(), colorPalette: paletteProp(), radius: radiusProp("full")
+        size: sizeProp(), colorPalette: paletteProp(), radius: radiusProp("xs")
     },
     inputs: { value: { type: "number", label: "Value (read)", help: "A tag / variable instead of the static value." } },
     parts: { track: part("The track", "track"), bar: part("The bar / arc", "bar"), label: part("Label line", "label") },
@@ -412,7 +428,7 @@ export const progress = defineComponent({
                 const t = Math.max(1, num(p.thickness, 8)), r = 50 - t / 2, c = 2 * Math.PI * r;
                 return html`<div class="circle ${ind ? "indeterminate" : ""}" part="track" role="progressbar" aria-valuemin="${min}" aria-valuemax="${max}" aria-valuenow="${aria.now}">
                     <svg viewBox="0 0 100 100">${svg`<circle class="ring" cx="50" cy="50" r="${r}" fill="none" stroke-width="${t}"></circle>
-                        <circle class="arc" part="bar" cx="50" cy="50" r="${r}" fill="none" stroke-width="${t}" stroke-linecap="round"
+                        <circle class="arc" part="bar" cx="50" cy="50" r="${r}" fill="none" stroke-width="${t}" stroke-linecap="butt"
                             stroke-dasharray="${c}" stroke-dashoffset="${ind ? c * 0.7 : c * (1 - pct / 100)}"></circle>`}</svg>
                     ${p.showValue && !ind ? html`<div class="mid">${out}</div>` : nothing}
                 </div>`;
@@ -430,7 +446,7 @@ export const progress = defineComponent({
 
 const SPINNER_CSS = css`
     .sw { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; gap: var(--gap); color: var(--fg-muted); }
-    .sp { height: min(100%, calc(var(--icon) * 2)); aspect-ratio: 1; border-radius: 50%; border: var(--t) solid var(--bg-muted); border-top-color: var(--c); animation: nx-ui-spin var(--speed) linear infinite; }
+    .sp { height: min(100%, calc(var(--icon) * 2)); aspect-ratio: 1; border-radius: 50%; border: var(--thk) solid var(--bg-muted); border-top-color: var(--c); animation: nx-ui-spin var(--speed) linear infinite; }
 `;
 export const spinnerComponent = defineComponent({
     ...common, id: PREFIX + "spinner", label: "Spinner", icon: "fa fa-spinner", size: { w: 40, h: 40 },
@@ -446,7 +462,7 @@ export const spinnerComponent = defineComponent({
         static styles = [BASE_CSS, SPINNER_CSS];
         render() {
             const p = this.p;
-            return html`<div class="sw" role="status" aria-label="${p.label || "Loading"}"><span class="sp" part="spinner" style="--t:${px(p.thickness, 3)};--c:${p.color || "currentColor"};--speed:${num(p.speed, 700)}ms"></span>${p.label ? html`<span>${p.label}</span>` : nothing}</div>`;
+            return html`<div class="sw" role="status" aria-label="${p.label || "Loading"}"><span class="sp" part="spinner" style="--thk:${px(p.thickness, 3)};--c:${p.color || "currentColor"};--speed:${num(p.speed, 700)}ms"></span>${p.label ? html`<span>${p.label}</span>` : nothing}</div>`;
         }
     }
 });
@@ -492,8 +508,8 @@ export const skeleton = defineComponent({
 const SEP_CSS = css`
     .sep { width: 100%; height: 100%; display: flex; align-items: center; gap: var(--gap); color: var(--fg-muted); }
     .sep.vertical { flex-direction: column; }
-    .line { flex: 1 1 auto; border: 0 var(--style) var(--c); border-top-width: var(--t); }
-    .sep.vertical .line { border-top-width: 0; border-left-width: var(--t); align-self: stretch; }
+    .line { flex: 1 1 auto; border: 0 var(--style) var(--c); border-top-width: var(--thk); }
+    .sep.vertical .line { border-top-width: 0; border-left-width: var(--thk); align-self: stretch; }
     .sep.vertical .line { width: 0; }
     .sep.start .line:first-child, .sep.end .line:last-child { flex: 0 0 12px; }
     .lbl { flex: 0 0 auto; font-size: 0.86em; white-space: nowrap; }
@@ -512,7 +528,7 @@ export const separator = defineComponent({
     view: class extends UIElement {
         static styles = [BASE_CSS, SEP_CSS];
         render() {
-            const p = this.p, style = `--t:${px(p.thickness, 1)};--c:${p.color || "currentColor"};--style:${p.variant || "solid"}`;
+            const p = this.p, style = `--thk:${px(p.thickness, 1)};--c:${p.color || "currentColor"};--style:${p.variant || "solid"}`;
             return html`<div class="sep ${p.orientation === "vertical" ? "vertical" : ""} ${p.label ? p.labelPosition || "center" : ""}" role="separator" aria-orientation="${p.orientation || "horizontal"}" style="${style}">
                 <span class="line" part="line"></span>${p.label ? html`<span class="lbl" part="label">${p.label}</span><span class="line" part="line"></span>` : nothing}
             </div>`;
@@ -565,7 +581,7 @@ const TIMELINE_CSS = css`
     .ct { flex: 1 1 auto; min-width: 0; padding-bottom: calc(var(--gap) * 2); }
     .row { display: flex; justify-content: space-between; gap: var(--gap); }
     .ttl { font-weight: 600; }
-    .time { color: var(--fg-subtle); font-size: 0.86em; white-space: nowrap; }
+    .time { color: var(--fg-subtle); font-size: var(--fs-label); font-family: var(--mono); white-space: nowrap; }
     .desc { color: var(--fg-muted); white-space: pre-wrap; }
 `;
 export const timeline = defineComponent({
@@ -610,7 +626,7 @@ const FIELDSET_CSS = css`
     fieldset { width: 100%; height: 100%; margin: 0; padding: calc(var(--px) * 0.75); border: 1px solid transparent; border-radius: var(--r); display: flex; flex-direction: column; gap: 4px; min-width: 0; }
     :host([data-variant="outline"]) fieldset { border-color: var(--bd); }
     :host([data-variant="subtle"]) fieldset { background: var(--bg-subtle); }
-    legend { padding: 0 6px; font-weight: 600; }
+    legend { padding: 0 6px; font-size: var(--fs-label); letter-spacing: 0.32px; color: var(--fg-muted); }
     .desc { color: var(--fg-muted); }
     .err { color: var(--err); }
 `;

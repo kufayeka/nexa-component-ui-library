@@ -52,16 +52,16 @@ withHarness({
     await ok('Button: a click fires On Click and writes its value; its palette is the theme\'s, light and dark', async () => {
         await mount('b', 'button', { text: 'Start', outputValue: TAG, clickValue: '1', variant: 'subtle' }, { width: 120, height: 40 });
         const bg = () => js(`getComputedStyle(${q('b', 'button')}).backgroundColor`);
-        assert.strictEqual(await bg(), 'rgb(219, 234, 254)', 'subtle = primary (blue) 100 in light');
+        assert.strictEqual(await bg(), 'rgb(208, 226, 255)', 'subtle = primary (blue) 100 in light');
         await clickAt(q('b', 'button'));
         const it = await item('b');
         assert.deepStrictEqual(it.events.filter((e) => e[0] === 'click'), [['click', { value: 1 }]]);
         assert.deepStrictEqual(it.writes, [['outputValue', 1]]);
         await js('NexaTest.setMode("dark")'); await calm();
-        assert.strictEqual(await bg(), 'rgb(30, 58, 138)', 'subtle = blue 900 in dark');
+        assert.strictEqual(await bg(), 'rgb(0, 29, 108)', 'subtle = blue 900 in dark');
         await js('NexaTest.setMode("light")'); await calm();
         await js(`NexaTest.setProps("b", { colorPalette: "green", variant: "solid" })`); await calm();
-        assert.strictEqual(await bg(), 'rgb(22, 163, 74)', 'green solid (600)');
+        assert.strictEqual(await bg(), 'rgb(25, 128, 56)', 'green solid (600)');
         await js(`NexaTest.setProps("b", { loading: true, loadingText: "Starting…" })`); await settle();
         assert.deepStrictEqual(await js(`[${q('b', 'button')}.disabled, ${q('b', 'button')}.textContent.trim(), !!${q('b', '.spin')}]`), [true, 'Starting…', true]);
     });
@@ -82,9 +82,9 @@ withHarness({
 
     await ok('Number Input: ± steps and writes, within min / max', async () => {
         await mount('n', 'number-input', { defaultValue: 0, min: 0, max: 2, step: 1 }, { width: 160, height: 40 });
-        await clickAt(q('n', '.stepper button'));
-        await clickAt(q('n', '.stepper button'));
-        await clickAt(q('n', '.stepper button'));
+        await clickAt(q('n', '.stepper button[aria-label=Increase]'));
+        await clickAt(q('n', '.stepper button[aria-label=Increase]'));
+        await clickAt(q('n', '.stepper button[aria-label=Increase]'));
         const ch = (await item('n')).events.filter((e) => e[0] === 'change').map((e) => e[1].value);
         assert.deepStrictEqual(ch, [1, 2], 'the third + stays at the max');
     });
@@ -172,13 +172,13 @@ withHarness({
     await ok('Text / Heading: theme tokens by default (colour, size, weight), light and dark; a binding instead', async () => {
         await mount('tx', 'text', {}, { width: 240, height: 44 });
         const cs = (name, p) => js(`getComputedStyle(${q(name, '[part~=text]')}).${p}`);
-        assert.deepStrictEqual([await cs('tx', 'color'), await cs('tx', 'fontSize'), await cs('tx', 'fontWeight')], ['rgb(9, 9, 11)', '14px', '400']);
+        assert.deepStrictEqual([await cs('tx', 'color'), await cs('tx', 'fontSize'), await cs('tx', 'fontWeight')], ['rgb(22, 22, 22)', '14px', '400']);
         await js('NexaTest.setMode("dark")'); await settle();
-        assert.strictEqual(await cs('tx', 'color'), 'rgb(250, 250, 250)', 'colors.fg in dark');
+        assert.strictEqual(await cs('tx', 'color'), 'rgb(244, 244, 244)', 'colors.fg in dark');
         await js('NexaTest.setMode("light")'); await settle();
         await mount('hd', 'heading', { text: '{title}' }, { width: 280, height: 40 });
         await js('NexaTest.setVariable("title", "Line 2 overview")'); await settle();
-        assert.deepStrictEqual([await js(`${q('hd', 'h2')}.textContent`), await cs('hd', 'fontSize'), await cs('hd', 'fontWeight')], ['Line 2 overview', '24px', '600']);
+        assert.deepStrictEqual([await js(`${q('hd', 'h2')}.textContent`), await cs('hd', 'fontSize'), await cs('hd', 'fontWeight')], ['Line 2 overview', '28px', '400']);
     });
 
     await ok('Stat: the value from a tag, formatted, its unit; the change up (good: green) / down', async () => {
@@ -206,7 +206,7 @@ withHarness({
     await ok('Alert: its status\' palette and icon; × closes it (On Close); Tag: × too; Avatar: initials, a palette from the name', async () => {
         await mount('al', 'alert', { status: 'error', closable: true }, { width: 360, height: 72 });
         assert.strictEqual(await js(`${q('al', '[part~=alert]')}.getAttribute("role")`), 'alert');
-        assert.strictEqual(await js(`getComputedStyle(${q('al', '.alert')}).backgroundColor`), 'rgb(254, 226, 226)', 'red subtle');
+        assert.strictEqual(await js(`getComputedStyle(${q('al', '.alert')}).backgroundColor`), 'rgb(255, 241, 241)', 'inline: red 50 (soft)');
         await clickAt(q('al', '.close'));
         assert.deepStrictEqual([(await item('al')).events.map((e) => e[0]), await js(`!!${q('al', '.alert')}`)], [['close'], false]);
         await mount('tg2', 'tag', { text: 'Line 2', closable: true }, { width: 120, height: 32 });

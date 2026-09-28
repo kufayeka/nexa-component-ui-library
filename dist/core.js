@@ -54,42 +54,44 @@ export const CSS_GROUP = "Custom CSS";
 export const BASE_CSS = css`
     :host {
         display: block; width: 100%; height: 100%; box-sizing: border-box; min-width: 0;
-        font-family: var(--nexa-fonts-body, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif);
-        color: var(--fg);
-        --fs: var(--nexa-fontSizes-sm, 14px); --h: 40px; --px: 16px; --gap: 8px; --icon: 16px;
-        --r: var(--nexa-radii-md, 6px);
-        --bd: var(--nexa-colors-border, #e4e4e7); --bd-strong: var(--nexa-colors-border-emphasized, #d4d4d8);
-        --bg: var(--nexa-colors-bg, #ffffff); --bg-subtle: var(--nexa-colors-bg-subtle, #fafafa); --bg-muted: var(--nexa-colors-bg-muted, #f4f4f5);
-        --fg: var(--nexa-colors-fg, #09090b); --fg-muted: var(--nexa-colors-fg-muted, #52525b); --fg-subtle: var(--nexa-colors-fg-subtle, #a1a1aa);
-        --err: var(--nexa-colors-fg-error, #ef4444); --err-bd: var(--nexa-colors-border-error, #ef4444);
-        --panel: var(--nexa-colors-bg-panel, #ffffff); --bg-emph: var(--nexa-colors-bg-emphasized, #e4e4e7);
-        --ring: var(--cp-focusRing, #3b82f6);
-        font-size: var(--fs); line-height: 1.4;
+        font-family: var(--nexa-fonts-body, "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif);
+        color: var(--fg); letter-spacing: 0.16px;
+        --fs: var(--nexa-fontSizes-sm, 14px); --fs-label: var(--nexa-fontSizes-xs, 12px);
+        --h: 40px; --px: 16px; --gap: 8px; --icon: 16px;
+        --r: var(--nexa-radii-md, 4px);
+        --ease: cubic-bezier(0.2, 0, 0.38, 0.9); --t: var(--nexa-durations-faster, 110ms);
+        --mono: var(--nexa-fonts-mono, "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace);
+        --ring: var(--cp-focusRing, #0f62fe);
+        font-size: var(--fs); line-height: 1.43;
     }
-    :host([data-size="xs"]) { --fs: var(--nexa-fontSizes-xs, 12px); --h: 28px; --px: 8px; --gap: 4px; --icon: 12px; }
+    :host([data-size="xs"]) { --fs: var(--nexa-fontSizes-xs, 12px); --h: 24px; --px: 8px; --gap: 4px; --icon: 12px; }
     :host([data-size="sm"]) { --fs: var(--nexa-fontSizes-sm, 14px); --h: 32px; --px: 12px; --gap: 6px; --icon: 14px; }
-    :host([data-size="lg"]) { --fs: var(--nexa-fontSizes-md, 16px); --h: 44px; --px: 20px; --gap: 10px; --icon: 18px; }
-    :host([data-size="xl"]) { --fs: var(--nexa-fontSizes-lg, 18px); --h: 48px; --px: 24px; --gap: 12px; --icon: 20px; }
+    :host([data-size="lg"]) { --fs: var(--nexa-fontSizes-md, 16px); --h: 48px; --px: 16px; --gap: 10px; --icon: 18px; --fs-label: var(--nexa-fontSizes-sm, 14px); }
+    :host([data-size="xl"]) { --fs: var(--nexa-fontSizes-md, 16px); --h: 64px; --px: 16px; --gap: 12px; --icon: 20px; --fs-label: var(--nexa-fontSizes-sm, 14px); }
     *, *::before, *::after { box-sizing: border-box; }
     .icon { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; }
     .icon svg { width: var(--icon); height: var(--icon); }
-    :focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
-    /* the field */
-    .field { display: flex; flex-direction: column; width: 100%; height: 100%; min-width: 0; gap: 4px; }
-    .field.left { flex-direction: row; align-items: center; gap: var(--gap); }
-    .label { flex: 0 0 auto; font-weight: 500; color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    :focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
+    .num, .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; letter-spacing: 0; }
+    /* the field (Carbon): a small tracked label over the control, a helper line under it */
+    .field { display: flex; flex-direction: column; width: 100%; height: 100%; min-width: 0; gap: 6px; }
+    .field.left { flex-direction: row; align-items: center; gap: var(--px); }
+    .label { flex: 0 0 auto; font-size: var(--fs-label); line-height: 1.33; letter-spacing: 0.32px; font-weight: 400; color: var(--fg-muted);
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .field.left .label { max-width: 40%; }
     .req { color: var(--err); margin-left: 2px; }
     .body { flex: 1 1 auto; min-height: 0; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
-    .helper { flex: 0 0 auto; font-size: 0.86em; color: var(--fg-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .helper { flex: 0 0 auto; font-size: var(--fs-label); line-height: 1.33; letter-spacing: 0.32px; color: var(--fg-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .helper.error { color: var(--err); }
-    .spin { animation: nx-ui-spin 0.8s linear infinite; }
+    .spin { animation: nx-ui-spin 0.69s linear infinite; }
     @keyframes nx-ui-spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) { * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; } }
 `;
 
 // a palette's roles on the element (--cp-solid …): the theme's CSS variables (they follow
 // the colour mode), with the current value as the fallback (a page without the theme CSS)
 const ROLES = ["solid", "contrast", "fg", "muted", "subtle", "emphasized", "focusRing", "border"];
+const SHADE_ROLES = ["50", "600", "700", "800"];
 export function applyPalette(el, name) {
     name = String(name || "primary").trim().replace(/[^A-Za-z0-9_-]/g, "") || "primary";
     const key = name + "|" + theme.mode();
@@ -99,6 +101,14 @@ export function applyPalette(el, name) {
         const v = theme.token(`colors.${name}.${r}`);
         el.style.setProperty(`--cp-${r}`, `var(--nexa-colors-${name}-${r}${v !== undefined ? ", " + v : ""})`);
     });
+    SHADE_ROLES.forEach((sh) => {
+        const v = theme.token(`colors.${name}.${sh}`);
+        el.style.setProperty(`--cp-${sh}`, `var(--nexa-colors-${name}-${sh}${v !== undefined ? ", " + v : ""})`);
+    });
+    // a notification's background: the palette's lightest in light, a layer in dark
+    const dark = theme.mode() === "dark";
+    const soft = dark ? theme.token("colors.bg.muted") : theme.token(`colors.${name}.50`);
+    el.style.setProperty("--cp-soft", dark ? `var(--nexa-colors-bg-muted, ${soft})` : `var(--nexa-colors-${name}-50${soft !== undefined ? ", " + soft : ""})`);
 }
 
 // the semantic colours on the element: the theme's CSS variables, with their value in the
@@ -117,6 +127,23 @@ export function applySemantic(el) {
         el.style.setProperty(v, `var(--nexa-${path.replace(/\./g, "-")}${val !== undefined ? ", " + val : ""})`);
     });
 }
+
+// IBM Plex, shipped with the library (dist/fonts, SIL OFL): declared once on the page (a
+// shadow root takes the page's fonts); the theme's fonts name it first.
+let fontsIn = false;
+export function ensureFonts() {
+    if (fontsIn || typeof document === "undefined" || !document.head) return;
+    fontsIn = true;
+    const base = new URL("./fonts/", import.meta.url).href;
+    const face = (family, weight, file) => `@font-face { font-family: "${family}"; font-style: normal; font-weight: ${weight}; font-display: swap; src: url("${base}${file}") format("woff2"); }`;
+    const st = document.createElement("style");
+    st.id = "nexa-ui-fonts";
+    st.textContent = [face("IBM Plex Sans", 400, "ibm-plex-sans-latin-400-normal.woff2"), face("IBM Plex Sans", 500, "ibm-plex-sans-latin-500-normal.woff2"),
+        face("IBM Plex Sans", 600, "ibm-plex-sans-latin-600-normal.woff2"), face("IBM Plex Mono", 400, "ibm-plex-mono-latin-400-normal.woff2"),
+        face("IBM Plex Mono", 500, "ibm-plex-mono-latin-500-normal.woff2")].join("\n");
+    document.head.appendChild(st);
+}
+ensureFonts();
 
 /** A view of this library: size / variant as host attributes, its palette as CSS variables, its radius. */
 export class UIElement extends NexaElement {
