@@ -1,0 +1,5 @@
+// Nexa UI — a themed component library for Nexa Dashboard, as a Nexa plugin.
+// Each module defines its components with the SDK's defineComponent; this entry only
+// loads them (the plugin registers this one module: widgets/ui-library-plugin.js).
+import "./form.js";
+import "./display.js";
