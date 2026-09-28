@@ -1,11 +1,22 @@
 # @kufayeka/nexa-component-ui-library — Nexa UI
 
-A themed component library for **Nexa Dashboard**: 30 form, display and feedback components. It is a normal Nexa plugin, built only on the Nexa component SDK, so it is also the example to follow when you **build your own UI library**.
+A themed component library for **Nexa Dashboard**: 31 form, display, feedback and layout components. It is a normal Nexa plugin, built only on the Nexa component SDK, so it is also the example to follow when you **build your own UI library**.
 
 - **Form**: Button, Input, Textarea, Number Input, Password Input, Checkbox, Switch, Radio Group, Segmented Control, Select, Combobox, Slider, Tags Input, Pin Input, Rating.
 - **Display & feedback**: Text, Heading, Badge, Tag, Card, Avatar, Stat, Alert, Progress (a bar or a circle), Spinner, Skeleton, Separator, Empty State, Timeline, Fieldset.
 
-In the editor they are in the palette under **UI · Form** and **UI · Display**.
+- **Layout**: Tabs — each tab has a panel you drop components into (the SDK's *slots*).
+
+In the editor they are in the palette under **UI · Form**, **UI · Display** and **UI · Layout**.
+
+### Tabs
+
+- Each tab (Content → Tabs: value, label, icon, disabled) has its own **panel**, a frame of the page. Click a tab header on the canvas to show its panel, then drop components into it. Double click the panel for its auto layout, padding and fill.
+- **Value** is the value of the tab shown. Bind it (a variable, a tag) and it works both ways: the binding picks the tab, and a click writes the new value. **On Change** fires when the user switches tab.
+- Logic actions: **Show a tab** (`value`), **Next tab**, **Previous tab**.
+- Keyboard: ← → (↑ ↓ when the tabs are on the left), Home, End.
+- Variants: Line (Carbon), Contained (Carbon), Pills. Tabs on the top or on the left; *Fill the width* makes all tabs the same width.
+- A tab's value names its panel. If you rename a value, that tab gets a new, empty panel. The old panel is kept but hidden until the value comes back.
 
 ## The look
 

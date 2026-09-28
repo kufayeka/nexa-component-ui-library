@@ -16,7 +16,8 @@ async function ok(label, fn) { await fn(); passed++; console.log('✔ ' + label)
 
 const P = 'nexa-ui-';
 const ALL = ['button', 'input', 'textarea', 'number-input', 'password-input', 'checkbox', 'switch', 'radio-group', 'segmented', 'select', 'combobox', 'slider', 'tags-input', 'pin-input', 'rating',
-    'text', 'heading', 'badge', 'tag', 'card', 'avatar', 'stat', 'alert', 'progress', 'spinner', 'skeleton', 'separator', 'empty-state', 'timeline', 'fieldset'];
+    'text', 'heading', 'badge', 'tag', 'card', 'avatar', 'stat', 'alert', 'progress', 'spinner', 'skeleton', 'separator', 'empty-state', 'timeline', 'fieldset',
+    'tabs'];
 const TAG = '{sparkplug:Plant::Line1::Mixer::Speed}';
 
 withHarness({
@@ -41,9 +42,9 @@ withHarness({
         await settle();
     };
 
-    await ok('all 30 components register (UI · Form / UI · Display), each mounts and draws', async () => {
+    await ok('all 31 components register (UI · Form / Display / Layout), each mounts and draws', async () => {
         const reg = await js(`${JSON.stringify(ALL)}.map(function (id) { var d = NEXA.getComponent("${P}" + id); return d ? d.category : "MISSING " + id; })`);
-        assert.deepStrictEqual(reg.filter((c) => c !== 'UI · Form' && c !== 'UI · Display'), []);
+        assert.deepStrictEqual(reg.filter((c) => c !== 'UI · Form' && c !== 'UI · Display' && c !== 'UI · Layout'), []);
         for (const id of ALL) await mount('all-' + id, id, {}, { width: 320, height: 120 });
         const empty = await js(`${JSON.stringify(ALL)}.filter(function (id) { var r = NexaTest.wc("all-" + id).renderRoot; return !r || !r.innerHTML || r.innerHTML.replace(/<!--[^]*?-->/g, "").trim() === ""; })`);
         assert.deepStrictEqual(empty, []);
@@ -223,6 +224,39 @@ withHarness({
         await mount('cd', 'card', { secondaryAction: 'Later' }, { width: 300, height: 220 });
         await clickAt(q('cd', '.act.primary'));
         assert.deepStrictEqual((await item('cd')).events, [['primary', {}], ['action', { action: 'primary' }]]);
+    });
+
+    await ok('Tabs: a panel per tab (a <slot> each: what is put in it shows with its tab); click / arrows choose, written two-way; its actions', async () => {
+        await mount('tb', 'tabs', { inputValue: TAG }, { width: 420, height: 240 });
+        await js(`NexaTest.setTag("tb", "trends")`); await settle();
+        const state = () => js(`(function () { var r = ${root('tb')}; var s = r.querySelector("slot");
+            return { sel: Array.from(r.querySelectorAll(".tab")).filter(function (t) { return t.getAttribute("aria-selected") === "true"; }).map(function (t) { return t.dataset.value; }),
+                slot: s ? s.name : null, shown: Array.from(NexaTest.wc("tb").children).filter(function (c) { return c.getClientRects().length > 0; }).map(function (c) { return c.slot; }) }; })()`);
+        // the page puts each panel's frame in its element, as a light-DOM child with slot="<value>"
+        await js(`(function () { var wc = NexaTest.wc("tb"); ["overview", "trends", "alarms"].forEach(function (v) { var d = document.createElement("div"); d.slot = v; d.style.cssText = "position:absolute;inset:0"; d.textContent = v; wc.appendChild(d); }); return 1; })()`);
+        await settle();
+        assert.deepStrictEqual(await state(), { sel: ['trends'], slot: 'trends', shown: ['trends'] }, 'the bound value picks the tab');
+        await clickAt(q('tb', '.tab[data-value="alarms"]'));
+        assert.deepStrictEqual(await state(), { sel: ['alarms'], slot: 'alarms', shown: ['alarms'] });
+        assert.deepStrictEqual((await item('tb')).writes, [['inputValue', 'alarms']], 'written back (two-way)');
+        await js(`NexaTest.setTag("tb", "alarms")`); await settle();
+        await key('ArrowRight'); await settle();
+        assert.deepStrictEqual((await state()).sel, ['overview'], '→ from the last: the first (focus on the tab)');
+        await js(`NexaTest.setTag("tb", "overview")`); await settle();
+        await key('End'); await settle();
+        assert.deepStrictEqual((await state()).sel, ['alarms']);
+        await js(`NexaTest.setTag("tb", "alarms")`); await settle();
+        const panelBox = await js(`(function () { var p = ${q('tb', '.panel')}.getBoundingClientRect(), c = Array.from(NexaTest.wc("tb").children).filter(function (c) { return c.slot === "alarms"; })[0].getBoundingClientRect();
+            return [Math.round(c.width) === Math.round(p.width), Math.round(c.height) === Math.round(p.height), p.height > 150]; })()`);
+        assert.deepStrictEqual(panelBox, [true, true, true], 'the slot frame fills the panel');
+        // unbound: its own value; the actions (Logic)
+        await mount('tb2', 'tabs', { tabs: [{ value: 'a', label: 'A' }, { value: 'b', label: 'B', disabled: true }, { value: 'c', label: 'C' }], defaultValue: 'a', variant: 'contained' }, { width: 300, height: 200 });
+        await js('NexaTest.wc("tb2").next()'); await settle();
+        assert.strictEqual(await js(`${q('tb2', '.tab[aria-selected=true]')}.dataset.value`), 'c', 'next skips the disabled tab');
+        await js('NexaTest.wc("tb2").select({ value: "a" })'); await settle();
+        assert.deepStrictEqual((await item('tb2')).events.map((e) => e[1].value), ['c', 'a']);
+        assert.deepStrictEqual(await js('NEXA.getComponent("nexa-ui-tabs").slotsOf({ tabs: [{ value: "x", label: "X" }, { label: "Y" }, "Z"] })'),
+            [{ name: 'x', label: 'X' }, { name: 'Y', label: 'Y' }, { name: 'Z', label: 'Z' }], 'its slots: one per tab');
     });
 
     await ok('the inspector: every plain prop takes a binding (⛓); colours and sizes take theme tokens (◆), a token shows as a chip', async () => {

@@ -3,3 +3,4 @@
 // loads them (the plugin registers this one module: widgets/ui-library-plugin.js).
 import "./form.js";
 import "./display.js";
+import "./containers.js";
