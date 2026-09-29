@@ -228,6 +228,7 @@ export const numberInput = defineComponent({
     ...common, ...textIO,
     id: PREFIX + "number-input", label: "Number Input", icon: "fa fa-sort-numeric-asc", size: { w: 160, h: 40 },
     properties: textProps("float", {
+        decimals: { type: "number", default: -1, min: -1, max: 10, step: 1, group: "Number Format", label: "Decimals", help: "Shown and written with this many decimals. -1 = as the value comes (no rounding)." },
         step: { type: "number", default: 1, min: 0, group: "Behaviour", label: "Step (± buttons, arrow keys)" },
         stepper: { type: "boolean", default: true, group: "Display", label: "± buttons" }
     }),
@@ -513,7 +514,8 @@ export const select = defineComponent({
                 multiple: !!p.multiple, disabled: !!p.disabled || this.isEditor, closeOnSelect: !p.multiple,
                 positioning: { sameWidth: true, placement: "bottom-start", strategy: "fixed" },
                 onValueChange: (d) => this.vs.set(p.multiple ? d.value : (d.value[0] === undefined ? "" : d.value[0])),
-                onOpenChange: (d) => this.fire(d.open ? "open" : "close")
+                // its menu above what comes after it; On Open / On Close
+                onOpenChange: (d) => { this.lift(d.open); this.fire(d.open ? "open" : "close"); }
             };
         });
         render() {
@@ -548,27 +550,43 @@ export const combobox = defineComponent({
         static styles = [BASE_CSS, BOX_CSS, MENU_CSS];
         vs = new ValueState(this, { coerce: (v) => (v === null || v === undefined ? "" : String(v)) });
         query = "";
+        typing = false; // the text is what the user types, not the value's label
         filtered() {
-            const q = this.query.trim().toLowerCase(), all = optionsOf(this);
+            const q = this.typing ? this.query.trim().toLowerCase() : "", all = optionsOf(this);
             return q ? all.filter((o) => o.label.toLowerCase().indexOf(q) !== -1) : all;
         }
+        /** The text shown for the value (a tag, a variable, a pick): its option's label, else the value itself. */
+        labelOf(v) {
+            if (v === null || v === undefined || v === "") return "";
+            const o = optionsOf(this).find((x) => String(x.value) === String(v));
+            return o ? String(o.label) : String(v);
+        }
+        stopTyping() { if (this.typing || this.query) { this.typing = false; this.query = ""; this.requestUpdate(); } }
         cb = new ZagController(this, zag.combobox, () => {
             const p = this.p, v = this.vs.value;
             return {
                 collection: collectionFor(this, zag.combobox, this.filtered()),
                 value: v === "" || v === null ? [] : [v],
+                // controlled: a value from outside (a tag) shows its label, not an empty box
+                inputValue: this.typing ? this.query : this.labelOf(v),
                 disabled: !!p.disabled || this.isEditor, allowCustomValue: !!p.allowCustomValue, openOnClick: p.openOnClick !== false,
                 positioning: { sameWidth: true, placement: "bottom-start", strategy: "fixed" },
-                onInputValueChange: (d) => { this.query = d.inputValue; this.fire("input", { text: d.inputValue }); this.requestUpdate(); },
-                onValueChange: (d) => { if (d.value[0] !== undefined) this.vs.set(d.value[0]); }
+                onInputValueChange: (d) => {
+                    if (!this.typing && d.inputValue === this.labelOf(this.vs.value)) return; // zag echoing the label
+                    this.query = d.inputValue; this.typing = true;
+                    this.fire("input", { text: d.inputValue }); this.requestUpdate();
+                },
+                onValueChange: (d) => { this.stopTyping(); if (d.value[0] !== undefined) this.vs.set(d.value[0]); },
+                onOpenChange: (d) => { this.lift(d.open); if (!d.open) this.stopTyping(); }
             };
         });
         render() {
             const api = this.cb.api, p = this.p;
             const box = html`<div ${spread(api.getRootProps())} style="flex:1 1 auto;min-height:0;display:flex;flex-direction:column">
                 <div ${spread(api.getControlProps())} class="box" part="box" aria-disabled="${p.disabled ? "true" : "false"}">
-                    <input ${spread(api.getInputProps())} part="control" placeholder="${p.placeholder || ""}"
-                        @keydown="${(e) => { if (e.key === "Enter" && p.allowCustomValue && !api.highlightedValue) this.vs.set(e.target.value); }}" />
+                    <input ${spread(api.getInputProps())} part="control" placeholder="${this.vs.unknown ? "???" : (p.placeholder || "")}"
+                        @keydown="${(e) => { if (e.key === "Enter" && p.allowCustomValue && !api.highlightedValue) { this.stopTyping(); this.vs.set(e.target.value); } }}"
+                        @blur="${() => { if (!p.allowCustomValue) this.stopTyping(); }}" />
                     <button ${spread(api.getTriggerProps())} class="tool chev">${icon("chevron-down")}</button>
                 </div>
                 ${menuList(api, this.filtered(), "Nothing matches")}
@@ -704,7 +722,11 @@ export const tagsInput = defineComponent({
     view: class extends UIElement {
         static styles = [BASE_CSS, BOX_CSS, TAGS_CSS];
         static palette = "gray";
-        vs = new ValueState(this, { coerce: toArray });
+        // written as the tag holds it: JSON text stays JSON, comma text stays commas, an array an array
+        vs = new ValueState(this, { coerce: toArray, toWrite: (arr, tag) => {
+            if (typeof tag === "string") return tag.trim().charAt(0) === "[" ? JSON.stringify(arr) : arr.join(",");
+            return arr;
+        } });
         tg = new ZagController(this, zag.tagsInput, () => {
             const p = this.p;
             return {

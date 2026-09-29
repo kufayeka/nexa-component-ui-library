@@ -184,15 +184,18 @@ export const VALUE_IO = {
 export class ValueState {
     constructor(host, opts) {
         this.host = host;
-        this.opts = Object.assign({ input: "value", output: "value", initial: "defaultValue", coerce: (v) => v, same: (a, b) => JSON.stringify(a) === JSON.stringify(b) }, opts || {});
+        // toWrite(v, tagValue): what is written for the value v (a tag of text keeps its format)
+        this.opts = Object.assign({ input: "value", output: "value", initial: "defaultValue", coerce: (v) => v, same: (a, b) => JSON.stringify(a) === JSON.stringify(b), toWrite: null, confirmMs: 3000 }, opts || {});
         this.local = undefined;
         this.pending = undefined;
+        this.timer = null;
         host.addController(this);
     }
+    hostDisconnected() { clearTimeout(this.timer); this.timer = null; }
     hostUpdate() {
         // the binding now reports the value written: no longer pending
         const st = this.host.status(this.opts.input);
-        if (this.pending !== undefined && st.bound && this.opts.same(this.opts.coerce(this.host.in[this.opts.input]), this.pending)) this.pending = undefined;
+        if (this.pending !== undefined && st.bound && this.opts.same(this.opts.coerce(this.host.in[this.opts.input]), this.pending)) { this.pending = undefined; clearTimeout(this.timer); }
     }
     get bound() { return this.host.status(this.opts.input).bound; }
     get value() {
@@ -211,8 +214,15 @@ export class ValueState {
         if (bound) this.pending = v; else this.local = v;
         host.requestUpdate();
         host.emit("change", Object.assign({ value: v }, payload || {}));
-        if (!host.out.canWrite(this.opts.output)) return;
-        host.out.write(this.opts.output, v).catch((e) => {
+        if (!host.out.canWrite(this.opts.output)) { if (bound) this.pending = undefined; return; }
+        const out = this.opts.toWrite ? this.opts.toWrite(v, bound ? host.in[this.opts.input] : undefined) : v;
+        clearTimeout(this.timer);
+        host.out.write(this.opts.output, out).then(() => {
+            // written (acked), but the tag did not report the new value: after a while it
+            // shows the tag's real value again (never a value the device did not take)
+            if (this.pending === undefined) return;
+            this.timer = setTimeout(() => { if (this.pending === v) { this.pending = undefined; host.requestUpdate(); } }, this.opts.confirmMs);
+        }, (e) => {
             if (this.pending === v) this.pending = undefined;
             host.requestUpdate();
             host.emit("writeError", { value: v, error: e && e.message ? e.message : String(e) });

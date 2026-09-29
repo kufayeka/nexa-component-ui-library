@@ -150,7 +150,19 @@ export const chip = defineComponent({
 
 ```
 node test/browser.test.js      # headless Chrome; build the dashboard first (npm run build there)
+node test/tags-e2e.test.js     # tags end to end (~1 min): a real Node-RED, MQTT broker and Sparkplug edge
 ```
+
+`tags-e2e` starts its own Node-RED in the temp folder on ports 1899 / 1898 and an MQTT broker (aedes) on 1893. It never touches your `data/`. A simulated Sparkplug edge answers each write like a PLC: it applies it and reports it back.
+
+It checks every component that reads or writes a tag, both on the screen and inside a Tabs panel:
+- the tag's value is shown;
+- a change at the device shows;
+- the user's input is written with the right value and format (a tag holding JSON text gets JSON text back);
+- the echo is shown;
+- when the device dies, the value shows `???`, and it comes back on rebirth.
+
+**Run it after any change to a component's tags.**
 
 It covers:
 

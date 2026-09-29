@@ -4,7 +4,8 @@
   "description": "Nexa UI: a themed component library for Nexa Dashboard (form controls, display and feedback), built on the Nexa component SDK — design tokens, light / dark, every property bindable, responsive and themeable.",
   "main": "widgets/ui-library-plugin.js",
   "scripts": {
-    "test": "node test/browser.test.js"
+    "test": "node test/browser.test.js",
+    "test:tags": "node test/tags-e2e.test.js"
   },
   "node-red": {
     "version": ">=4.0.0",
@@ -12,5 +13,12 @@
       "kufayeka-nexa-component-ui-library": "widgets/ui-library-plugin.js"
     }
   },
-  "keywords": ["node-red", "node-red-plugin", "kufayeka", "nexa", "ui", "components"]
+  "keywords": [
+    "node-red",
+    "node-red-plugin",
+    "kufayeka",
+    "nexa",
+    "ui",
+    "components"
+  ]
 }
