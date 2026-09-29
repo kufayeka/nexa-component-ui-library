@@ -4,3 +4,4 @@
 import "./form.js";
 import "./display.js";
 import "./containers.js";
+import "./embed.js";

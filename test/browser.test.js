@@ -17,11 +17,11 @@ async function ok(label, fn) { await fn(); passed++; console.log('✔ ' + label)
 const P = 'nexa-ui-';
 const ALL = ['button', 'input', 'textarea', 'number-input', 'password-input', 'checkbox', 'switch', 'radio-group', 'segmented', 'select', 'combobox', 'slider', 'tags-input', 'pin-input', 'rating',
     'text', 'heading', 'badge', 'tag', 'card', 'avatar', 'stat', 'alert', 'progress', 'spinner', 'skeleton', 'separator', 'empty-state', 'timeline', 'fieldset',
-    'tabs'];
+    'tabs', 'iframe'];
 const TAG = '{sparkplug:Plant::Line1::Mixer::Speed}';
 
 withHarness({
-    mounts: { '/nexa-component-ui-library/vendor': path.join(__dirname, '..', 'dist') },
+    mounts: { '/nexa-component-ui-library/vendor': path.join(__dirname, '..', 'dist'), '/fx': path.join(__dirname, 'fixtures') },
     modules: ['/nexa-component-ui-library/vendor/ui-library.js']
 }, async ({ js, type, key, logs, send }) => {
     const settle = () => js('NexaTest.settle()');
@@ -42,9 +42,9 @@ withHarness({
         await settle();
     };
 
-    await ok('all 31 components register (UI · Form / Display / Layout), each mounts and draws', async () => {
+    await ok('all 32 components register (UI · Form / Display / Layout / Embed), each mounts and draws', async () => {
         const reg = await js(`${JSON.stringify(ALL)}.map(function (id) { var d = NEXA.getComponent("${P}" + id); return d ? d.category : "MISSING " + id; })`);
-        assert.deepStrictEqual(reg.filter((c) => c !== 'UI · Form' && c !== 'UI · Display' && c !== 'UI · Layout'), []);
+        assert.deepStrictEqual(reg.filter((c) => c !== 'UI · Form' && c !== 'UI · Display' && c !== 'UI · Layout' && c !== 'UI · Embed'), []);
         for (const id of ALL) await mount('all-' + id, id, {}, { width: 320, height: 120 });
         const empty = await js(`${JSON.stringify(ALL)}.filter(function (id) { var r = NexaTest.wc("all-" + id).renderRoot; return !r || !r.innerHTML || r.innerHTML.replace(/<!--[^]*?-->/g, "").trim() === ""; })`);
         assert.deepStrictEqual(empty, []);
@@ -257,6 +257,52 @@ withHarness({
         assert.deepStrictEqual((await item('tb2')).events.map((e) => e[1].value), ['c', 'a']);
         assert.deepStrictEqual(await js('NEXA.getComponent("nexa-ui-tabs").slotsOf({ tabs: [{ value: "x", label: "X" }, { label: "Y" }, "Z"] })'),
             [{ name: 'x', label: 'X' }, { name: 'Y', label: 'Y' }, { name: 'Z', label: 'Z' }], 'its slots: one per tab');
+    });
+
+    await ok('Iframe: loads its URL + parameters (eager, sandbox, allow…); On Load / On Message; Send a message, Set parameters, Reload, Open URL; allowed origins; Grafana', async () => {
+        await mount('ifr', 'iframe', { src: '/fx/embed-child.html', params: [{ key: 'line', value: '2', enabled: true }, { key: 'off', value: 'x', enabled: false }], loading: 'eager' }, { width: 400, height: 200 });
+        const events = async (name) => (await item('ifr')).events.filter((e) => e[0] === name).map((e) => e[1]);
+        const until = async (fn, ms = 3000) => { const t0 = Date.now(); for (;;) { const v = await fn(); if (v) return v; if (Date.now() - t0 > ms) return v; await js('new Promise(function (r) { setTimeout(r, 50); })'); } };
+        await until(async () => (await events('load')).length === 1);
+        const loads = await events('load');
+        assert.deepStrictEqual([loads.length, /\/fx\/embed-child\.html\?line=2$/.test(loads[0].url), loads[0].count], [1, true, 1], JSON.stringify(loads));
+        const origin = await js('location.origin');
+        await until(async () => (await events('message')).length === 1);
+        assert.deepStrictEqual(await events('message'), [{ data: { hello: '?line=2' }, origin }]);
+        const attrs = await js(`(function () { var f = ${q('ifr', 'iframe')}; return [f.getAttribute("loading"), f.getAttribute("allow"), f.hasAttribute("sandbox"), f.getAttribute("referrerpolicy"), !!${q('ifr', '.veil')}]; })()`);
+        assert.deepStrictEqual(attrs, ['eager', 'fullscreen', false, 'strict-origin-when-cross-origin', false], 'loaded: no Loading veil');
+        await js('NexaTest.setProps("ifr", { sandbox: true, sbForms: true })'); await settle();
+        assert.strictEqual(await js(`${q('ifr', 'iframe')}.getAttribute("sandbox")`), 'allow-scripts allow-same-origin allow-forms');
+        await js('NexaTest.setProps("ifr", { sandbox: false })'); await settle();
+        // Send a message: the page echoes it
+        await js('NexaTest.wc("ifr").postMessage({ data: { ping: 1 } })');
+        await until(async () => (await events('message')).some((m) => m.data && m.data.echo));
+        assert.deepStrictEqual((await events('message')).pop().data, { echo: { ping: 1 } });
+        // Set parameters: loaded again with them
+        await js('NexaTest.wc("ifr").setParams({ line: 3, shift: "B" })'); await settle();
+        await until(async () => (await events('load')).length >= 2);
+        assert.ok(/line=3&shift=B$/.test((await events('load')).pop().url), 'the new parameters');
+        // Reload, Open URL
+        const n = (await events('load')).length;
+        await js('NexaTest.wc("ifr").reload()');
+        await until(async () => (await events('load')).length > n);
+        assert.strictEqual((await events('load')).length, n + 1, 'reloaded');
+        await js('NexaTest.wc("ifr").navigate({ url: "/fx/embed-child.html?other=1" })'); await settle();
+        await until(async () => /other=1$/.test(((await events('load')).pop() || {}).url || ''));
+        assert.ok(/other=1$/.test((await events('load')).pop().url));
+        // only allowed origins: from another origin, nothing
+        await js('NexaTest.setProps("ifr", { allowOrigins: "https://grafana.example" })'); await settle();
+        const before = (await events('message')).length;
+        await js('NexaTest.wc("ifr").postMessage({ data: "x" })'); await js('new Promise(function (r) { setTimeout(r, 300); })');
+        assert.strictEqual((await events('message')).length, before, 'a message from a not allowed origin is ignored');
+        // Grafana: kiosk, the theme with the colour mode, time range, refresh, variables
+        const g = await js(`import("/nexa-component-ui-library/vendor/embed.js").then(function (m) { var p = { src: "https://g.example/d/abc/plant?orgId=1", preset: "grafana", gKiosk: "full", gTheme: "auto", gFrom: "now-1h", gTo: "now", gRefresh: "10s", gVars: [{ name: "line", value: "2" }], params: [{ key: "viewPanel", value: "4" }] };
+            return [m.buildEmbedUrl(p, {}, "dark"), m.buildEmbedUrl(Object.assign({}, p, { gKiosk: "tv" }), {}, "light")]; })`);
+        assert.deepStrictEqual(g, ['https://g.example/d/abc/plant?orgId=1&kiosk=&theme=dark&from=now-1h&to=now&refresh=10s&var-line=2&viewPanel=4',
+            'https://g.example/d/abc/plant?orgId=1&kiosk=tv&theme=light&from=now-1h&to=now&refresh=10s&var-line=2&viewPanel=4']);
+        // lazy by default; "Loading…" until it loads
+        await mount('ifr2', 'iframe', { src: '/fx/embed-child.html' }, { width: 300, height: 150 });
+        assert.strictEqual(await js(`${q('ifr2', 'iframe')}.getAttribute("loading")`), 'lazy');
     });
 
     await ok('the inspector: every plain prop takes a binding (⛓); colours and sizes take theme tokens (◆), a token shows as a chip', async () => {

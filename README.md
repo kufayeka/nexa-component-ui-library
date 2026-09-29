@@ -6,8 +6,55 @@ A themed component library for **Nexa Dashboard**: 31 form, display, feedback an
 - **Display & feedback**: Text, Heading, Badge, Tag, Card, Avatar, Stat, Alert, Progress (a bar or a circle), Spinner, Skeleton, Separator, Empty State, Timeline, Fieldset.
 
 - **Layout**: Tabs — each tab has a panel you drop components into (the SDK's *slots*).
+- **Embed**: Iframe — another web page (Grafana, a camera, a report), with Logic both ways.
 
 In the editor they are in the palette under **UI · Form**, **UI · Display** and **UI · Layout**.
+
+### Iframe
+
+**Content**
+- URL, plus **URL parameters** (a list; each value can be bound, e.g. `{line}` or a tag). An empty value leaves the URL's own value alone.
+- Or **HTML instead of a URL** (`srcdoc`).
+- Title (screen readers) and name.
+
+**Grafana preset** (the URL parameters Grafana understands)
+- Kiosk mode: off / TV / full.
+- Theme: *follow the app's colour mode*, light, dark, or Grafana's own.
+- From / To, Refresh, orgId, time zone.
+- Dashboard variables (`var-…`).
+
+**Loading**
+- `loading` Lazy (loads when near the view) or Eager (loads now); fetch priority.
+- "Loading…" until it has loaded.
+- A timeout (fires **On Timeout**).
+- Reload every N seconds.
+- Whether the editor shows the page live or a placeholder.
+
+**Security**
+- Sandbox on/off, with every `allow-*` token as a checkbox.
+- Referrer policy, `csp`, credentialless.
+
+**Permissions** (`allow=`)
+- fullscreen, autoplay, clipboard, camera, microphone, geolocation, screen capture…
+- A field for any other permission.
+
+**Messages**
+- *Accept messages from*: origins. Empty = the embedded page's own origin; `*` = any.
+- *Send messages to origin*.
+
+**Logic events**
+- **On Load** (`url`, `count`; it fires again on each navigation inside it).
+- **On Message**: `data` and `origin` of a `postMessage` from the page.
+- **On Error** and **On Timeout**.
+
+**Logic actions** (Update Component → *Run:*)
+- **Reload**.
+- **Open URL** (`{ url }`).
+- **Send a message** (`{ data, targetOrigin }`, or just the payload), sent with `postMessage` into the page.
+- **Set URL parameters** (`{ name: value }`; `null` removes one): e.g. a new Grafana time range without rebuilding the URL.
+- **Back / Forward**: only for a page of the same origin; the browser allows nothing else.
+
+Grafana must allow embedding: `allow_embedding = true` in `grafana.ini`, and anonymous or proxied auth for the viewers.
 
 ### Tabs
 
