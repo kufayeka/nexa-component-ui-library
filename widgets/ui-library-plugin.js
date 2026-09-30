@@ -9,4 +9,6 @@ module.exports = function (RED) {
         dir: require("path").join(__dirname, "..", "dist"),
         modules: ["ui-library.js"]
     });
+    // the Iframe's "does this page allow embedding?" check (editor only)
+    require("./embed-check")(RED, "/nexa-component-ui-library/embed-check");
 };

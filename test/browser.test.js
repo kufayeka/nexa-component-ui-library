@@ -17,7 +17,7 @@ async function ok(label, fn) { await fn(); passed++; console.log('✔ ' + label)
 const P = 'nexa-ui-';
 const ALL = ['button', 'input', 'textarea', 'number-input', 'password-input', 'checkbox', 'switch', 'radio-group', 'segmented', 'select', 'combobox', 'slider', 'tags-input', 'pin-input', 'rating',
     'text', 'heading', 'badge', 'tag', 'card', 'avatar', 'stat', 'alert', 'progress', 'spinner', 'skeleton', 'separator', 'empty-state', 'timeline', 'fieldset',
-    'tabs', 'iframe'];
+    'tabs', 'iframe', 'datetime', 'pagination'];
 const TAG = '{sparkplug:Plant::Line1::Mixer::Speed}';
 
 withHarness({
@@ -42,7 +42,7 @@ withHarness({
         await settle();
     };
 
-    await ok('all 32 components register (UI · Form / Display / Layout / Embed), each mounts and draws', async () => {
+    await ok('all 34 components register (UI · Form / Display / Layout / Embed), each mounts and draws', async () => {
         const reg = await js(`${JSON.stringify(ALL)}.map(function (id) { var d = NEXA.getComponent("${P}" + id); return d ? d.category : "MISSING " + id; })`);
         assert.deepStrictEqual(reg.filter((c) => c !== 'UI · Form' && c !== 'UI · Display' && c !== 'UI · Layout' && c !== 'UI · Embed'), []);
         for (const id of ALL) await mount('all-' + id, id, {}, { width: 320, height: 120 });
@@ -300,9 +300,105 @@ withHarness({
             return [m.buildEmbedUrl(p, {}, "dark"), m.buildEmbedUrl(Object.assign({}, p, { gKiosk: "tv" }), {}, "light")]; })`);
         assert.deepStrictEqual(g, ['https://g.example/d/abc/plant?orgId=1&kiosk=&theme=dark&from=now-1h&to=now&refresh=10s&var-line=2&viewPanel=4',
             'https://g.example/d/abc/plant?orgId=1&kiosk=tv&theme=light&from=now-1h&to=now&refresh=10s&var-line=2&viewPanel=4']);
+        // Auto-convert to embed URL: YouTube, Vimeo, Google Docs/Sheets, Figma, Loom, Spotify, CodePen, converter template
+        const converted = await js(`import("/nexa-component-ui-library/vendor/embed.js").then(function (m) {
+            return [
+                m.toEmbedUrl("https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=1m30s"),
+                m.toEmbedUrl("https://youtu.be/dQw4w9WgXcQ"),
+                m.toEmbedUrl("https://vimeo.com/12345678"),
+                m.toEmbedUrl("https://docs.google.com/document/d/1abcXYZ/edit?usp=sharing"),
+                m.toEmbedUrl("https://docs.google.com/spreadsheets/d/2abcXYZ/edit#gid=0"),
+                m.toEmbedUrl("https://drive.google.com/file/d/3abcXYZ/view"),
+                m.toEmbedUrl("https://loom.com/share/abc12345"),
+                m.toEmbedUrl("https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT"),
+                m.toEmbedUrl("https://codepen.io/user/pen/xyz"),
+                m.toEmbedUrl("https://example.com/page", { converter: "https://embed.test/?url={url}" }),
+                m.toEmbedUrl("https://www.youtube.com/watch?v=dQw4w9WgXcQ", { autoEmbed: false }),
+                m.buildEmbedUrl({ src: "https://www.youtube.com/watch?v=dQw4w9WgXcQ" })
+            ];
+        })`);
+        assert.deepStrictEqual(converted, [
+            "https://www.youtube.com/embed/dQw4w9WgXcQ?start=90",
+            "https://www.youtube.com/embed/dQw4w9WgXcQ",
+            "https://player.vimeo.com/video/12345678",
+            "https://docs.google.com/document/d/1abcXYZ/preview?usp=sharing",
+            "https://docs.google.com/spreadsheets/d/2abcXYZ/preview#gid=0",
+            "https://drive.google.com/file/d/3abcXYZ/preview",
+            "https://loom.com/embed/abc12345",
+            "https://open.spotify.com/embed/track/4cOdK2wGLETKBW3PvgPWqT",
+            "https://codepen.io/user/embed/xyz",
+            "https://embed.test/?url=https%3A%2F%2Fexample.com%2Fpage",
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            "https://www.youtube.com/embed/dQw4w9WgXcQ"
+        ]);
         // lazy by default; "Loading…" until it loads
         await mount('ifr2', 'iframe', { src: '/fx/embed-child.html' }, { width: 300, height: 150 });
         assert.strictEqual(await js(`${q('ifr2', 'iframe')}.getAttribute("loading")`), 'lazy');
+    });
+
+    await ok('Password Input: matches Text Input styling with flush Carbon reveal button and type toggling', async () => {
+        await mount('pw-test', 'password-input', { label: 'Password' }, { width: 220, height: 40 });
+        const inputType = () => js(`${q('pw-test', 'input')}.type`);
+        assert.strictEqual(await inputType(), 'password', 'starts as password type');
+        const hasToggle = await js(`!!${q('pw-test', '.reveal-btn')}`);
+        assert.strictEqual(hasToggle, true, 'has Carbon reveal toggle button');
+        await clickAt(q('pw-test', '.reveal-btn'));
+        assert.strictEqual(await inputType(), 'text', 'switches to text on reveal');
+        await clickAt(q('pw-test', '.reveal-btn'));
+        assert.strictEqual(await inputType(), 'password', 'switches back to password on hide');
+    });
+
+    await ok('Date Time: granular unit selection, template formatting and universal UTC support', async () => {
+        const iso = '2026-09-30T10:15:30.000Z';
+        await mount('dt-test', 'datetime', {
+            label: 'Timestamp',
+            inputValue: iso,
+            timezoneMode: 'utc',
+            format: 'YYYY-MM-DD HH:mm:ss'
+        }, { width: 260, height: 40 });
+
+        const val = await js(`${q('dt-test', '.input-field')}.value`);
+        assert.strictEqual(val, '2026-09-30 10:15:30', 'formats UTC date/time according to format template');
+
+        const badge = await js(`${q('dt-test', '.tz-badge')}.textContent.trim()`);
+        assert.strictEqual(badge, 'UTC', 'displays UTC badge in UTC mode');
+    });
+
+    await ok('Pagination: IBM Carbon pagination bar with items per page, item range, and page navigation', async () => {
+        await mount('pag-test', 'pagination', {
+            total: 120,
+            pageSize: 10,
+            page: 1,
+            outputPage: TAG,
+            outputOffset: TAG,
+            pageSizeOptions: '10, 20, 50, 100'
+        }, { width: 560, height: 48 });
+
+        const range = await js(`${q('pag-test', '.pag-range')}.textContent.replace(/\\s+/g, ' ').trim()`);
+        assert.strictEqual(range, '1–10 of 120 items', 'shows correct 1-10 range');
+
+        // Click next page button
+        await clickAt(`${root('pag-test')}.querySelector('.pag-nav-btn[aria-label="Next page"]')`);
+        const it = await item('pag-test');
+        assert.strictEqual(it.writes.some((w) => w[0] === 'outputPage' && w[1] === 2), true, 'writes page 2');
+        assert.strictEqual(it.writes.some((w) => w[0] === 'outputOffset' && w[1] === 10), true, 'writes offset 10');
+        assert.strictEqual(it.events.some((e) => e[0] === 'change' && e[1].page === 2), true, 'emits change event');
+        // Test numeric variant
+        await mount('pag-num', 'pagination', {
+            variant: 'numeric',
+            total: 100,
+            pageSize: 10,
+            page: 3,
+            outputPage: TAG
+        }, { width: 400, height: 48 });
+
+        const activeText = await js(`${root('pag-num')}.querySelector('.pag-num-btn.active').textContent.trim()`);
+        assert.strictEqual(activeText, '3', 'active numeric button shows page 3');
+
+        // Click page 4 button (index 0 is prev, index 1 is page 1, index 2 is page 2, index 3 is page 3, index 4 is page 4)
+        await clickAt(`${root('pag-num')}.querySelectorAll('.pag-num-btn')[4]`);
+        const itNum = await item('pag-num');
+        assert.strictEqual(itNum.writes.some((w) => w[0] === 'outputPage' && w[1] === 4), true, 'clicking page 4 button writes page 4');
     });
 
     await ok('the inspector: every plain prop takes a binding (⛓); colours and sizes take theme tokens (◆), a token shows as a chip', async () => {

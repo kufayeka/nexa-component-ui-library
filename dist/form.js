@@ -122,11 +122,33 @@ const BOX_CSS = css`
     input:focus-visible, textarea:focus-visible { outline: none; }
     textarea { resize: none; }
     input::placeholder, textarea::placeholder { color: var(--fg-subtle); }
+    input[type="password"]::-ms-reveal,
+    input[type="password"]::-ms-clear,
+    input[type="password"]::-webkit-contacts-auto-fill-button {
+        display: none !important;
+    }
     .affix, .start { color: var(--fg-muted); white-space: nowrap; flex: 0 0 auto; }
     .tool { all: unset; flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; color: var(--fg-muted); cursor: pointer;
         width: calc(var(--icon) + 12px); height: calc(var(--icon) + 12px); border-radius: var(--r); }
     .tool:hover { color: var(--fg); background: var(--bg-emph); }
     .tool:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
+    /* Carbon's password toggle button: flush against the right edge matching field height */
+    .box.password .tool, .tool.reveal-btn {
+        all: unset;
+        flex: 0 0 auto;
+        align-self: stretch;
+        width: var(--h);
+        max-width: 48px;
+        margin-right: calc(var(--px) * -1);
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--fg-muted);
+        cursor: pointer;
+        transition: background-color var(--t) var(--ease), color var(--t) var(--ease);
+    }
+    .box.password .tool:hover, .tool.reveal-btn:hover { color: var(--fg); background: var(--bg-emph); }
+    .box.password .tool:focus-visible, .tool.reveal-btn:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
     /* Carbon's number input: − and + as two square buttons at the end */
     .stepper { flex: 0 0 auto; align-self: stretch; display: flex; margin-right: calc(var(--px) * -1); }
     .stepper button { all: unset; width: var(--h); max-width: 48px; display: flex; align-items: center; justify-content: center; color: var(--fg); cursor: pointer;
@@ -155,7 +177,7 @@ class TextFieldView extends UIElement {
         if (super.willUpdate) super.willUpdate(changed);
         // unbound: it starts at its Default value
         const f = this.field, d = this.p.defaultValue;
-        if (!this._started && !f.opts.sensitive) {
+        if (!this._started) {
             this._started = true;
             if (!this.status("value").bound && f.s.localValue === null && d !== undefined && d !== null && String(d) !== "") {
                 const r = f.codec.parse(String(d), this.p);
@@ -169,11 +191,12 @@ class TextFieldView extends UIElement {
     render() {
         const f = this.field, p = this.p;
         const on = { focus: f.onFocus, blur: f.onBlur, input: f.onInput, keydown: f.onKeyDown };
+        const ph = p.placeholder || (f.opts.sensitive && this.isEditor && !f.value ? "••••••••" : "");
         const ctl = f.opts.multiline
-            ? html`<textarea part="control" aria-label="${p.label || nothing}" placeholder="${p.placeholder || ""}" maxlength="${f.maxLength || nothing}" ?disabled="${p.disabled}" ?readonly="${p.readonly}"
+            ? html`<textarea part="control" aria-label="${p.label || nothing}" placeholder="${ph}" maxlength="${f.maxLength || nothing}" ?disabled="${p.disabled}" ?readonly="${p.readonly}"
                 @focus="${on.focus}" @blur="${on.blur}" @input="${on.input}" @keydown="${on.keydown}"></textarea>`
             : html`<input part="control" aria-label="${p.label || nothing}" type="${this.inputType()}" inputmode="${f.inputMode}" autocomplete="${f.opts.sensitive ? "new-password" : "off"}" spellcheck="false"
-                placeholder="${p.placeholder || ""}" maxlength="${f.maxLength || nothing}" ?disabled="${p.disabled}" ?readonly="${p.readonly}"
+                placeholder="${ph}" maxlength="${f.maxLength || nothing}" ?disabled="${p.disabled}" ?readonly="${p.readonly}"
                 @focus="${on.focus}" @blur="${on.blur}" @input="${on.input}" @keydown="${on.keydown}" />`;
         const box = html`<div class="box ${f.classes}" part="box" style="text-align: ${f.align}" title="${f.message || nothing}">
             ${icon(p.startIcon, "start")}${p.prefix ? html`<span class="affix" part="prefix">${p.prefix}</span>` : nothing}
@@ -283,7 +306,7 @@ export const passwordInput = defineComponent({
         tools() {
             const f = this.field;
             if (this.p.revealToggle === false) return nothing;
-            return html`<button class="tool" type="button" tabindex="-1" title="${f.revealed ? "Hide" : "Show"}" @mousedown="${(e) => e.preventDefault()}"
+            return html`<button class="tool reveal-btn" type="button" tabindex="-1" title="${f.revealed ? "Hide password" : "Show password"}" aria-label="${f.revealed ? "Hide password" : "Show password"}" @mousedown="${(e) => e.preventDefault()}"
                 @click="${f.toggleReveal}">${icon(f.revealed ? "eye-off" : "eye")}</button>`;
         }
     }

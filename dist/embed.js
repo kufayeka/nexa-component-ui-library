@@ -42,10 +42,119 @@ const IFRAME_CSS = css`
     .veil.overlay { background: color-mix(in srgb, var(--bg) 70%, transparent); }
 `;
 
+function _copyYoutubeParams(fromUrl, toUrl) {
+    const rawTime = fromUrl.searchParams.get("start") || fromUrl.searchParams.get("t");
+    if (rawTime) {
+        const m = String(rawTime).match(/^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s?)?$/);
+        let sec = parseInt(rawTime, 10);
+        if (m && (m[1] || m[2] || m[3])) {
+            sec = (parseInt(m[1] || 0, 10) * 3600) + (parseInt(m[2] || 0, 10) * 60) + parseInt(m[3] || 0, 10);
+        }
+        if (!isNaN(sec) && sec > 0) toUrl.searchParams.set("start", String(sec));
+    }
+    ["autoplay", "loop", "playlist", "mute", "controls", "list"].forEach((k) => {
+        if (fromUrl.searchParams.has(k)) toUrl.searchParams.set(k, fromUrl.searchParams.get(k));
+    });
+}
+
+/** Converts standard URLs of popular services to their official embeddable format. */
+export function toEmbedUrl(rawUrl, p) {
+    if (!rawUrl || typeof rawUrl !== "string") return "";
+    let src = rawUrl.trim();
+    if (!src) return "";
+
+    // 1. Custom converter template: e.g. "https://my-converter.com/?url={url}"
+    if (p && p.converter && typeof p.converter === "string" && p.converter.trim()) {
+        const tmpl = p.converter.trim();
+        if (tmpl.indexOf("{url}") !== -1) return tmpl.replace(/\{url\}/g, encodeURIComponent(src));
+        if (tmpl.indexOf("{rawUrl}") !== -1) return tmpl.replace(/\{rawUrl\}/g, src);
+    }
+
+    // 2. If autoEmbed is explicitly off, keep as is
+    if (p && p.autoEmbed === false) return src;
+
+    try {
+        const isRelative = !/^[a-z][a-z0-9+.-]*:/i.test(src) && src.indexOf("//") !== 0;
+        if (isRelative) return src;
+
+        const u = new URL(src, "http://localhost/");
+        const host = u.hostname.toLowerCase();
+        const path = u.pathname;
+
+        // YouTube: watch?v=, youtu.be/, /shorts/, /live/
+        if (host === "youtu.be") {
+            const id = path.replace(/^\//, "").split("/")[0];
+            if (id) {
+                const em = new URL("https://www.youtube.com/embed/" + id);
+                _copyYoutubeParams(u, em);
+                return em.href;
+            }
+        } else if (host.indexOf("youtube.com") !== -1) {
+            let id = "";
+            if (path.indexOf("/shorts/") === 0) id = path.slice(8).split("/")[0];
+            else if (path.indexOf("/live/") === 0) id = path.slice(6).split("/")[0];
+            else if (path.indexOf("/embed/") === 0) id = path.slice(7).split("/")[0];
+            else if (u.searchParams.has("v")) id = u.searchParams.get("v");
+
+            if (id) {
+                const em = new URL("https://www.youtube.com/embed/" + id);
+                _copyYoutubeParams(u, em);
+                return em.href;
+            }
+        }
+
+        // Vimeo: vimeo.com/123456789
+        if (host.indexOf("vimeo.com") !== -1 && host.indexOf("player.vimeo.com") === -1) {
+            const m = path.match(/\/(\d+)(?:[?#]|$)/);
+            if (m && m[1]) {
+                return "https://player.vimeo.com/video/" + m[1] + u.search + u.hash;
+            }
+        }
+
+        // Google Docs / Sheets / Slides / Drive: /edit or /view -> /preview
+        if (host === "docs.google.com" || host === "drive.google.com") {
+            if (/\/(document|spreadsheets|presentation)\/d\/[^/]+/.test(path)) {
+                const newPath = path.replace(/\/(edit|view|copy).*$/, "/preview");
+                return u.origin + newPath + u.search + u.hash;
+            }
+            if (/\/file\/d\/[^/]+/.test(path)) {
+                const newPath = path.replace(/\/(view|edit).*$/, "/preview");
+                return u.origin + newPath + u.search + u.hash;
+            }
+        }
+
+        // Figma: /file/, /design/, /proto/ -> https://www.figma.com/embed?embed_host=share&url=...
+        if (host.indexOf("figma.com") !== -1 && (path.indexOf("/file/") === 0 || path.indexOf("/design/") === 0 || path.indexOf("/proto/") === 0)) {
+            return "https://www.figma.com/embed?embed_host=share&url=" + encodeURIComponent(src);
+        }
+
+        // Loom: /share/ID -> /embed/ID
+        if (host.indexOf("loom.com") !== -1 && path.indexOf("/share/") === 0) {
+            const id = path.slice(7).split("/")[0];
+            if (id) return u.origin + "/embed/" + id + u.search + u.hash;
+        }
+
+        // Spotify: /track/, /album/, /playlist/, /artist/, /episode/
+        if (host === "open.spotify.com" && path.indexOf("/embed/") !== 0) {
+            return "https://open.spotify.com/embed" + path + u.search + u.hash;
+        }
+
+        // CodePen: /pen/ID -> /embed/ID
+        if (host.indexOf("codepen.io") !== -1 && path.indexOf("/pen/") !== -1) {
+            return u.origin + path.replace("/pen/", "/embed/") + u.search + u.hash;
+        }
+    } catch (e) {
+        // keep as is on URL parsing failure
+    }
+
+    return src;
+}
+
 /** The URL it loads: src + its parameters (a list, the Grafana preset, the ones set by Logic). */
 export function buildEmbedUrl(p, extra, mode) {
-    const src = String(p.src || "").trim();
+    let src = String(p.src || "").trim();
     if (!src) return "";
+    src = toEmbedUrl(src, p);
     let u;
     try { u = new URL(src, typeof location !== "undefined" ? location.href : "http://localhost/"); } catch (e) { return src; }
     // empty = leave the URL's own value alone; null (Set parameters from Logic) = remove it
@@ -66,6 +175,18 @@ export function buildEmbedUrl(p, extra, mode) {
     // a relative src stays relative (the page's own origin)
     return /^[a-z][a-z0-9+.-]*:/i.test(src) || src.indexOf("//") === 0 ? u.href : u.pathname + u.search + u.hash;
 }
+// The editor asks Node-RED whether a page lets other sites embed it (a browser can't read
+// another site's headers): X-Frame-Options / CSP frame-ancestors. One answer per URL.
+const embedChecks = {};
+function checkEmbed(url) {
+    if (!/^https?:\/\//i.test(url)) return Promise.resolve(null);
+    const key = url.replace(/[?#].*$/, "");
+    if (!embedChecks[key]) {
+        embedChecks[key] = fetch("nexa-component-ui-library/embed-check?url=" + encodeURIComponent(url) + "&from=" + encodeURIComponent(location.origin))
+            .then((r) => (r.ok ? r.json() : null)).catch(() => null);
+    }
+    return embedChecks[key];
+}
 function originOf(url) {
     try { return new URL(url, location.href).origin; } catch (e) { return ""; }
 }
@@ -76,7 +197,9 @@ export const iframe = defineComponent({
     help: "Another web page in this one: a Grafana dashboard, a camera, a report. Its URL and parameters can be bound (a variable, a tag). Logic: On Load / On Message (the page's postMessage), and Update Component → Run: Reload / Open URL / Send a message / Set parameters.",
     properties: Object.assign({
         // Content
-        src: { type: "string", default: "https://grafana.com", group: "Content", label: "URL", help: "Absolute (https://…) or on this server (/grafana/d/abc). Bind it to a variable to switch pages." },
+        src: { type: "string", default: "", group: "Content", label: "URL", placeholder: "https://grafana.local:3000/d/…", help: "Absolute (https://…) or on this server (/grafana/d/abc). Bind it to a variable to switch pages. The site must allow embedding: many public sites (grafana.com, google.com) forbid it — the editor tells you." },
+        autoEmbed: { type: "boolean", default: true, group: "Content", label: "Auto-convert embed URL", help: "Converts YouTube, Vimeo, Google Docs/Sheets/Slides/Drive, Figma, Loom, Spotify, CodePen URLs to their official embed format." },
+        converter: { type: "string", default: "", group: "Content", label: "Converter template", placeholder: "e.g. https://converter.local/?url={url}", help: "Optional wrapper/converter URL template. {url} is replaced with the encoded URL, or {rawUrl} for unencoded." },
         params: { type: "list", default: [], group: "Content", label: "URL parameters", help: "Added to the URL's query (bind a value: {var} / a tag). Off = left out.",
             item: { fields: { key: { type: "string", label: "Name", default: "" }, value: { type: "string", label: "Value", default: "" }, enabled: { type: "boolean", label: "On", default: true } } } },
         srcdoc: { type: "text", default: "", group: "Content", label: "HTML instead of a URL (srcdoc)", rows: 4, help: "When set, this HTML is shown instead of the URL." },
@@ -148,7 +271,10 @@ export const iframe = defineComponent({
         }
         unmounted() { clearTimeout(this.tmo); clearInterval(this.every); }
         frame() { return this.renderRoot && this.renderRoot.querySelector("iframe"); }
-        url() { return this.navigatedTo || buildEmbedUrl(this.p, this.extra, theme.mode()); }
+        url() {
+            if (this.navigatedTo) return toEmbedUrl(this.navigatedTo, this.p);
+            return buildEmbedUrl(this.p, this.extra, theme.mode());
+        }
         accepts(origin) {
             const list = String(this.p.allowOrigins || "").split(",").map((s) => s.trim()).filter(Boolean);
             if (list.indexOf("*") !== -1) return true;
@@ -157,7 +283,7 @@ export const iframe = defineComponent({
         }
         propsChanged() {
             // a new URL prop: Logic's navigation / parameters no longer apply
-            const sig = JSON.stringify([this.p.src, this.p.params, this.p.preset]);
+            const sig = JSON.stringify([this.p.src, this.p.params, this.p.preset, this.p.autoEmbed, this.p.converter]);
             if (this.lastSrcProp !== null && sig !== this.lastSrcProp) { this.navigatedTo = ""; this.extra = {}; }
             this.lastSrcProp = sig;
             // Reload every N seconds
@@ -216,14 +342,26 @@ export const iframe = defineComponent({
         back() { this.history("back"); }
         forward() { this.history("forward"); }
 
+        editorCheck(url) {
+            if (!this.isEditor || url === this.checkedUrl) return;
+            this.checkedUrl = url;
+            clearTimeout(this.checkTimer);
+            this.checkTimer = setTimeout(() => checkEmbed(url).then((r) => { if (this.checkedUrl === url) { this.refused = r && r.embeddable === false ? r : null; this.requestUpdate(); } }), 400);
+        }
         render() {
             const p = this.p, url = this.url();
+            if (!p.srcdoc) this.editorCheck(url);
+            // the editor: the page forbids embedding (it would show "refused to connect")
+            const refused = this.isEditor && !p.srcdoc && this.refused && this.checkedUrl === url
+                ? html`<div class="veil overlay error" part="veil">${icon("alert-triangle")}<div><b>This site does not allow embedding</b></div>
+                    <div class="url">${url}</div><div>${this.refused.reason}</div>
+                    <div>Use a page that allows it — e.g. your own Grafana with <span class="url">allow_embedding = true</span>, or a converter template.</div></div>` : nothing;
             this.style.setProperty("--frame-bg", p.background || "transparent");
             this.style.setProperty("--frame-bw", num(p.borderWidth, 0) + "px");
             if (this.isEditor && p.live === false) {
-                return html`<div class="wrap" part="frame"><div class="veil" part="veil">${icon("external-link")}<div>Iframe</div><div class="url">${p.srcdoc ? "(its HTML)" : url || "(no URL)"}</div></div></div>`;
+                return html`<div class="wrap" part="frame"><div class="veil" part="veil">${icon("external-link")}<div>Iframe</div><div class="url">${p.srcdoc ? "(its HTML)" : url || "(no URL)"}</div></div>${refused}</div>`;
             }
-            if (!url && !p.srcdoc) return html`<div class="wrap" part="frame"><div class="veil" part="veil"><div>No URL</div></div></div>`;
+            if (!url && !p.srcdoc) return html`<div class="wrap" part="frame"><div class="veil" part="veil">${icon("external-link")}<div>Iframe</div><div>Set its URL in Properties → Content</div></div></div>`;
             if (url !== this.shownUrl) { this.shownUrl = url; this.loaded = false; this.armTimeout(); }
             const sandbox = p.sandbox ? SANDBOX.filter(([n]) => p[key("sb", n.replace(/^allow-/, ""))]).map(([n]) => n).join(" ") : null;
             const allow = ALLOW.filter(([n]) => p[key("al", n)]).map(([n]) => n).concat(String(p.allowExtra || "").split(";").map((s) => s.trim()).filter(Boolean)).join("; ");
@@ -236,7 +374,8 @@ export const iframe = defineComponent({
                     srcdoc="${p.srcdoc || nothing}" src="${p.srcdoc ? nothing : url}"
                     @load="${() => this.onLoad()}" @error="${() => { this.failed = "It could not be loaded."; this.fire("error", { reason: this.failed }); this.requestUpdate(); }}"></iframe>
                 ${this.timedOut && !this.loaded ? html`<div class="veil overlay error" part="veil">${icon("alert-triangle")}<div>It did not load in time</div><div class="url">${url}</div></div>`
-                    : p.showLoading !== false && !this.loaded ? html`<div class="veil overlay" part="veil">${spinner()}<div>Loading…</div></div>` : nothing}
+                    : p.showLoading !== false && !this.loaded && !refused ? html`<div class="veil overlay" part="veil">${spinner()}<div>Loading…</div></div>` : nothing}
+                ${refused}
             </div>`;
         }
     }

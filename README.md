@@ -1,11 +1,11 @@
 # @kufayeka/nexa-component-ui-library — Nexa UI
 
-A themed component library for **Nexa Dashboard**: 31 form, display, feedback and layout components. It is a normal Nexa plugin, built only on the Nexa component SDK, so it is also the example to follow when you **build your own UI library**.
+A themed component library for **Nexa Dashboard**: 33 form, display, feedback, navigation and layout components. It is a normal Nexa plugin, built only on the Nexa component SDK, so it is also the example to follow when you **build your own UI library**.
 
-- **Form**: Button, Input, Textarea, Number Input, Password Input, Checkbox, Switch, Radio Group, Segmented Control, Select, Combobox, Slider, Tags Input, Pin Input, Rating.
+- **Form**: Button, Input, Textarea, Number Input, Password Input, Date Time, Checkbox, Switch, Radio Group, Segmented Control, Select, Combobox, Slider, Tags Input, Pin Input, Rating.
 - **Display & feedback**: Text, Heading, Badge, Tag, Card, Avatar, Stat, Alert, Progress (a bar or a circle), Spinner, Skeleton, Separator, Empty State, Timeline, Fieldset.
 
-- **Layout**: Tabs — each tab has a panel you drop components into (the SDK's *slots*).
+- **Layout & Navigation**: Tabs — each tab has a panel you drop components into (the SDK's *slots*); Pagination — IBM Carbon-inspired pagination bar.
 - **Embed**: Iframe — another web page (Grafana, a camera, a report), with Logic both ways.
 
 In the editor they are in the palette under **UI · Form**, **UI · Display** and **UI · Layout**.
@@ -14,6 +14,8 @@ In the editor they are in the palette under **UI · Form**, **UI · Display** an
 
 **Content**
 - URL, plus **URL parameters** (a list; each value can be bound, e.g. `{line}` or a tag). An empty value leaves the URL's own value alone.
+- **Auto-convert embed URL** (on by default): automatically converts standard URLs of YouTube, Vimeo, Google Docs/Sheets/Slides/Drive, Figma, Loom, Spotify, CodePen into their official embed format so they bypass `X-Frame-Options` blocks.
+- **URL converter template**: optional template (e.g. `https://converter.local/?url={url}`) to wrap any URL via a converter or proxy.
 - Or **HTML instead of a URL** (`srcdoc`).
 - Title (screen readers) and name.
 
@@ -58,12 +60,43 @@ Grafana must allow embedding: `allow_embedding = true` in `grafana.ini`, and ano
 
 ### Tabs
 
-- Each tab (Content → Tabs: value, label, icon, disabled) has its own **panel**, a frame of the page. Click a tab header on the canvas to show its panel, then drop components into it. Double click the panel for its auto layout, padding and fill.
+- Each tab (Content → Tabs: value, label, icon, disabled) has its own **panel**, a panel of the page. Click a tab header on the canvas to show its panel, then drop components into it. Double click the panel for its auto layout, padding and fill.
 - **Value** is the value of the tab shown. Bind it (a variable, a tag) and it works both ways: the binding picks the tab, and a click writes the new value. **On Change** fires when the user switches tab.
 - Logic actions: **Show a tab** (`value`), **Next tab**, **Previous tab**.
 - Keyboard: ← → (↑ ↓ when the tabs are on the left), Home, End.
 - Variants: Line (Carbon), Contained (Carbon), Pills. Tabs on the top or on the left; *Fill the width* makes all tabs the same width.
 - A tab's value names its panel. If you rename a value, that tab gets a new, empty panel. The old panel is kept but hidden until the value comes back.
+
+### Date Time (`nexa-ui-datetime`)
+
+Designed to solve the universal developer UTC bug and provide granular time unit control:
+- **Granular Unit Selection**: Choose presets (`Date & Time`, `Date & Time with Seconds`, `Date Only`, `Time Only`, `Year & Month`) or toggle individual units on/off (`showYear`, `showMonth`, `showDay`, `showHours`, `showMinutes`, `showSeconds`).
+- **Flexible Format Templating**: Tokenized formatting supporting `YYYY`, `YY`, `MMMM`, `MMM`, `MM`, `DD`, `HH`, `hh`, `mm`, `ss`, `A` (AM/PM), `Z` (offset).
+- **Custom Parsing Regex**: Optional regex with capture groups (e.g. `(?<year>\d{4})-(?<month>\d{2})-(?<day>\d{2})`) for non-standard legacy payloads.
+- **Universal UTC & Local Handling**:
+  - `timezoneMode: 'utc'`: Stores and presents values in UTC with an indicator badge, eliminating accidental browser local shifts.
+  - `timezoneMode: 'local'`: Converts UTC timestamps to operator local time for human viewing and seamlessly converts back to UTC upon write.
+  - `outputType`: Writes back as ISO-8601 string (`iso`), Unix epoch ms (`timestamp-ms`), Unix epoch seconds (`timestamp-s`), formatted template string (`formatted`), date only (`utc-date`), or time only (`utc-time`).
+- **Carbon-styled Popover**: Flyout calendar grid with month navigation, time spinners, and quick actions ("Now", "Clear", "Done").
+
+### Pagination (`nexa-ui-pagination`)
+
+Modeled after the official IBM Carbon Design System Pagination specifications and refined for Nexa UI:
+- **Variants**:
+  - `bar` (Carbon Bar): Full status bar with items per page selector dropdown (`10`, `20`, `50`, `100`), divider line, item range label (`1–10 of 120 items`), page jump selector (`1 of 12 pages`), and icon navigation buttons.
+  - `numeric` (Numeric Pages): Classic numbered page buttons (`[<] [1] [2] [3] ... [10] [>]`) with configurable `siblingCount`, active page highlighting, and ellipsis handling.
+- **Two-Way Data Binding & Outputs**:
+  - `page`: Current page number (1-based, two-way bound to `inputPage` / `outputPage`).
+  - `pageSize`: Items per page (two-way bound to `inputPageSize` / `outputPageSize`).
+  - `offset`: Computed starting offset `(page - 1) * pageSize` (written to `outputOffset`).
+- **Logic Events**: Emits `change` (full payload with `page`, `pageSize`, `total`, `offset`, `limit`), `pageChange`, and `pageSizeChange`.
+- **Keyboard & Action Controls**: `next()`, `prev()`, `first()`, `last()`, and `setPage(n)`.
+
+### Password Input (`nexa-ui-password-input`)
+
+- **Strict IBM Carbon Alignment**: Styled identically to Text Input with subtle background fill (`var(--nexa-colors-bg-subtle)`), bottom border (`border-bottom: 1px solid var(--nexa-colors-border-emphasized)`), and 2px focus ring.
+- **Flush Carbon Reveal Button**: The toggle visibility eye button stretches full height flush to the right border of the field (`margin-right: -var(--px)`), replacing clunky floating boxes.
+- **Suppressed Native Browser Overlays**: Suppresses browser-native reveal overlays (`::-ms-reveal`, `::-ms-clear`, and webkit autofill buttons) to guarantee crisp, uncluttered rendering across Edge, Chrome, Safari, and Firefox.
 
 ## The look
 

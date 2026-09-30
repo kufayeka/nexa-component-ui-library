@@ -5,3 +5,5 @@ import "./form.js";
 import "./display.js";
 import "./containers.js";
 import "./embed.js";
+import "./datetime.js";
+import "./pagination.js";
