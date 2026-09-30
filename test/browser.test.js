@@ -17,7 +17,7 @@ async function ok(label, fn) { await fn(); passed++; console.log('✔ ' + label)
 const P = 'nexa-ui-';
 const ALL = ['button', 'input', 'textarea', 'number-input', 'password-input', 'checkbox', 'switch', 'radio-group', 'segmented', 'select', 'combobox', 'slider', 'tags-input', 'pin-input', 'rating',
     'text', 'heading', 'badge', 'tag', 'card', 'avatar', 'stat', 'alert', 'progress', 'spinner', 'skeleton', 'separator', 'empty-state', 'timeline', 'fieldset',
-    'tabs', 'iframe', 'datetime', 'pagination'];
+    'tabs', 'iframe', 'datetime', 'daterange', 'pagination'];
 const TAG = '{sparkplug:Plant::Line1::Mixer::Speed}';
 
 withHarness({
@@ -42,7 +42,7 @@ withHarness({
         await settle();
     };
 
-    await ok('all 34 components register (UI · Form / Display / Layout / Embed), each mounts and draws', async () => {
+    await ok('all 35 components register (UI · Form / Display / Layout / Embed), each mounts and draws', async () => {
         const reg = await js(`${JSON.stringify(ALL)}.map(function (id) { var d = NEXA.getComponent("${P}" + id); return d ? d.category : "MISSING " + id; })`);
         assert.deepStrictEqual(reg.filter((c) => c !== 'UI · Form' && c !== 'UI · Display' && c !== 'UI · Layout' && c !== 'UI · Embed'), []);
         for (const id of ALL) await mount('all-' + id, id, {}, { width: 320, height: 120 });
@@ -362,6 +362,26 @@ withHarness({
 
         const badge = await js(`${q('dt-test', '.tz-badge')}.textContent.trim()`);
         assert.strictEqual(badge, 'UTC', 'displays UTC badge in UTC mode');
+    });
+
+    await ok('Date Range: dual calendar selection, start and end bindings, presets and UTC formatting', async () => {
+        const startIso = '2026-09-01T00:00:00.000Z';
+        const endIso = '2026-09-30T23:59:59.000Z';
+        await mount('dr-test', 'daterange', {
+            label: 'Date Range',
+            defaultStart: startIso,
+            defaultEnd: endIso,
+            timezoneMode: 'utc',
+            format: 'YYYY-MM-DD'
+        }, { width: 340, height: 40 });
+
+        const startText = await js(`${root('dr-test')}.querySelectorAll('.range-display-segment')[0].textContent.trim()`);
+        const endText = await js(`${root('dr-test')}.querySelectorAll('.range-display-segment')[1].textContent.trim()`);
+        assert.strictEqual(startText, '2026-09-01', 'start date formatted');
+        assert.strictEqual(endText, '2026-09-30', 'end date formatted');
+
+        const badge = await js(`${root('dr-test')}.querySelector('.tz-badge').textContent.trim()`);
+        assert.strictEqual(badge, 'UTC', 'displays UTC badge');
     });
 
     await ok('Pagination: IBM Carbon pagination bar with items per page, item range, and page navigation', async () => {

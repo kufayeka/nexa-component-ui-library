@@ -1,8 +1,8 @@
 # @kufayeka/nexa-component-ui-library — Nexa UI
 
-A themed component library for **Nexa Dashboard**: 33 form, display, feedback, navigation and layout components. It is a normal Nexa plugin, built only on the Nexa component SDK, so it is also the example to follow when you **build your own UI library**.
+A themed component library for **Nexa Dashboard**: 35 form, display, feedback, navigation and layout components. It is a normal Nexa plugin, built only on the Nexa component SDK, so it is also the example to follow when you **build your own UI library**.
 
-- **Form**: Button, Input, Textarea, Number Input, Password Input, Date Time, Checkbox, Switch, Radio Group, Segmented Control, Select, Combobox, Slider, Tags Input, Pin Input, Rating.
+- **Form**: Button, Input, Textarea, Number Input, Password Input, Date Time, Date Range, Checkbox, Switch, Radio Group, Segmented Control, Select, Combobox, Slider, Tags Input, Pin Input, Rating.
 - **Display & feedback**: Text, Heading, Badge, Tag, Card, Avatar, Stat, Alert, Progress (a bar or a circle), Spinner, Skeleton, Separator, Empty State, Timeline, Fieldset.
 
 - **Layout & Navigation**: Tabs — each tab has a panel you drop components into (the SDK's *slots*); Pagination — IBM Carbon-inspired pagination bar.
@@ -78,6 +78,24 @@ Designed to solve the universal developer UTC bug and provide granular time unit
   - `timezoneMode: 'local'`: Converts UTC timestamps to operator local time for human viewing and seamlessly converts back to UTC upon write.
   - `outputType`: Writes back as ISO-8601 string (`iso`), Unix epoch ms (`timestamp-ms`), Unix epoch seconds (`timestamp-s`), formatted template string (`formatted`), date only (`utc-date`), or time only (`utc-time`).
 - **Carbon-styled Popover**: Flyout calendar grid with month navigation, time spinners, and quick actions ("Now", "Clear", "Done").
+
+### Date Range (`nexa-ui-daterange`)
+
+Built for SCADA historians, batch timeframes, reporting periods, and time-range filtering:
+- **Dual-Month Calendar Grid**: Side-by-side synchronized month views (Month M and Month M+1) with month navigation and visual range highlighting (`range-start`, `in-range`, `range-end`, and real-time hover previews).
+- **Quick Preset Ranges**: One-click selection sidebar for standard industrial timeframes:
+  - *Today*, *Yesterday*, *Last 7 Days*, *Last 30 Days*, *This Month*, *Last Month*, *Year to Date*.
+- **Flexible Two-Way Data Binding**:
+  - Two individual bindings (`start` and `end`), or a single combined `range` object (`{ start, end }` or `[start, end]`).
+  - Automatic error protection: automatically swaps start and end dates if an operator picks an end date earlier than start.
+- **Granular Time Option**: Optional time controls (`enableTime: true`) with start & end `HH:mm` spinners for high-precision batch windowing.
+- **Universal UTC & Local Handling**:
+  - `timezoneMode: 'utc'`: Processes and displays dates in UTC with badge indicator, eliminating browser timezone shifts.
+  - `timezoneMode: 'local'`: Converts timestamps to operator local time for human display while safely maintaining UTC on write.
+  - `outputType`: Outputs as ISO-8601 strings (`iso`), Unix epoch milliseconds (`timestamp-ms`), Unix epoch seconds (`timestamp-s`), formatted strings (`formatted`), or date only (`utc-date`).
+- **Logic Events & Actions**:
+  - Events: `change` (with `start`, `end`, `range`, `startIso`, `endIso`, `text`), `open`, `close`.
+  - Actions: `setPreset(name)`, `clear()`.
 
 ### Pagination (`nexa-ui-pagination`)
 
