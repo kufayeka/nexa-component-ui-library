@@ -2,12 +2,11 @@
 // `slots`). Each slot is a frame of the page (auto layout, fill, what you drop in it);
 // the component only decides where it is drawn and whether it shows.
 //   Tabs: one slot per tab, the chosen one shown.
-import { defineComponent, html, css, nothing } from "../../nexa-sdk/nexa-component-sdk.js";
+import { html, css, nothing } from "../../nexa-sdk/nexa-component-sdk.js";
 import {
     PREFIX, BASE_CSS, UIElement, CSS_GROUP, part,
     sizeProp, paletteProp, variantProp, disabledProp, icon,
-    VALUE_IO, VALUE_EVENTS, ValueState
-} from "./core.js";
+    VALUE_IO, VALUE_EVENTS, ValueState, defineUI } from "./core.js";
 
 export const CATEGORY_LAYOUT = "UI · Layout";
 
@@ -21,7 +20,6 @@ const CAPS = {
 const common = {
     category: CATEGORY_LAYOUT,
     capabilities: CAPS,
-    cssGroup: CSS_GROUP,
     css: ""
 };
 
@@ -425,7 +423,7 @@ const TABS_CSS = css`
 // Tabs component
 // =================================================================================================
 
-export const tabs = defineComponent({
+export const tabs = defineUI({
     ...common,
     ...VALUE_IO,
 

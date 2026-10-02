@@ -10,7 +10,7 @@
 //      — declarations for that part, which win over the library's own
 // Every prop is bindable (Variable / Tag / Message / Expression), per breakpoint (📱)
 // and takes theme tokens (◆): the SDK's property kit does it for every field.
-import { NexaElement, html, css, svg, nothing, theme } from "../../nexa-sdk/nexa-component-sdk.js";
+import { defineComponent, cssFields, NexaElement, html, css, svg, nothing, theme } from "../../nexa-sdk/nexa-component-sdk.js";
 
 export const CATEGORY_FORM = "UI · Form";
 export const CATEGORY_DISPLAY = "UI · Display";
@@ -49,6 +49,20 @@ export const FIELD_PARTS = {
     root: part("Root", "root"), label: part("Label", "label"), control: part("Control", "control"), helper: part("Helper / error text", "helper")
 };
 export const CSS_GROUP = "Custom CSS";
+
+/**
+ * Every Nexa UI component: defineComponent + its Custom CSS fields (the base, each documented
+ * part, each state with a selector). The SDK adds no CSS fields on its own: this library
+ * chooses to offer them, here, once. A component's own property of the same key wins.
+ */
+export function defineUI(def) {
+    const properties = Object.assign({}, def.properties || {});
+    const css = cssFields({ parts: def.parts, states: def.states, group: CSS_GROUP });
+    Object.keys(css).forEach((k) => { if (!(k in properties)) properties[k] = css[k]; });
+    const out = Object.assign({}, def, { properties });
+    delete out.cssGroup;
+    return defineComponent(out);
+}
 
 // ---- the look: sizes, the palette, tokens -------------------------------------------------
 export const BASE_CSS = css`

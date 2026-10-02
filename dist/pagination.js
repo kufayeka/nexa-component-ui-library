@@ -1,14 +1,13 @@
 // Nexa UI — Pagination component: inspired by IBM Carbon Design System Pagination guidelines,
 // refined into the Nexa UI visual identity with design tokens, responsive layout, two-way
 // page & pageSize bindings, and offset calculation.
-import { defineComponent, html, css, nothing } from "../../nexa-sdk/nexa-component-sdk.js";
+import { html, css, nothing } from "../../nexa-sdk/nexa-component-sdk.js";
 import {
     CATEGORY_FORM, PREFIX, BASE_CSS, UIElement, CSS_GROUP, part,
-    sizeProp, paletteProp, disabledProp, icon, num
-} from "./core.js";
+    sizeProp, paletteProp, disabledProp, icon, num, defineUI } from "./core.js";
 
 const CAPS = { resizable: true, rotatable: false, flippable: false, lockable: true };
-const common = { category: CATEGORY_FORM, capabilities: CAPS, cssGroup: CSS_GROUP, css: "" };
+const common = { category: CATEGORY_FORM, capabilities: CAPS, css: "" };
 
 const PAGINATION_CSS = css`
     :host {
@@ -108,7 +107,7 @@ const PAGINATION_CSS = css`
     }
 `;
 
-export const pagination = defineComponent({
+export const pagination = defineUI({
     ...common,
     id: PREFIX + "pagination",
     label: "Pagination",

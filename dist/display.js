@@ -2,14 +2,13 @@
 // Progress, Spinner, Skeleton, Separator, Empty State, Timeline, Fieldset.
 // Their colours and sizes are theme tokens by default ({token:colors.fg}, {token:fontSizes.2xl}…):
 // they follow the app's theme and the colour mode, and each one can be bound instead.
-import { defineComponent, html, css, nothing, svg, assetUrl, theme } from "../../nexa-sdk/nexa-component-sdk.js";
+import { html, css, nothing, svg, assetUrl, theme } from "../../nexa-sdk/nexa-component-sdk.js";
 import {
     CATEGORY_DISPLAY, PREFIX, BASE_CSS, UIElement, CSS_GROUP, part, PALETTES,
-    sizeProp, paletteProp, variantProp, radiusProp, iconProp, icon, num
-} from "./core.js";
+    sizeProp, paletteProp, variantProp, radiusProp, iconProp, icon, num, defineUI } from "./core.js";
 
 const CAPS = { resizable: true, rotatable: true, flippable: false, lockable: true };
-const common = { category: CATEGORY_DISPLAY, capabilities: CAPS, cssGroup: CSS_GROUP, css: "" };
+const common = { category: CATEGORY_DISPLAY, capabilities: CAPS, css: "" };
 const px = (v, d) => num(v, d) + "px";
 const ALIGN = { type: "enum", default: "left", group: "Style", label: "Align", style: "segmented",
     options: [{ value: "left", label: "Left", icon: "fa fa-align-left" }, { value: "center", label: "Center", icon: "fa fa-align-center" }, { value: "right", label: "Right", icon: "fa fa-align-right" }] };
@@ -48,13 +47,13 @@ class TextView extends UIElement {
         return html`<div class="t" part="root" style="justify-content:${JUST[p.verticalAlign] || "flex-start"}">${body}</div>`;
     }
 }
-export const text = defineComponent({
+export const text = defineUI({
     ...common, id: PREFIX + "text", label: "Text", icon: "fa fa-font", size: { w: 240, h: 44 },
     properties: typeProps("The quick brown fox jumps over the lazy dog.", "sm", "normal", "fg"),
     parts: { root: part("Root", "root"), text: part("The text", "text") },
     view: class extends TextView { tag() { return "p"; } }
 });
-export const heading = defineComponent({
+export const heading = defineUI({
     ...common, id: PREFIX + "heading", label: "Heading", icon: "fa fa-header", size: { w: 280, h: 40 },
     properties: Object.assign(typeProps("Heading", "3xl", "normal", "fg"), {
         lineHeight: { type: "number", default: "{token:lineHeights.shorter}", tokens: "lineHeights", min: 0.5, step: 0.05, group: "Style", label: "Line height" },
@@ -98,7 +97,7 @@ const chipProps = (textDefault, palette) => ({
     variant: variantProp(["subtle", "solid", "surface", "outline"].map((v) => ({ value: v, label: v })), "subtle"),
     size: sizeProp("sm"), colorPalette: paletteProp(palette), radius: radiusProp("full")
 });
-export const badge = defineComponent({
+export const badge = defineUI({
     ...common, id: PREFIX + "badge", label: "Badge", icon: "fa fa-certificate", size: { w: 90, h: 28 },
     properties: Object.assign(chipProps("Badge", "gray"), { radius: radiusProp("sm") }),
     parts: { chip: part("The badge", "chip") },
@@ -111,7 +110,7 @@ export const badge = defineComponent({
         }
     }
 });
-export const tag = defineComponent({
+export const tag = defineUI({
     ...common, id: PREFIX + "tag", label: "Tag", icon: "fa fa-tag", size: { w: 110, h: 32 },
     properties: Object.assign(chipProps("Tag", "gray"), {
         closable: { type: "boolean", default: false, group: "Behaviour", label: "× to close it (On Close)" },
@@ -159,7 +158,7 @@ const CARD_CSS = css`
     .act.secondary { background: var(--nexa-colors-gray-700, #393939); color: var(--nexa-colors-white, #fff); }
     .act.secondary:hover { background: var(--nexa-colors-gray-600, #525252); }
 `;
-export const card = defineComponent({
+export const card = defineUI({
     ...common, id: PREFIX + "card", label: "Card", icon: "fa fa-id-card-o", size: { w: 300, h: 220 },
     help: "A card: an image, a title, text and up to two actions. For a card holding other components, use a frame (auto layout) with a fill / stroke / radius from the theme.",
     properties: {
@@ -226,7 +225,7 @@ function paletteFor(name) {
     let h = 0; for (const c of String(name || "")) h = (h * 31 + c.charCodeAt(0)) >>> 0;
     return list[h % list.length];
 }
-export const avatar = defineComponent({
+export const avatar = defineUI({
     ...common, id: PREFIX + "avatar", label: "Avatar", icon: "fa fa-user-circle", size: { w: 48, h: 48 },
     properties: {
         name: { type: "string", default: "Ada Lovelace", group: "Content", label: "Name (its initials)" },
@@ -276,7 +275,7 @@ const STAT_CSS = css`
     .chg .icon svg { width: 1em; height: 1em; }
     .unknown { color: var(--fg-subtle); }
 `;
-export const stat = defineComponent({
+export const stat = defineUI({
     ...common, id: PREFIX + "stat", label: "Stat", icon: "fa fa-line-chart", size: { w: 200, h: 96 },
     help: "A value with its label, unit, and a change up / down. Bind Value (or Data → Value) to a tag.",
     properties: {
@@ -338,7 +337,7 @@ const ALERT_CSS = css`
     .close:hover { background: color-mix(in srgb, currentColor 12%, transparent); }
     .close:focus-visible { outline: 2px solid var(--ring); }
 `;
-export const alert = defineComponent({
+export const alert = defineUI({
     ...common, id: PREFIX + "alert", label: "Alert", icon: "fa fa-exclamation-circle", size: { w: 360, h: 72 },
     properties: {
         status: { type: "enum", default: "info", group: "Content", label: "Status", options: ["info", "success", "warning", "error", "neutral"] },
@@ -394,7 +393,7 @@ const PROGRESS_CSS = css`
     .circle.indeterminate svg { animation: nx-ui-spin 1s linear infinite; }
     .circle .mid { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-family: var(--mono); font-variant-numeric: tabular-nums; }
 `;
-export const progress = defineComponent({
+export const progress = defineUI({
     ...common, id: PREFIX + "progress", label: "Progress", icon: "fa fa-tasks", size: { w: 240, h: 36 },
     properties: {
         value: { type: "number", default: 60, group: "Data", label: "Value (static; Data → Value (read) wins)" },
@@ -448,7 +447,7 @@ const SPINNER_CSS = css`
     .sw { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; gap: var(--gap); color: var(--fg-muted); }
     .sp { height: min(100%, calc(var(--icon) * 2)); aspect-ratio: 1; border-radius: 50%; border: var(--thk) solid var(--bg-muted); border-top-color: var(--c); animation: nx-ui-spin var(--speed) linear infinite; }
 `;
-export const spinnerComponent = defineComponent({
+export const spinnerComponent = defineUI({
     ...common, id: PREFIX + "spinner", label: "Spinner", icon: "fa fa-spinner", size: { w: 40, h: 40 },
     properties: {
         label: { type: "string", default: "", group: "Content", label: "Text next to it" },
@@ -479,7 +478,7 @@ const SKELETON_CSS = css`
     .shine .b { background: linear-gradient(90deg, var(--bg-muted) 25%, var(--bg-subtle) 50%, var(--bg-muted) 75%); background-size: 200% 100%; animation: nx-ui-shine 1.4s linear infinite; }
     @keyframes nx-ui-shine { from { background-position: 200% 0; } to { background-position: -200% 0; } }
 `;
-export const skeleton = defineComponent({
+export const skeleton = defineUI({
     ...common, id: PREFIX + "skeleton", label: "Skeleton", icon: "fa fa-square", size: { w: 240, h: 60 },
     help: "A placeholder while something loads: bind Loaded to hide it.",
     properties: {
@@ -514,7 +513,7 @@ const SEP_CSS = css`
     .sep.start .line:first-child, .sep.end .line:last-child { flex: 0 0 12px; }
     .lbl { flex: 0 0 auto; font-size: 0.86em; white-space: nowrap; }
 `;
-export const separator = defineComponent({
+export const separator = defineUI({
     ...common, id: PREFIX + "separator", label: "Separator", icon: "fa fa-minus", size: { w: 240, h: 16 },
     properties: {
         orientation: { type: "enum", default: "horizontal", group: "Style", label: "Direction", style: "segmented", options: [{ value: "horizontal", label: "Across" }, { value: "vertical", label: "Down" }] },
@@ -545,7 +544,7 @@ const EMPTY_CSS = css`
     .act { all: unset; margin-top: 6px; height: calc(var(--h) * 0.85); padding: 0 var(--px); border-radius: var(--r); font-weight: 600; cursor: pointer; background: var(--cp-solid); color: var(--cp-contrast); display: inline-flex; align-items: center; }
     .act:hover { background: color-mix(in srgb, var(--cp-solid) 86%, #000); }
 `;
-export const emptyState = defineComponent({
+export const emptyState = defineUI({
     ...common, id: PREFIX + "empty-state", label: "Empty State", icon: "fa fa-inbox", size: { w: 320, h: 220 },
     properties: {
         icon: iconProp("Icon", "inbox"),
@@ -584,7 +583,7 @@ const TIMELINE_CSS = css`
     .time { color: var(--fg-subtle); font-size: var(--fs-label); font-family: var(--mono); white-space: nowrap; }
     .desc { color: var(--fg-muted); white-space: pre-wrap; }
 `;
-export const timeline = defineComponent({
+export const timeline = defineUI({
     ...common, id: PREFIX + "timeline", label: "Timeline", icon: "fa fa-list-ol", size: { w: 300, h: 240 },
     properties: {
         items: { type: "list", default: [
@@ -630,7 +629,7 @@ const FIELDSET_CSS = css`
     .desc { color: var(--fg-muted); }
     .err { color: var(--err); }
 `;
-export const fieldset = defineComponent({
+export const fieldset = defineUI({
     ...common, id: PREFIX + "fieldset", label: "Fieldset", icon: "fa fa-object-group", size: { w: 320, h: 200 },
     help: "A group box with a legend: put form controls on it (drawn behind them). For controls that move with it, use a frame and this as its background.",
     properties: {

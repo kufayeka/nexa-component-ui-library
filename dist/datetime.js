@@ -1,14 +1,13 @@
 // Nexa UI — Date Time Picker: granular unit selection (Year, Month, Day, Hours, Minutes, Seconds),
 // custom format templating / regex / expressions, and first-class UTC & Local timezone handling.
 // Fully styled to Nexa UI / IBM Carbon specifications.
-import { defineComponent, html, css, nothing } from "../../nexa-sdk/nexa-component-sdk.js";
+import { html, css, nothing } from "../../nexa-sdk/nexa-component-sdk.js";
 import {
     CATEGORY_FORM, PREFIX, BASE_CSS, UIElement, field, FIELD_PROPS, FIELD_PARTS, CSS_GROUP, part,
-    sizeProp, paletteProp, variantProp, radiusProp, disabledProp, icon
-} from "./core.js";
+    sizeProp, paletteProp, variantProp, radiusProp, disabledProp, icon, defineUI } from "./core.js";
 
 const CAPS = { resizable: true, rotatable: false, flippable: false, lockable: true };
-const common = { category: CATEGORY_FORM, capabilities: CAPS, cssGroup: CSS_GROUP, css: "" };
+const common = { category: CATEGORY_FORM, capabilities: CAPS, css: "" };
 
 const MONTH_NAMES_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const MONTH_NAMES_FULL = [
@@ -263,7 +262,7 @@ const DATETIME_CSS = css`
     .btn-primary:hover { filter: brightness(0.92); }
 `;
 
-export const dateTime = defineComponent({
+export const dateTime = defineUI({
     ...common,
     id: PREFIX + "datetime",
     label: "Date Time",
@@ -989,7 +988,7 @@ const DATERANGE_CSS = css`
     .btn-primary:hover { filter: brightness(0.92); }
 `;
 
-export const dateRange = defineComponent({
+export const dateRange = defineUI({
     ...common,
     id: PREFIX + "daterange",
     label: "Date Range",

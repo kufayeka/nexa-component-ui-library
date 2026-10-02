@@ -4,8 +4,8 @@
 // mode, time range, refresh, variables), and Logic both ways: On Load / On Message (a
 // postMessage from the page) / On Error / On Timeout; actions Reload, Open URL, Send a message,
 // Set parameters, Back, Forward.
-import { defineComponent, html, css, nothing, theme } from "../../nexa-sdk/nexa-component-sdk.js";
-import { PREFIX, BASE_CSS, UIElement, CSS_GROUP, part, radiusProp, icon, spinner, num } from "./core.js";
+import { html, css, nothing, theme } from "../../nexa-sdk/nexa-component-sdk.js";
+import { PREFIX, BASE_CSS, UIElement, CSS_GROUP, part, radiusProp, icon, spinner, num, defineUI } from "./core.js";
 
 export const CATEGORY_EMBED = "UI · Embed";
 const CAPS = { resizable: true, rotatable: false, flippable: false, lockable: true };
@@ -191,9 +191,9 @@ function originOf(url) {
     try { return new URL(url, location.href).origin; } catch (e) { return ""; }
 }
 
-export const iframe = defineComponent({
+export const iframe = defineUI({
     id: PREFIX + "iframe", label: "Iframe", icon: "fa fa-window-restore", size: { w: 640, h: 360 },
-    category: CATEGORY_EMBED, capabilities: CAPS, cssGroup: CSS_GROUP, css: "",
+    category: CATEGORY_EMBED, capabilities: CAPS, css: "",
     help: "Another web page in this one: a Grafana dashboard, a camera, a report. Its URL and parameters can be bound (a variable, a tag). Logic: On Load / On Message (the page's postMessage), and Update Component → Run: Reload / Open URL / Send a message / Set parameters.",
     properties: Object.assign({
         // Content

@@ -2,16 +2,15 @@
 // Switch, Radio Group, Segmented Control, Select, Combobox, Slider, Tags Input, Pin Input,
 // Rating. Text fields run on the SDK's FieldController (edit -> validate -> write -> ack);
 // the widgets with a keyboard model of their own on zag.js (from the SDK).
-import { defineComponent, FieldController, html, css, nothing, zag } from "../../nexa-sdk/nexa-component-sdk.js";
+import { FieldController, html, css, nothing, zag } from "../../nexa-sdk/nexa-component-sdk.js";
 import {
     CATEGORY_FORM, PREFIX, BASE_CSS, UIElement, field, FIELD_PROPS, FIELD_PARTS, CSS_GROUP, part,
     sizeProp, paletteProp, variantProp, radiusProp, disabledProp, iconProp, icon, spinner, starIcon,
-    VALUE_IO, VALUE_EVENTS, ValueState, OPTION_PROPS, OPTION_INPUT, optionsOf, parseValue, num
-} from "./core.js";
+    VALUE_IO, VALUE_EVENTS, ValueState, OPTION_PROPS, OPTION_INPUT, optionsOf, parseValue, num, defineUI } from "./core.js";
 
 const { ZagController, spread } = zag;
 const CAPS = { resizable: true, rotatable: false, flippable: false, lockable: true };
-const common = { category: CATEGORY_FORM, capabilities: CAPS, cssGroup: CSS_GROUP, css: "" };
+const common = { category: CATEGORY_FORM, capabilities: CAPS, css: "" };
 const boolOf = (v) => v === true || v === 1 || v === "1" || (typeof v === "string" && v.trim().toLowerCase() === "true") || v === "on";
 const toArray = (v) => {
     if (Array.isArray(v)) return v.map(String);
@@ -52,7 +51,7 @@ const BUTTON_CSS = css`
     :host([data-variant="plain"]) .btn { background: transparent; color: var(--cp-fg); padding: 0; }
     :host([data-variant="plain"]) .btn:hover:not(:disabled) { text-decoration: underline; }
 `;
-export const button = defineComponent({
+export const button = defineUI({
     ...common,
     id: PREFIX + "button", label: "Button", icon: "fa fa-hand-pointer-o", size: { w: 120, h: 40 },
     help: "A button. On Click (Logic), and optionally writes a value on click (Data).",
@@ -207,7 +206,7 @@ class TextFieldView extends UIElement {
 }
 const textParts = Object.assign({}, FIELD_PARTS, { box: part("The box around the text", "box") });
 
-export const input = defineComponent({
+export const input = defineUI({
     ...common, ...textIO,
     id: PREFIX + "input", label: "Input", icon: "fa fa-i-cursor", size: { w: 220, h: 40 },
     properties: textProps("text", {
@@ -227,7 +226,7 @@ export const input = defineComponent({
     }
 });
 
-export const textarea = defineComponent({
+export const textarea = defineUI({
     ...common, ...textIO,
     id: PREFIX + "textarea", label: "Textarea", icon: "fa fa-align-left", size: { w: 260, h: 96 },
     outputs: { value: { ...textIO.outputs.value, help: "Written on Ctrl+Enter (Enter = a new line) or on leaving it. Empty = back to Value (read)." } },
@@ -247,7 +246,7 @@ export const textarea = defineComponent({
     }
 });
 
-export const numberInput = defineComponent({
+export const numberInput = defineUI({
     ...common, ...textIO,
     id: PREFIX + "number-input", label: "Number Input", icon: "fa fa-sort-numeric-asc", size: { w: 160, h: 40 },
     properties: textProps("float", {
@@ -292,7 +291,7 @@ export const numberInput = defineComponent({
 });
 
 const { pattern: _pt, patternMessage: _pm, ...passwordText } = textProps("text");
-export const passwordInput = defineComponent({
+export const passwordInput = defineUI({
     ...common, ...textIO,
     id: PREFIX + "password-input", label: "Password Input", icon: "fa fa-key", size: { w: 220, h: 40 },
     properties: Object.assign({}, passwordText, {
@@ -370,7 +369,7 @@ class BoolView extends UIElement {
         return field(this, html`<div style="flex:1 1 auto;display:flex;align-items:center;min-height:0">${row}</div>`);
     }
 }
-export const checkbox = defineComponent({
+export const checkbox = defineUI({
     ...common, ...boolIO,
     id: PREFIX + "checkbox", label: "Checkbox", icon: "fa fa-check-square-o", size: { w: 160, h: 32 },
     properties: Object.assign(boolProps("Checkbox", [{ value: "neutral", label: "Neutral" }, { value: "brand", label: "Palette" }], "neutral"), {
@@ -379,7 +378,7 @@ export const checkbox = defineComponent({
     events: VALUE_EVENTS, parts: Object.assign({}, FIELD_PARTS, { text: part("Its text", "text") }),
     view: class extends BoolView { kind() { return "checkbox"; } }
 });
-export const switchControl = defineComponent({
+export const switchControl = defineUI({
     ...common, ...boolIO,
     id: PREFIX + "switch", label: "Switch", icon: "fa fa-toggle-on", size: { w: 160, h: 32 },
     properties: Object.assign(boolProps("Switch", [{ value: "solid", label: "Solid" }], "solid"), { colorPalette: paletteProp("green") }),
@@ -436,7 +435,7 @@ class ChoiceView extends UIElement {
         });
     }
 }
-export const radioGroup = defineComponent({
+export const radioGroup = defineUI({
     ...common, ...choiceIO,
     id: PREFIX + "radio-group", label: "Radio Group", icon: "fa fa-dot-circle-o", size: { w: 260, h: 40 },
     properties: choiceProps({
@@ -451,7 +450,7 @@ export const radioGroup = defineComponent({
         }
     }
 });
-export const segmented = defineComponent({
+export const segmented = defineUI({
     ...common, ...choiceIO,
     id: PREFIX + "segmented", label: "Segmented Control", icon: "fa fa-columns", size: { w: 260, h: 40 },
     properties: choiceProps({
@@ -518,7 +517,7 @@ function menuList(api, items, empty) {
     </div>`;
 }
 
-export const select = defineComponent({
+export const select = defineUI({
     ...common, ...choiceIO,
     id: PREFIX + "select", label: "Select", icon: "fa fa-caret-square-o-down", size: { w: 220, h: 40 },
     properties: menuProps({
@@ -559,7 +558,7 @@ export const select = defineComponent({
     }
 });
 
-export const combobox = defineComponent({
+export const combobox = defineUI({
     ...common, ...choiceIO,
     id: PREFIX + "combobox", label: "Combobox", icon: "fa fa-search", size: { w: 220, h: 40 },
     help: "A text field that filters its options as you type.",
@@ -642,7 +641,7 @@ const SLIDER_CSS = css`
     [data-disabled] .range, [data-disabled] .thumb { background: var(--bd-strong); }
     [data-disabled] .control { cursor: not-allowed; }
 `;
-export const slider = defineComponent({
+export const slider = defineUI({
     ...common, inputs: { value: { ...VALUE_IO.inputs.value, type: "number" } }, outputs: { value: { ...VALUE_IO.outputs.value, help: "Written when you let go. Empty = back to Value (read): two-way." } },
     id: PREFIX + "slider", label: "Slider", icon: "fa fa-sliders", size: { w: 240, h: 48 },
     properties: Object.assign({}, FIELD_PROPS, {
@@ -729,7 +728,7 @@ const TAGS_CSS = css`
     [data-disabled] .star { color: var(--bd-strong); }
     .rating-out { margin-left: var(--gap); color: var(--fg-muted); }
 `;
-export const tagsInput = defineComponent({
+export const tagsInput = defineUI({
     ...common, inputs: { value: { ...VALUE_IO.inputs.value, type: "any", help: "An array of texts (or text with commas). Empty = its own value." } }, outputs: VALUE_IO.outputs,
     id: PREFIX + "tags-input", label: "Tags Input", icon: "fa fa-tags", size: { w: 280, h: 40 },
     properties: Object.assign({}, FIELD_PROPS, {
@@ -781,7 +780,7 @@ export const tagsInput = defineComponent({
     }
 });
 
-export const pinInput = defineComponent({
+export const pinInput = defineUI({
     ...common, inputs: { value: { ...VALUE_IO.inputs.value, type: "string" } }, outputs: { value: { ...VALUE_IO.outputs.value, help: "Written once every box is filled. Empty = back to Value (read)." } },
     id: PREFIX + "pin-input", label: "Pin Input", icon: "fa fa-th", size: { w: 220, h: 48 },
     properties: Object.assign({}, FIELD_PROPS, {
@@ -829,7 +828,7 @@ export const pinInput = defineComponent({
     }
 });
 
-export const rating = defineComponent({
+export const rating = defineUI({
     ...common, inputs: { value: { ...VALUE_IO.inputs.value, type: "number" } }, outputs: VALUE_IO.outputs,
     id: PREFIX + "rating", label: "Rating", icon: "fa fa-star-half-o", size: { w: 180, h: 36 },
     properties: Object.assign({}, FIELD_PROPS, {
