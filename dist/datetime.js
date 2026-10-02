@@ -466,7 +466,7 @@ export const dateTime = defineComponent({
             }
 
             if (this.out.canWrite("value")) {
-                this.out.write("value", outVal).catch(() => {});
+                this.out.write("value", outVal).catch(() => { });
             }
 
             this.emit("change", {
@@ -487,7 +487,7 @@ export const dateTime = defineComponent({
         clear() {
             this._localValue = null;
             if (this.out.canWrite("value")) {
-                this.out.write("value", null).catch(() => {});
+                this.out.write("value", null).catch(() => { });
             }
             this.emit("change", { value: null, iso: "", timestamp: null, text: "", utc: "" });
             this.closePopover();
@@ -835,28 +835,97 @@ const DATERANGE_CSS = css`
 
     /* Popover flyout (Carbon style dual calendar) */
     .daterange-popover {
-        position: absolute; top: calc(100% + 4px); left: 0; z-index: 1000;
-        background: var(--panel, #ffffff); border: 1px solid var(--bd); border-radius: var(--r);
-        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.16); padding: 16px;
-        display: flex; flex-direction: row; gap: 16px; box-sizing: border-box; cursor: default;
-        animation: nx-dt-fade 120ms cubic-bezier(0.2, 0, 0.38, 0.9);
+        position: absolute;
+        top: calc(100% + 4px);
+        left: 0;
+        z-index: 1000;
+
+        background: var(--panel, #ffffff);
+        border: 1px solid var(--bd);
+        border-radius: var(--r);
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.16);
+
+        padding: 16px;
+
+        display: flex;
+        flex-direction: row;
+        gap: 16px;
+
+        width: max-content;
         max-width: 90vw;
+
+        box-sizing: border-box;
+        cursor: default;
+
+        animation: nx-dt-fade 120ms cubic-bezier(0.2, 0, 0.38, 0.9);
     }
+
     .daterange-presets {
-        display: flex; flex-direction: column; gap: 3px; padding-right: 14px;
-        border-right: 1px solid var(--bd); min-width: 110px; user-select: none;
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+
+        padding-right: 14px;
+        border-right: 1px solid var(--bd);
+
+        min-width: 110px;
+        user-select: none;
     }
+
     .daterange-preset-btn {
-        all: unset; padding: 6px 10px; font-size: 12px; font-weight: 500; color: var(--fg-muted);
-        border-radius: var(--r); cursor: pointer; text-align: left; white-space: nowrap;
-        transition: background-color var(--t) var(--ease), color var(--t) var(--ease);
+        all: unset;
+
+        padding: 6px 10px;
+
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--fg-muted);
+
+        border-radius: var(--r);
+        cursor: pointer;
+        text-align: left;
+        white-space: nowrap;
+
+        transition:
+            background-color var(--t) var(--ease),
+            color var(--t) var(--ease);
     }
-    .daterange-preset-btn:hover { background: var(--bg-muted); color: var(--fg); }
 
-    .daterange-main { display: flex; flex-direction: column; gap: 12px; }
-    .daterange-panes { display: flex; gap: 20px; flex-wrap: wrap; }
-    .daterange-pane { display: flex; flex-direction: column; gap: 8px; width: 232px; }
+    .daterange-preset-btn:hover {
+        background: var(--bg-muted);
+        color: var(--fg);
+    }
 
+    .daterange-main {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+
+        width: max-content;
+    }
+
+    .daterange-panes {
+        display: flex;
+        flex-direction: row;
+
+        gap: 20px;
+
+        flex-wrap: nowrap;
+    }
+
+    .daterange-panes.vertical {
+        flex-direction: column;
+        gap: 16px;
+    }
+
+    .daterange-pane {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+
+        width: 232px;
+        flex: 0 0 232px;
+    }
     .cal-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
     .cal-title { font-weight: 600; font-size: 13px; color: var(--fg); display: flex; align-items: center; gap: 6px; }
     .cal-nav-btn {
@@ -943,6 +1012,17 @@ export const dateRange = defineComponent({
         },
         presets: {
             type: "boolean", default: true, group: "Presets", label: "Show quick presets sidebar"
+        },
+        monthLayout: {
+            type: "enum",
+            default: "horizontal",
+            group: "Display",
+            label: "Calendar layout",
+            style: "segmented",
+            options: [
+                { value: "horizontal", label: "Side by side" },
+                { value: "vertical", label: "Stacked" }
+            ]
         },
         enableTime: {
             type: "boolean", default: false, group: "Granularity", label: "Enable time selection (HH:mm)"
@@ -1135,13 +1215,13 @@ export const dateRange = defineComponent({
             const outRange = (outStart !== null && outEnd !== null) ? { start: outStart, end: outEnd } : null;
 
             if (this.out.canWrite("start")) {
-                this.out.write("start", outStart).catch(() => {});
+                this.out.write("start", outStart).catch(() => { });
             }
             if (this.out.canWrite("end")) {
-                this.out.write("end", outEnd).catch(() => {});
+                this.out.write("end", outEnd).catch(() => { });
             }
             if (this.out.canWrite("range")) {
-                this.out.write("range", outRange).catch(() => {});
+                this.out.write("range", outRange).catch(() => { });
             }
 
             const fmt = this.p.format || (this.p.enableTime ? "YYYY-MM-DD HH:mm" : "YYYY-MM-DD");
@@ -1184,9 +1264,9 @@ export const dateRange = defineComponent({
             this._tempEnd = null;
             this._pickingEnd = false;
             this._hoverDate = null;
-            if (this.out.canWrite("start")) this.out.write("start", null).catch(() => {});
-            if (this.out.canWrite("end")) this.out.write("end", null).catch(() => {});
-            if (this.out.canWrite("range")) this.out.write("range", null).catch(() => {});
+            if (this.out.canWrite("start")) this.out.write("start", null).catch(() => { });
+            if (this.out.canWrite("end")) this.out.write("end", null).catch(() => { });
+            if (this.out.canWrite("range")) this.out.write("range", null).catch(() => { });
             this.emit("change", { start: null, end: null, range: null, startIso: "", endIso: "", text: "" });
             this.closePopover();
             this.requestUpdate();
@@ -1392,7 +1472,7 @@ export const dateRange = defineComponent({
                 ` : nothing}
 
                 <div class="daterange-main">
-                    <div class="daterange-panes">
+                    <div class="daterange-panes ${p.monthLayout === "vertical" ? "vertical" : ""}">
                         <div class="daterange-pane">
                             <div class="cal-header">
                                 <button class="cal-nav-btn" type="button" title="Previous Month" @click="${this._prevMonth}">
