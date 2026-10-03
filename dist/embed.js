@@ -182,6 +182,7 @@ function checkEmbed(url) {
     if (!/^https?:\/\//i.test(url)) return Promise.resolve(null);
     const key = url.replace(/[?#].*$/, "");
     if (!embedChecks[key]) {
+        // nexa-lint-allow network: the plugin's own admin route (widgets/embed-check.js), editor only
         embedChecks[key] = fetch("nexa-component-ui-library/embed-check?url=" + encodeURIComponent(url) + "&from=" + encodeURIComponent(location.origin))
             .then((r) => (r.ok ? r.json() : null)).catch(() => null);
     }
@@ -269,7 +270,7 @@ export const iframe = defineUI({
                 this.fire("message", { data: e.data, origin: e.origin });
             });
         }
-        unmounted() { clearTimeout(this.tmo); clearInterval(this.every); }
+        unmounted() { clearTimeout(this.tmo); clearInterval(this.reloadTimer); }
         frame() { return this.renderRoot && this.renderRoot.querySelector("iframe"); }
         url() {
             if (this.navigatedTo) return toEmbedUrl(this.navigatedTo, this.p);
@@ -289,9 +290,9 @@ export const iframe = defineUI({
             // Reload every N seconds
             const every = num(this.p.autoReload, 0);
             if (every !== this.everySec) {
-                clearInterval(this.every);
+                clearInterval(this.reloadTimer);   // its own name: this.every is the SDK's timer method
                 this.everySec = every;
-                if (every > 0 && !this.isEditor) this.every = setInterval(() => this.reload(), every * 1000);
+                this.reloadTimer = every > 0 && !this.isEditor ? this.every(every * 1000, () => this.reload()) : null;
             }
         }
         armTimeout() {
