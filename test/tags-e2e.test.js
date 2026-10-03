@@ -67,6 +67,17 @@ function set(prefix) {
 }
 const top = set('p');
 const inSlot = set('s');
+// binding priority lists ({ $bind, static }) on a plain prop (a stat's label): a tag source, an
+// expression over a tag, a tag with a static value (it shows while the tag is unknown) — on the
+// screen and in the Tabs panel
+const L = (m) => ({ src: 'sparkplug', ref: 'G::E1::D1::' + m });
+const lists = (prefix) => [
+    { id: prefix + 'L1', type: 'nexa-ui-stat', x: 0, y: 0, w: 220, h: 96, props: { label: { $bind: [L(prefix === 'p' ? 'Txt' : 'S_Txt')] }, inputValue: TAG(prefix === 'p' ? 'Stat' : 'S_Stat'), change: '' } },
+    { id: prefix + 'L2', type: 'nexa-ui-stat', x: 0, y: 0, w: 220, h: 96, props: { label: { $bind: [{ src: 'expr', ref: '[sparkplug]{G::E1::D1::' + (prefix === 'p' ? 'Num' : 'S_Num') + '} * 2 " u"' }], static: 'none' }, inputValue: TAG('Stat'), change: '' } },
+    { id: prefix + 'L3', type: 'nexa-ui-stat', x: 0, y: 0, w: 220, h: 96, props: { label: { $bind: [{ src: 'app', ref: 'nothing' }, L(prefix === 'p' ? 'Int' : 'S_Int')], static: 'offline' }, inputValue: TAG('Stat'), change: '' } }
+];
+top.push(...lists('p'));
+inSlot.push(...lists('s'));
 const pos = (list, x0) => { let y = 20; list.forEach((c) => { c.x = x0; c.y = y; y += c.h + 12; }); return y; };
 pos(top, 20);
 // the slot set: in a Tabs' "overview" panel (a vertical auto layout places them)
@@ -159,6 +170,14 @@ const portFree = (port) => new Promise((resolve) => { const t = net.createServer
                 const got = await read(c.id, kind);
                 check(`read  ${c.id.charAt(0) === 'p' ? 'screen' : 'in tab'} ${c.type.slice(8)} (${metricOf(c)})`, got === expectOf(c, kind), got);
             }
+            // 1b. binding lists: the first source with a value
+            const label = (id) => js(`(function () { var r = ${R(id)}; var l = r && r.querySelector(".lbl"); return l ? l.textContent.trim() : null; })()`);
+            for (const P of ['p', 's']) {
+                const where = P === 'p' ? 'screen' : 'in tab';
+                check(`list  ${where} a tag source`, (await label(P + 'L1')) === 'PO-7', await label(P + 'L1'));
+                check(`list  ${where} an expression over a tag`, (await label(P + 'L2')) === '25 u', await label(P + 'L2'));
+                check(`list  ${where} a variable without a value falls through to the tag`, (await label(P + 'L3')) === '3', await label(P + 'L3'));
+            }
             // 2. A CHANGE at the edge reaches both copies
             values.Num = 99.25; values.S_Num = 99.25; values.Bool = false; values.S_Bool = false; values.Opt = 'c'; values.S_Opt = 'c'; values.Stat = 7; values.S_Stat = 7;
             edge.ddata(['Num', 'S_Num', 'Bool', 'S_Bool', 'Opt', 'S_Opt', 'Stat', 'S_Stat']);
@@ -170,6 +189,7 @@ const portFree = (port) => new Promise((resolve) => { const t = net.createServer
                 const got = await read(c.id, kind);
                 check(`change ${c.id.charAt(0) === 'p' ? 'screen' : 'in tab'} ${c.type.slice(8)} (${m})`, got === exp, got);
             }
+            for (const P of ['p', 's']) check(`change ${P === 'p' ? 'screen' : 'in tab'} a binding list's expression follows its tag`, (await label(P + 'L2')) === '198.5 u', await label(P + 'L2'));
             // 3. WRITE: the user's input goes to the tag (DCMD), the edge echoes, the component shows it
             const at = async (sel) => js(`(function () { var e = ${sel}; e.scrollIntoView({ block: "center" }); var b = e.getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2 }; })()`);
             const click = async (sel) => { const p = await at(sel);
@@ -222,7 +242,13 @@ const portFree = (port) => new Promise((resolve) => { const t = net.createServer
             await wait(800);
             const dead = await read('p3', 'field');
             check('device death: a field shows ??? (not its stale value)', dead === '' || dead === '???' || /\?\?\?/.test(await js(`${R('p3')}.textContent`)), dead);
+            for (const P of ['p', 's']) {
+                const where = P === 'p' ? 'screen' : 'in tab';
+                check(`device death: ${where} a list with a static value shows it`, (await label(P + 'L3')) === 'offline', await label(P + 'L3'));
+                check(`device death: ${where} a list without one shows ???`, (await label(P + 'L1')) === '???', await label(P + 'L1'));
+            }
             edge.birth(); await wait(1200);
+            check('rebirth: a binding list has its tag again', (await label('pL3')) === String(values.Int), await label('pL3'));
             check('rebirth: the value is back', (await read('p3', 'field')) === String(values.Num), await read('p3', 'field'));
             const ss = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true });
             if (process.env.NEXA_SHOT) fs.writeFileSync(process.env.NEXA_SHOT, Buffer.from(ss.result.data, 'base64'));
