@@ -116,6 +116,41 @@ Modeled after the official IBM Carbon Design System Pagination specifications an
 - **Flush Carbon Reveal Button**: The toggle visibility eye button stretches full height flush to the right border of the field (`margin-right: -var(--px)`), replacing clunky floating boxes.
 - **Suppressed Native Browser Overlays**: Suppresses browser-native reveal overlays (`::-ms-reveal`, `::-ms-clear`, and webkit autofill buttons) to guarantee crisp, uncluttered rendering across Edge, Chrome, Safari, and Firefox.
 
+### Line Chart (`nexa-ui-line-chart`)
+
+A time-series chart with many series. Logic drives it.
+
+- **Series** is a list, like Tabs. Each series has:
+  - its own **data**:
+    - *Data*, an array that replaces what the series holds;
+    - *Point*, which appends: `{x, y}`, a list of them, or a number (its time is now).
+
+    Both are binding lists: a message path, a tag, a variable… A series has its own ring buffer and its own LOD, so series update independently.
+  - a **variant**: line, step (after / before / half way), smooth (monotone: no overshoot), bars, or points only;
+  - a **style**: colour, width, dash, opacity, fill (gradient / solid, opacity), points (shape, size);
+  - an **axis** (left / right) and a unit;
+  - a **tooltip**: label, decimals, text before / after the value;
+  - a **gap**: break the line after N ms without data;
+  - an **Id** that Logic names it by. A new series gets `s2`, `s3`…
+- The list's order is the **layer order**: the first series is drawn first, under the others.
+- **Axes:** left and right, each with a title and a fixed min / max. The right axis shows when a series uses it.
+- **Tooltip:**
+  - shared shows every series at that time, each matched within its own sample spacing (a slow series still shows next to a fast one);
+  - nearest shows one series;
+  - off shows nothing.
+- **Legend:** a click hides a series, Alt+click shows only that one. It can show each series' last / min / max value.
+- **Thresholds:** horizontal lines (a value, an axis, a colour, a label, a dash).
+- **Actions:**
+  - `appendPoints` / `setPoints` / `clearSeries` / `setVisible`, with `series` = an Id, a name or an index;
+  - `clearPoints` (every series), `setRange` and `resetZoom`.
+- **Events:**
+  - `hover` (time, values: a shared crosshair through a variable);
+  - `rangeChange` (from, to, live: load history for the range shown);
+  - `seriesToggle`, `pointClick`.
+- **Capacity:** every point is kept (Float64) and drawn at pixel accuracy (M4 + an LOD pyramid). One million points per series draw in a few milliseconds.
+- **The canvas:** a series with no data shows a sample wave, so you can design the look.
+- **A v1 chart** (one series in flat props) becomes Series 1 when it is loaded, its bindings kept.
+
 ## The look
 
 Nexa UI's look is based on **IBM Carbon**: sharp and clear, made a little softer (4px corners, clear focus rings, a little depth on tiles and menus). You can tell it apart by:

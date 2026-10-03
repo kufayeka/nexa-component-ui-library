@@ -78,6 +78,11 @@ const lists = (prefix) => [
 ];
 top.push(...lists('p'));
 inSlot.push(...lists('s'));
+// a line chart: a series' point bound to a tag (each change one more point)
+const chart = (prefix) => ({ id: prefix + 'LC', type: 'nexa-ui-line-chart', x: 0, y: 0, w: 380, h: 200,
+    props: { series: [{ id: 's1', name: 'Num', point: { $bind: [L(prefix === 'p' ? 'Num' : 'S_Num')] } }], legend: 'none' } });
+top.push(chart('p'));
+inSlot.push(chart('s'));
 const pos = (list, x0) => { let y = 20; list.forEach((c) => { c.x = x0; c.y = y; y += c.h + 12; }); return y; };
 pos(top, 20);
 // the slot set: in a Tabs' "overview" panel (a vertical auto layout places them)
@@ -178,6 +183,11 @@ const portFree = (port) => new Promise((resolve) => { const t = net.createServer
                 check(`list  ${where} an expression over a tag`, (await label(P + 'L2')) === '25 u', await label(P + 'L2'));
                 check(`list  ${where} a variable without a value falls through to the tag`, (await label(P + 'L3')) === '3', await label(P + 'L3'));
             }
+            // 1c. a chart series' point from a tag: the value it has now is its first point
+            const lcCount = (id) => js(`(function () { var w = document.querySelector('[data-id="${id}"] > *'); return w && w.ringBuffer ? w.ringBuffer.count : -1; })()`);
+            const lcLast = (id) => js(`(function () { var w = document.querySelector('[data-id="${id}"] > *'); var b = w && w.ringBuffer; return b && b.count ? b.getY(b.count - 1) : null; })()`);
+            for (const P of ['p', 's']) check(`chart ${P === 'p' ? 'screen' : 'in tab'}: a series' point from a tag`, (await lcCount(P + 'LC')) >= 1 && (await lcLast(P + 'LC')) === 12.5, [await lcCount(P + 'LC'), await lcLast(P + 'LC')]);
+            const lcBefore = { p: await lcCount('pLC'), s: await lcCount('sLC') };
             // 2. A CHANGE at the edge reaches both copies
             values.Num = 99.25; values.S_Num = 99.25; values.Bool = false; values.S_Bool = false; values.Opt = 'c'; values.S_Opt = 'c'; values.Stat = 7; values.S_Stat = 7;
             edge.ddata(['Num', 'S_Num', 'Bool', 'S_Bool', 'Opt', 'S_Opt', 'Stat', 'S_Stat']);
@@ -190,6 +200,7 @@ const portFree = (port) => new Promise((resolve) => { const t = net.createServer
                 check(`change ${c.id.charAt(0) === 'p' ? 'screen' : 'in tab'} ${c.type.slice(8)} (${m})`, got === exp, got);
             }
             for (const P of ['p', 's']) check(`change ${P === 'p' ? 'screen' : 'in tab'} a binding list's expression follows its tag`, (await label(P + 'L2')) === '198.5 u', await label(P + 'L2'));
+            for (const P of ['p', 's']) check(`change ${P === 'p' ? 'screen' : 'in tab'} the chart has one more point, the new value`, (await lcCount(P + 'LC')) === lcBefore[P] + 1 && (await lcLast(P + 'LC')) === 99.25, [lcBefore[P], await lcCount(P + 'LC'), await lcLast(P + 'LC')]);
             // 3. WRITE: the user's input goes to the tag (DCMD), the edge echoes, the component shows it
             const at = async (sel) => js(`(function () { var e = ${sel}; e.scrollIntoView({ block: "center" }); var b = e.getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2 }; })()`);
             const click = async (sel) => { const p = await at(sel);

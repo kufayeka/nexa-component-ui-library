@@ -1,4 +1,4 @@
-import { html, css } from "../../nexa-sdk/nexa-component-sdk.js";
+import { html, css, asBinding } from "../../nexa-sdk/nexa-component-sdk.js";
 import {
     PREFIX,
     BASE_CSS,
@@ -23,10 +23,6 @@ const common = {
     css: ""
 };
 
-const SAMPLE_DATA = [
-
-];
-
 const LINE_CHART_CSS = css`
     :host {
         display: block;
@@ -40,6 +36,8 @@ const LINE_CHART_CSS = css`
 
     .chart-container {
         position: relative;
+        display: flex;
+        flex-direction: column;
         width: 100%;
         height: 100%;
         min-width: 0;
@@ -49,21 +47,77 @@ const LINE_CHART_CSS = css`
         border: 1px solid var(--bd, #2c3235);
         border-radius: var(--r, 4px);
         box-sizing: border-box;
+    }
+
+    .plot {
+        position: relative;
+        flex: 1 1 auto;
+        min-height: 0;
         cursor: crosshair;
         touch-action: none;
     }
 
-    .chart-container.hover-comb {
+    .plot.hover-comb {
         cursor: ew-resize;
     }
 
-    .chart-container.dragging {
+    .plot.dragging {
         cursor: grabbing !important;
     }
 
-    .chart-container.scrubbing {
+    .plot.scrubbing {
         cursor: ew-resize !important;
     }
+
+    .legend {
+        flex: 0 0 auto;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 2px 14px;
+        padding: 4px 10px 6px 52px;
+        font-size: 11px;
+        line-height: 1.4;
+        color: var(--fg-muted, #a0aec0);
+        max-height: 40%;
+        overflow-y: auto;
+    }
+
+    .lg-item {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 1px 2px;
+        border: 0;
+        background: none;
+        color: inherit;
+        font: inherit;
+        cursor: pointer;
+        white-space: nowrap;
+    }
+
+    .lg-item:hover .lg-name { color: var(--fg, #fff); }
+    .lg-item.off { opacity: 0.38; }
+
+    .lg-swatch {
+        width: 12px;
+        height: 3px;
+        border-radius: 2px;
+        flex-shrink: 0;
+    }
+
+    .lg-val {
+        font-family: var(--mono, monospace);
+        color: var(--fg, #fff);
+        font-variant-numeric: tabular-nums;
+    }
+
+    .tooltip-rows {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+    }
+
+    .tooltip-name { color: #94a3b8; }
 
     canvas {
         display: block;
@@ -640,8 +694,91 @@ function niceNum(range, round) {
 }
 
 // =============================================================================
-// Nexa Line Chart Component Definition
+// Nexa Line Chart Component Definition (multi-series)
 // =============================================================================
+//
+// Series is a list (like Tabs): each one its own data (a binding: an array that replaces, a point
+// that appends), ring buffer + LOD, variant, style, axis, tooltip and legend. The list's order is
+// the layer order: the first is drawn first (under the others). Logic targets a series by its Id,
+// its name or its index (appendPoints / setPoints / clearSeries / setVisible), and hears the chart
+// (hover, rangeChange, seriesToggle, pointClick). Data never goes into the props, only the setup.
+
+// a series' colour when it has none of its own: the theme palette for the first, then these
+const SERIES_PALETTE = ["#3b82f6", "#f59e0b", "#10b981", "#ef4444", "#8b5cf6", "#06b6d4", "#ec4899", "#84cc16", "#f97316", "#14b8a6"];
+
+const opt = (list) => list.map((x) => (Array.isArray(x) ? { value: x[0], label: x[1] } : { value: x, label: x }));
+
+const SERIES_FIELDS = {
+    name: { type: "string", label: "Name", default: "Series" },
+    id: { type: "string", label: "Id (Logic finds it by this)", default: "", bindable: false,
+        help: "Fixed: Logic actions name the series by it (or by its name / index). Renaming the series keeps it." },
+    visible: { type: "boolean", label: "Visible", default: true },
+    legend: { type: "boolean", label: "In the legend", default: true },
+
+    data: { type: "tag", access: "read", section: "Data", label: "Data (an array: replaces what it holds)",
+        help: "[{x, y}, …], x = a time (ms). A binding: a message path, a tag, a variable… The static value is the initial data." },
+    point: { type: "tag", access: "read", section: "Data", label: "Point (appends)",
+        help: "{x, y}, a list of them, or a number (its time = now). Every change is one more point." },
+    xField: { type: "string", section: "Data", label: "X field", default: "x", bindable: false },
+    yField: { type: "string", section: "Data", label: "Y field", default: "y", bindable: false },
+    maxPoints: { type: "number", section: "Data", label: "Points kept", default: 10000, min: 50, max: 2000000, step: 500,
+        help: "A ring: past it, the oldest go. 16 bytes a point (1 000 000 = 16 MB)." },
+    gapAfter: { type: "number", section: "Data", label: "Break the line after (ms without data)", default: 0, min: 0, step: 1000,
+        help: "0 = always connected. A longer silence than this draws a gap (a sensor offline is not a straight line)." },
+
+    variant: { type: "enum", section: "Line", label: "Variant", default: "line",
+        options: opt([["line", "Line"], ["step", "Step"], ["smooth", "Smooth"], ["bars", "Bars"], ["points", "Points only"]]) },
+    step: { type: "enum", section: "Line", label: "Step at", default: "after", options: opt([["after", "After the point"], ["before", "Before the point"], ["center", "Half way"]]),
+        visibleWhen: (s) => s.variant === "step" },
+    color: { type: "color", section: "Line", label: "Colour", default: "", help: "Empty: the next colour of the palette." },
+    width: { type: "number", section: "Line", label: "Width", default: 2, min: 0.5, max: 10, step: 0.5, unit: "px" },
+    dash: { type: "enum", section: "Line", label: "Dash", default: "solid", options: opt([["solid", "Solid"], ["dashed", "Dashed"], ["dotted", "Dotted"]]) },
+    opacity: { type: "number", section: "Line", label: "Opacity", default: 1, min: 0, max: 1, step: 0.05 },
+
+    fill: { type: "enum", section: "Fill", label: "Fill", default: "none", options: opt([["none", "None"], ["gradient", "Gradient"], ["solid", "Solid"]]) },
+    fillOpacity: { type: "number", section: "Fill", label: "Fill opacity", default: 0.25, min: 0, max: 1, step: 0.05, visibleWhen: (s) => s.fill && s.fill !== "none" },
+
+    points: { type: "boolean", section: "Points", label: "Show the points", default: false },
+    pointShape: { type: "enum", section: "Points", label: "Shape", default: "circle", options: opt([["circle", "Circle"], ["square", "Square"], ["diamond", "Diamond"]]) },
+    pointRadius: { type: "number", section: "Points", label: "Size", default: 3, min: 1, max: 12, unit: "px" },
+
+    axis: { type: "enum", section: "Axis", label: "Y axis", default: "left", options: opt([["left", "Left"], ["right", "Right"]]) },
+    unit: { type: "string", section: "Axis", label: "Unit (°C, kW, %)", default: "" },
+
+    tooltip: { type: "boolean", section: "Tooltip", label: "In the tooltip", default: true },
+    tooltipLabel: { type: "string", section: "Tooltip", label: "Label", default: "", help: "Empty: the name." },
+    decimals: { type: "enum", section: "Tooltip", label: "Decimals", default: "auto", options: opt([["auto", "As it is"], "0", "1", "2", "3", "4"]) },
+    prefix: { type: "string", section: "Tooltip", label: "Before the value", default: "" },
+    suffix: { type: "string", section: "Tooltip", label: "After the value", default: "", help: "The unit follows it." }
+};
+
+function seriesDefaults() {
+    const o = {};
+    Object.keys(SERIES_FIELDS).forEach((k) => { o[k] = SERIES_FIELDS[k].default; });
+    return o;
+}
+
+const THRESHOLD_FIELDS = {
+    value: { type: "number", label: "Value", default: 0 },
+    label: { type: "string", label: "Label", default: "" },
+    axis: { type: "enum", label: "Axis", default: "left", options: opt([["left", "Left"], ["right", "Right"]]) },
+    color: { type: "color", label: "Colour", default: "#ef4444" },
+    dash: { type: "enum", label: "Dash", default: "dashed", options: opt([["solid", "Solid"], ["dashed", "Dashed"], ["dotted", "Dotted"]]) }
+};
+
+const DASHES = { solid: [], dashed: [6, 4], dotted: [2, 3] };
+
+function numOr(v, d) {
+    const n = typeof v === "number" ? v : v === "" || v === null || v === undefined ? NaN : Number(v);
+    return Number.isFinite(n) ? n : d;
+}
+
+// a value for the tooltip / legend: as it is, or with fixed decimals
+function fmtValue(y, decimals) {
+    if (!Number.isFinite(y)) return "—";
+    if (decimals === "auto" || decimals === undefined || decimals === "") return String(Math.round(y * 1e6) / 1e6);
+    return y.toFixed(Number(decimals));
+}
 
 export const lineChart = defineUI({
     ...common,
@@ -649,38 +786,60 @@ export const lineChart = defineUI({
     label: "Line Chart",
     icon: "fa fa-line-chart",
     size: { w: 600, h: 320 },
-    help: "High-performance zero-GC time-series chart with interactive horizontal time comb, sliding window, and crosshair.",
+    help: "Time-series chart: many series, each its own data, variant, style, axis and tooltip. Every point kept (Float64), drawn at pixel accuracy (M4 + LOD), driven by Logic.",
+    version: 2,
 
-    inputs: {
-        data: { type: "array", label: "Data Array [{x, y}, ...]" },
-        point: { type: "object", label: "Append Point {x, y}" }
+    // v1: one series in flat props (data / inputData / inputPoint, label, unit, lineColor…) -> series[0]
+    migrate(p, from) {
+        if (from < 2) {
+            const fb = p.__fallback || {};
+            const s = Object.assign(seriesDefaults(), { id: "s1", name: p.label || "Series 1", fill: p.areaFill === false ? "none" : "gradient" });
+            if (p.unit) s.unit = p.unit;
+            if (p.lineColor) s.color = p.lineColor;
+            if (p.lineWidth !== undefined) s.width = p.lineWidth;
+            if (p.showPoints) s.points = true;
+            if (p.pointRadius !== undefined) s.pointRadius = p.pointRadius;
+            if (p.xField) s.xField = p.xField;
+            if (p.yField) s.yField = p.yField;
+            if (p.maxPoints !== undefined) s.maxPoints = p.maxPoints;
+            const has = (v) => v !== undefined && v !== null && v !== "";
+            if (has(p.inputData)) s.data = asBinding(p.inputData, fb.inputData);
+            else if (Array.isArray(p.data) && p.data.length) s.data = { $bind: [], static: p.data };
+            if (has(p.inputPoint)) s.point = asBinding(p.inputPoint, fb.inputPoint);
+            p.series = [s];
+            ["data", "inputData", "inputPoint", "label", "unit", "lineColor", "lineWidth", "areaFill", "showPoints", "pointRadius", "xField", "yField", "maxPoints"].forEach((k) => { delete p[k]; });
+            if (p.__fallback) {
+                delete p.__fallback.inputData;
+                delete p.__fallback.inputPoint;
+                if (!Object.keys(p.__fallback).length) delete p.__fallback;
+            }
+        }
+        return p;
     },
 
+    groups: ["Series", "Data", "Axes", "Tooltip", "Legend", "Thresholds", "Style", "Behaviour"],
+
     properties: {
-        data: {
-            type: "array",
-            default: SAMPLE_DATA,
-            group: "Data",
-            label: "Default / Initial Data",
-            help: "Array of points: [{ x: timestamp, y: number }, ...]"
-        },
-        xField: {
-            type: "string",
-            default: "x",
-            group: "Data",
-            label: "X Field Name"
-        },
-        yField: {
-            type: "string",
-            default: "y",
-            group: "Data",
-            label: "Y Field Name"
+        series: {
+            type: "list", group: "Series", label: "Series", noun: "series",
+            help: "Each series: its own data, look, axis and tooltip. The order is the layer order (the first is drawn under the others): drag to change it.",
+            default: [Object.assign(seriesDefaults(), { id: "s1", name: "Series 1" })],
+            item: {
+                fields: SERIES_FIELDS, noun: "series",
+                // a new series: the next number, a fixed Id Logic can name (s1, s2 … never reused)
+                create: (items) => {
+                    let n = items.length + 1;
+                    const ids = new Set(items.map((x) => x && x.id));
+                    while (ids.has("s" + n)) n++;
+                    return Object.assign(seriesDefaults(), { id: "s" + n, name: "Series " + n });
+                }
+            }
         },
         timeWindow: {
             type: "enum",
             default: "auto",
             options: [
-                { value: "auto", label: "Auto (Full Data Span)" },
+                { value: "auto", label: "Everything it holds" },
                 { value: "30s", label: "Last 30 seconds" },
                 { value: "1m", label: "Last 1 minute" },
                 { value: "5m", label: "Last 5 minutes" },
@@ -701,98 +860,57 @@ export const lineChart = defineUI({
                 { value: "2y", label: "Last 2 years" }
             ],
             group: "Data",
-            label: "Time Range (Last X)",
-            help: "Sliding live time window (Grafana style). When streaming data arrives, chart follows the latest tail."
+            label: "Time range",
+            help: "A live window that follows the newest point. Zoom / pan stops following; Live (or a double click) follows again."
         },
-        maxPoints: {
-            type: "number",
-            default: 10000,
-            min: 50,
-            max: 200000,
-            step: 500,
-            group: "Data",
-            label: "Max Points Retention",
-            help: "Points kept in the page (a ring: past it, the oldest go). 16 bytes a point: 1 000 000 points = 16 MB. Every point is kept; the drawing shows them all at pixel accuracy (M4)."
-        },
-        label: {
 
-            type: "string",
-            default: "Metric",
-            group: "Data",
-            label: "Series Label"
-        },
-        unit: {
-            type: "string",
-            default: "",
-            group: "Data",
-            label: "Unit (e.g. °C, kW, %)"
-        },
+        leftTitle: { type: "string", group: "Axes", section: "Left", label: "Title", default: "" },
+        leftMin: { type: "number", group: "Axes", section: "Left", label: "Min (empty: auto)", default: "" },
+        leftMax: { type: "number", group: "Axes", section: "Left", label: "Max (empty: auto)", default: "" },
+        rightTitle: { type: "string", group: "Axes", section: "Right", label: "Title", default: "", help: "The right axis shows when a series uses it." },
+        rightMin: { type: "number", group: "Axes", section: "Right", label: "Min (empty: auto)", default: "" },
+        rightMax: { type: "number", group: "Axes", section: "Right", label: "Max (empty: auto)", default: "" },
+
+        tooltipMode: { type: "enum", group: "Tooltip", label: "Shows", default: "shared",
+            options: opt([["shared", "Every series at that time"], ["nearest", "The nearest series"], ["off", "Nothing"]]) },
+        matchWithin: { type: "number", group: "Tooltip", label: "A series' point counts within (ms)", default: 0, min: 0, step: 100,
+            help: "Series sampled at different rates: a point this close to the cursor's time is shown. 0 = automatic (about each series' own spacing)." },
+
+        legend: { type: "enum", group: "Legend", label: "Legend", default: "bottom", options: opt([["bottom", "Below"], ["top", "Above"], ["none", "None"]]) },
+        legendValue: { type: "enum", group: "Legend", label: "Value in the legend", default: "last",
+            options: opt([["none", "None"], ["last", "Last"], ["min", "Min (shown)"], ["max", "Max (shown)"]]) },
+
+        thresholds: { type: "list", group: "Thresholds", label: "Thresholds", noun: "threshold", default: [],
+            help: "Horizontal lines: a limit, a setpoint.", item: { fields: THRESHOLD_FIELDS, noun: "threshold" } },
+
         colorPalette: paletteProp("primary"),
-        lineColor: {
-            type: "color",
-            default: "",
-            group: "Style",
-            label: "Line Color Override",
-            help: "Leave empty to use the active theme palette color."
-        },
-        lineWidth: {
-            type: "number",
-            default: 2,
-            min: 0.5,
-            max: 8,
-            step: 0.5,
-            group: "Style",
-            label: "Line Width"
-        },
-        areaFill: {
-            type: "boolean",
-            default: true,
-            group: "Style",
-            label: "Area Gradient Fill"
-        },
-        showGrid: {
-            type: "boolean",
-            default: true,
-            group: "Style",
-            label: "Show Grid"
-        },
-        showPoints: {
-            type: "boolean",
-            default: false,
-            group: "Style",
-            label: "Show Point Dots"
-        },
-        pointRadius: {
-            type: "number",
-            default: 3,
-            min: 1,
-            max: 8,
-            group: "Style",
-            label: "Point Radius"
-        },
-        showTimeComb: {
-            type: "boolean",
-            default: true,
-            group: "Behaviour",
-            label: "Show Time Comb (Scrubber Ruler)",
-            help: "Interactive horizontal time ruler at bottom with drag-scrub and wheel-zoom."
-        },
-        enableZoomPan: {
-            type: "boolean",
-            default: true,
-            group: "Behaviour",
-            label: "Enable Zoom & Pan (Wheel & Drag)"
-        }
+        showGrid: { type: "boolean", default: true, group: "Style", label: "Grid" },
+
+        showTimeComb: { type: "boolean", default: true, group: "Behaviour", label: "Time ruler (drag to scrub)" },
+        enableZoomPan: { type: "boolean", default: true, group: "Behaviour", label: "Zoom (wheel) and pan (drag)" }
     },
 
     parts: {
-        chart: part("Chart canvas container", "chart")
+        chart: part("Chart canvas container", "chart"),
+        legend: part("Legend", "legend")
     },
 
-    // Logic (Update Component): a batch in one call; nothing lost, one redraw
+    events: {
+        hover: { label: "On Hover (the time under the cursor)", payload: { time: "number", values: "object" } },
+        rangeChange: { label: "On Range Change (zoom / pan / live)", payload: { from: "number", to: "number", live: "boolean" } },
+        seriesToggle: { label: "On Series Toggle (legend)", payload: { series: "string", visible: "boolean" } },
+        pointClick: { label: "On Point Click", payload: { series: "string", x: "number", y: "number" } }
+    },
+
+    // Logic (Update Component): `series` = its Id, its name or its index (none: the first)
     actions: {
-        appendPoints: { label: "Append points", params: { points: "array" }, help: "Adds [{x, y}, ...] (any order) to what the chart holds; returns how many were added." },
-        clearPoints: { label: "Clear points", help: "Empties the chart (Default / Initial Data and the Data input load again on their next change)." }
+        appendPoints: { label: "Append points", params: { series: "string", points: "array" }, help: "Adds [{x, y}, …] (any order) to a series; returns how many were added." },
+        setPoints: { label: "Set points", params: { series: "string", points: "array" }, help: "Replaces what a series holds." },
+        clearSeries: { label: "Clear a series", params: { series: "string" } },
+        clearPoints: { label: "Clear every series" },
+        setVisible: { label: "Show / hide a series", params: { series: "string", visible: "boolean" } },
+        setRange: { label: "Show a time range", params: { from: "number", to: "number" }, help: "Stops following live; resetZoom follows again." },
+        resetZoom: { label: "Follow live again" }
     },
 
     view: class extends UIElement {
@@ -805,36 +923,32 @@ export const lineChart = defineUI({
         _lastDpr = 1;
         _rafPending = false;
 
-        // Zero-GC memory structures
-        ringBuffer = new TimeSeriesRingBuffer(10000);
         decimator = new M4Decimator(2048);
-        lastRawData = null;
-        _lastPoint = null;
+        _series = new Map();      // key -> { buf, lastRaw, lastText, lastPoint, staticLoaded, dx, dy, n, demo }
+        _hidden = new Set();      // series keys hidden from the legend (the page only)
 
-        // Viewport bounds (null = live auto view)
-        viewRange = null;
-
-        // Interaction state
+        viewRange = null;         // null = live
         isScrubbing = false;
         isPanning = false;
         dragStartX = 0;
         dragStartMinX = 0;
         dragStartMaxX = 0;
+        _moved = false;
         isHoverComb = false;
+        hover = null;             // { time, px, py, hits: [{ s, x, y }] }
+        _lastHoverEmit = 0;
+        _lastRangeEmit = 0;
 
-        // Hover / Crosshair state
-        hover = null; // { x, y, cursorClientX, cursorClientY }
+        // the first series' buffer (tests, simple uses)
+        get ringBuffer() { const l = this.seriesList(); return l.length ? this._state(l[0]).buf : new TimeSeriesRingBuffer(50); }
 
         firstUpdated(changed) {
             super.firstUpdated?.(changed);
             this.setupCanvas();
             this.setupResizeObserver();
             this.setupIntersectionObserver();
-            this.syncCapacity();
             this.prepareData();
-            if (this.resizeCanvas()) {
-                this.draw();
-            }
+            if (this.resizeCanvas()) this.draw();
         }
 
         connectedCallback() {
@@ -842,24 +956,13 @@ export const lineChart = defineUI({
             if (!this.canvas) this.setupCanvas();
             this.setupResizeObserver();
             this.setupIntersectionObserver();
-            this.syncCapacity();
             this.prepareData();
-            requestAnimationFrame(() => {
-                if (this.resizeCanvas()) {
-                    this.draw();
-                }
-            });
+            requestAnimationFrame(() => { if (this.resizeCanvas()) this.draw(); });
         }
 
         disconnectedCallback() {
-            if (this.resizeObserver) {
-                this.resizeObserver.disconnect();
-                this.resizeObserver = null;
-            }
-            if (this.intersectionObserver) {
-                this.intersectionObserver.disconnect();
-                this.intersectionObserver = null;
-            }
+            if (this.resizeObserver) { this.resizeObserver.disconnect(); this.resizeObserver = null; }
+            if (this.intersectionObserver) { this.intersectionObserver.disconnect(); this.intersectionObserver = null; }
             super.disconnectedCallback();
         }
 
@@ -868,16 +971,13 @@ export const lineChart = defineUI({
             this._rafPending = true;
             requestAnimationFrame(() => {
                 this._rafPending = false;
-                if (this.resizeCanvas()) {
-                    this.draw();
-                }
+                if (this.resizeCanvas()) this.draw();
             });
         }
 
-        // Called by the SDK for EVERY change of a prop / input, one by one: a point is taken here,
-        // never in updated() (Lit batches it: points arriving in one tick would be lost).
+        // Called by the SDK for EVERY change of a prop, one by one: a point is taken here, never in
+        // updated() (Lit batches it: points arriving in one tick would be lost).
         propsChanged() {
-            this.syncCapacity();
             this.prepareData();
         }
 
@@ -887,59 +987,207 @@ export const lineChart = defineUI({
             this.scheduleDraw();
         }
 
-        syncCapacity() {
-            const cap = Math.max(50, Number(this.p.maxPoints) || 10000);
-            if (this.ringBuffer.capacity !== cap) {
-                this.ringBuffer.setCapacity(cap);
-            }
+        // ---- series ----------------------------------------------------------------------------
+        seriesList() {
+            const raw = Array.isArray(this.p && this.p.series) ? this.p.series : [];
+            const d = seriesDefaults();
+            return raw.map((s, i) => {
+                const o = Object.assign({}, d, s && typeof s === "object" ? s : {});
+                o._i = i;
+                o._key = String(o.id || o.name || "#" + i);
+                return o;
+            });
         }
+
+        _state(s) {
+            let st = this._series.get(s._key);
+            if (!st) {
+                st = { buf: new TimeSeriesRingBuffer(Math.max(50, numOr(s.maxPoints, 10000))), lastRaw: null, lastText: null, lastPoint: undefined, staticLoaded: false, dx: null, dy: null, n: 0, demo: false };
+                this._series.set(s._key, st);
+            }
+            return st;
+        }
+
+        /** A series by its Id, its name or its index (none: the first). */
+        findSeries(ref) {
+            const list = this.seriesList();
+            if (ref === undefined || ref === null || ref === "") return list[0] || null;
+            const byIndex = typeof ref === "number" || /^\d+$/.test(String(ref)) ? list[Number(ref)] : null;
+            return list.find((s) => s.id && s.id === String(ref)) || list.find((s) => s.name === String(ref)) || byIndex || null;
+        }
+
+        // the stored (unresolved) static value of a series' field: loaded once, not again every time
+        // a binding falls through to it
+        _rawStatic(i, field) {
+            const rs = this.raw && Array.isArray(this.raw.series) ? this.raw.series[i] : null;
+            const v = rs && rs[field];
+            return v && typeof v === "object" && Array.isArray(v.$bind) ? v.static : undefined;
+        }
+
+        prepareData() {
+            const list = this.seriesList();
+            const live = new Set();
+            let dirty = false;
+            for (const s of list) {
+                live.add(s._key);
+                const st = this._state(s);
+                const cap = Math.max(50, numOr(s.maxPoints, 10000));
+                if (st.buf.capacity !== cap) { st.buf.setCapacity(cap); dirty = true; }
+                const xf = s.xField || "x", yf = s.yField || "y";
+
+                // data: an array replaces what the series holds
+                let raw = s.data;
+                if (typeof raw === "string") {
+                    if (raw === st.lastText) raw = st.lastRaw;
+                    else {
+                        st.lastText = raw;
+                        const t = raw.trim();
+                        if (t.charAt(0) === "[") { try { raw = JSON.parse(t); } catch (_) { raw = null; } }
+                        else raw = null;
+                    }
+                }
+                const stat = this._rawStatic(s._i, "data");
+                const isStatic = raw !== null && raw !== undefined && (raw === stat || (typeof stat === "string" && st.lastText === stat));
+                if (Array.isArray(raw) && raw !== st.lastRaw && !(isStatic && st.staticLoaded)) {
+                    st.lastRaw = raw;
+                    if (isStatic) st.staticLoaded = true;
+                    st.demo = false;
+                    st.buf.loadArray(raw, xf, yf);
+                    dirty = true;
+                }
+
+                // point: appends ({x, y}, a list of them, or a number = now)
+                const pt = s.point;
+                if (pt !== undefined && pt !== null && pt !== "" && pt !== "???" && pt !== st.lastPoint && pt !== this._rawStatic(s._i, "point")) {
+                    st.lastPoint = pt;
+                    if (st.demo) { st.buf.clear(); st.demo = false; }
+                    if (this._appendTo(st, Array.isArray(pt) ? pt : [pt], xf, yf)) dirty = true;
+                }
+
+                // the canvas: a series with no data shows a sample wave (never saved)
+                if (this.isEditor && st.buf.count === 0) { this._demo(st, s._i); dirty = true; }
+            }
+            for (const k of Array.from(this._series.keys())) if (!live.has(k)) { this._series.delete(k); dirty = true; }
+            if (dirty) this.scheduleDraw();
+        }
+
+        _appendTo(st, pts, xf, yf) {
+            let added = 0;
+            for (const p of pts) {
+                if (p === null || p === undefined) continue;
+                let x, y;
+                if (typeof p === "object") { x = Number(p[xf]); y = Number(p[yf]); }
+                else { x = Date.now(); y = Number(p); }
+                if (Number.isFinite(x) && Number.isFinite(y) && st.buf.push(x, y)) added++;
+            }
+            return added;
+        }
+
+        _demo(st, i) {
+            const now = Date.now(), n = 240;
+            for (let k = 0; k < n; k++) {
+                const t = now - (n - k) * 500;
+                st.buf.push(t, Math.round((50 + i * 15 + 18 * Math.sin(k / 18 + i * 1.3) + 6 * Math.sin(k / 5 + i)) * 10) / 10);
+            }
+            st.demo = true;
+        }
+
+        // ---- actions (Logic) -------------------------------------------------------------------
+        appendPoints(params) {
+            const s = this.findSeries(params && params.series);
+            if (!s) return 0;
+            const st = this._state(s);
+            if (st.demo) { st.buf.clear(); st.demo = false; }
+            const added = this._appendTo(st, params && Array.isArray(params.points) ? params.points : [], s.xField || "x", s.yField || "y");
+            if (added) { this.scheduleDraw(); this.requestUpdate(); }
+            return added;
+        }
+
+        setPoints(params) {
+            const s = this.findSeries(params && params.series);
+            if (!s) return 0;
+            const st = this._state(s);
+            st.demo = false;
+            st.buf.loadArray(params && Array.isArray(params.points) ? params.points : [], s.xField || "x", s.yField || "y");
+            this.scheduleDraw();
+            this.requestUpdate();
+            return st.buf.count;
+        }
+
+        clearSeries(params) {
+            const s = this.findSeries(params && params.series);
+            if (!s) return;
+            const st = this._state(s);
+            st.buf.clear();
+            st.lastRaw = null;
+            st.lastText = null;
+            this.scheduleDraw();
+            this.requestUpdate();
+        }
+
+        clearPoints() {
+            for (const st of this._series.values()) { st.buf.clear(); st.lastRaw = null; st.lastText = null; }
+            this.viewRange = null;
+            this.hover = null;
+            this.scheduleDraw();
+            this.requestUpdate();
+        }
+
+        setVisible(params) {
+            const s = this.findSeries(params && params.series);
+            if (!s) return;
+            const on = !(params && (params.visible === false || params.visible === "false" || params.visible === 0));
+            if (on) this._hidden.delete(s._key); else this._hidden.add(s._key);
+            this.scheduleDraw();
+            this.requestUpdate();
+        }
+
+        setRange(params) {
+            const from = numOr(params && params.from, NaN), to = numOr(params && params.to, NaN);
+            if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from) return;
+            this.viewRange = { minX: from, maxX: to };
+            this.scheduleDraw();
+            this.requestUpdate();
+        }
+
+        resetZoom() {
+            this.viewRange = null;
+            this.draw();
+            this.requestUpdate();
+            this._emitRange(true);
+        }
+
+        // ---- canvas ----------------------------------------------------------------------------
+        _plotEl() { return this.renderRoot?.querySelector(".plot") || null; }
 
         setupCanvas() {
             this.canvas = this.renderRoot.querySelector("canvas");
             if (!this.canvas) return;
             this.ctx = this.canvas.getContext("2d");
-            if (this.canvas.style.width || this.canvas.style.height) {
-                this.canvas.style.width = "";
-                this.canvas.style.height = "";
-            }
+            if (this.canvas.style.width || this.canvas.style.height) { this.canvas.style.width = ""; this.canvas.style.height = ""; }
             this.resizeCanvas();
         }
 
         setupResizeObserver() {
-            if (this.resizeObserver) {
-                this.resizeObserver.disconnect();
-                this.resizeObserver = null;
-            }
-            const container = this.renderRoot?.querySelector(".chart-container");
-            if (!container) return;
-
+            if (this.resizeObserver) { this.resizeObserver.disconnect(); this.resizeObserver = null; }
+            const plot = this._plotEl();
+            if (!plot) return;
             this.resizeObserver = new ResizeObserver((entries) => {
                 for (const entry of entries) {
                     const cr = entry.contentRect;
-                    if (cr && cr.width > 0 && cr.height > 0) {
-                        if (this.resizeCanvas()) {
-                            this.draw();
-                        }
-                    }
+                    if (cr && cr.width > 0 && cr.height > 0 && this.resizeCanvas()) this.draw();
                 }
             });
-            this.resizeObserver.observe(container);
+            this.resizeObserver.observe(plot);
             this.resizeObserver.observe(this);
         }
 
         setupIntersectionObserver() {
-            if (this.intersectionObserver) {
-                this.intersectionObserver.disconnect();
-                this.intersectionObserver = null;
-            }
+            if (this.intersectionObserver) { this.intersectionObserver.disconnect(); this.intersectionObserver = null; }
             if (typeof IntersectionObserver === "function") {
                 this.intersectionObserver = new IntersectionObserver((entries) => {
                     for (const entry of entries) {
-                        if (entry.isIntersecting && entry.boundingClientRect.width > 0 && entry.boundingClientRect.height > 0) {
-                            if (this.resizeCanvas()) {
-                                this.draw();
-                            }
-                        }
+                        if (entry.isIntersecting && entry.boundingClientRect.width > 0 && entry.boundingClientRect.height > 0 && this.resizeCanvas()) this.draw();
                     }
                 });
                 this.intersectionObserver.observe(this);
@@ -948,379 +1196,398 @@ export const lineChart = defineUI({
 
         resizeCanvas() {
             if (!this.canvas) return false;
-            const container = this.renderRoot?.querySelector(".chart-container") || this;
-            const rect = container.getBoundingClientRect();
-            const w = Math.floor(rect.width);
-            const h = Math.floor(rect.height);
-
-            // Crucial for tabs / hidden containers: if dimensions are 0, do not collapse canvas to 1x1!
-            if (w <= 0 || h <= 0) {
-                return false;
-            }
-
-            // Smart TV & Embedded Memory / GPU Optimization:
-            // High DPI (DPR >= 1.5 - 2.0 on 4K/1080p Smart TVs) multiplies canvas backing store memory by 4x.
-            // On a 4K TV, DPR 2 consumes 50MB+ VRAM per canvas and saturates memory bus bandwidth.
-            // Capping DPR for large screens saves up to 40MB+ of RAM/VRAM and eliminates GPU stutter on TV SoCs.
+            const box = this._plotEl() || this;
+            const rect = box.getBoundingClientRect();
+            const w = Math.floor(rect.width), h = Math.floor(rect.height);
+            // tabs / hidden containers: 0 x 0 never collapses the canvas
+            if (w <= 0 || h <= 0) return false;
+            // a capped DPR on big screens (Smart TV / HMI SoCs): the backing store stays small
             const rawDpr = window.devicePixelRatio || 1;
             const dpr = w >= 1200 ? Math.min(rawDpr, 1.0) : (w >= 800 ? Math.min(rawDpr, 1.25) : Math.min(rawDpr, 1.5));
-            const pixelW = Math.floor(w * dpr);
-            const pixelH = Math.floor(h * dpr);
-
-            // Always ensure inline styles are cleared so CSS width:100% / height:100% remains active
-            if (this.canvas.style.width || this.canvas.style.height) {
-                this.canvas.style.width = "";
-                this.canvas.style.height = "";
-            }
-
-            if (this.canvas.width === pixelW && this.canvas.height === pixelH && this._lastDpr === dpr) {
-                return true;
-            }
-
+            const pixelW = Math.floor(w * dpr), pixelH = Math.floor(h * dpr);
+            if (this.canvas.style.width || this.canvas.style.height) { this.canvas.style.width = ""; this.canvas.style.height = ""; }
+            if (this.canvas.width === pixelW && this.canvas.height === pixelH && this._lastDpr === dpr) return true;
             this._lastDpr = dpr;
             this.canvas.width = pixelW;
             this.canvas.height = pixelH;
-
-            if (this.ctx) {
-                this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-            }
+            if (this.ctx) this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
             return true;
         }
 
-        prepareData() {
-            // 1. Full array data input (check this first, never blocked by point binding)
-            let raw = null;
-            if (this.in && this.in.data !== undefined && this.in.data !== null) {
-                raw = this.in.data;
-            } else if (this.p && this.p.inputData !== undefined && this.p.inputData !== null && this.p.inputData !== "") {
-                raw = this.p.inputData;
-            } else if (this.p && this.p.data !== undefined && this.p.data !== null) {
-                raw = this.p.data;
-            }
-
-            if (typeof raw === "string" && raw.trim().startsWith("[")) {
-                try { raw = JSON.parse(raw); } catch (_) { }
-            }
-
-            if (Array.isArray(raw) && raw.length > 0 && raw !== this.lastRawData) {
-                this.lastRawData = raw;
-                this.ringBuffer.loadArray(raw, this.p.xField || "x", this.p.yField || "y");
-                this.scheduleDraw();
-            }
-
-            // 2. Streaming single point append
-            const hasPointInput = this.in && this.in.point !== undefined && this.in.point !== null;
-            const rawPoint = hasPointInput ? this.in.point : (this.p && typeof this.p.inputPoint === "object" ? this.p.inputPoint : null);
-
-            if (rawPoint && rawPoint !== this._lastPoint) {
-                this._lastPoint = rawPoint;
-                const px = Number(rawPoint[this.p.xField || "x"]);
-                const py = Number(rawPoint[this.p.yField || "y"]);
-                if (Number.isFinite(px) && Number.isFinite(py) && this.ringBuffer.push(px, py)) this.scheduleDraw();
-            }
+        _visible() {
+            return this.seriesList().filter((s) => s.visible !== false && !this._hidden.has(s._key) && this._state(s).buf.count > 0);
         }
 
-        /** Action: adds [{x, y}, ...] (any order); -> how many were added. One redraw. */
-        appendPoints(params) {
-            const pts = params && Array.isArray(params.points) ? params.points : [];
-            const xf = this.p.xField || "x", yf = this.p.yField || "y";
-            let added = 0;
-            for (let i = 0; i < pts.length; i++) {
-                const pt = pts[i];
-                if (!pt || typeof pt !== "object") continue;
-                const x = Number(pt[xf]), y = Number(pt[yf]);
-                if (Number.isFinite(x) && Number.isFinite(y) && this.ringBuffer.push(x, y)) added++;
+        _bounds(list) {
+            let minX = Infinity, maxX = -Infinity;
+            for (const s of list) {
+                const b = this._state(s).buf.getBounds();
+                if (!b) continue;
+                if (b.minX < minX) minX = b.minX;
+                if (b.maxX > maxX) maxX = b.maxX;
             }
-            if (added) { this.scheduleDraw(); this.requestUpdate(); }
-            return added;
-        }
-
-        /** Action: empties the chart. */
-        clearPoints() {
-            this.ringBuffer.clear();
-            this.lastRawData = null;
-            this.viewRange = null;
-            this.hover = null;
-            this.scheduleDraw();
-            this.requestUpdate();
+            return Number.isFinite(minX) ? { minX, maxX } : null;
         }
 
         getPlotMetrics(width, height) {
             const showComb = this.p.showTimeComb !== false;
             const combHeight = showComb ? 30 : 0;
-
-            const padLeft = 52;
-            const padRight = 16;
-            const padTop = 14;
-            const padBottom = showComb ? 4 : 26;
-
-            const plotX = padLeft;
-            const plotY = padTop;
+            const right = this._usesRight();
+            const titled = !!(this.p.leftTitle || (right && this.p.rightTitle));
+            const padLeft = 52, padRight = right ? 52 : 16, padTop = titled ? 22 : 14, padBottom = showComb ? 4 : 26;
+            const plotX = padLeft, plotY = padTop;
             const plotW = Math.max(1, width - padLeft - padRight);
             const plotH = Math.max(1, height - padTop - padBottom - combHeight);
-
-            const combX = padLeft;
-            const combY = plotY + plotH + (showComb ? 4 : 0);
-            const combW = plotW;
-            const combH = combHeight;
-
-            return { padLeft, padRight, padTop, padBottom, plotX, plotY, plotW, plotH, combX, combY, combW, combH, showComb };
+            return { padLeft, padRight, padTop, padBottom, plotX, plotY, plotW, plotH, combX: padLeft, combY: plotY + plotH + (showComb ? 4 : 0), combW: plotW, combH: combHeight, showComb };
         }
 
-        getActiveColor() {
-            if (this.p.lineColor && typeof this.p.lineColor === "string" && this.p.lineColor.trim()) {
-                return this.p.lineColor.trim();
+        _usesRight() {
+            return this.seriesList().some((s) => s.axis === "right" && s.visible !== false && !this._hidden.has(s._key));
+        }
+
+        colorOf(s) {
+            if (s.color && typeof s.color === "string" && s.color.trim()) return s.color.trim();
+            if (s._i === 0) {
+                const cs = getComputedStyle(this);
+                return cs.getPropertyValue("--cp-solid").trim() || cs.getPropertyValue("--nexa-colors-primary-solid").trim() || SERIES_PALETTE[0];
             }
-            return getComputedStyle(this).getPropertyValue("--cp-solid").trim() ||
-                getComputedStyle(this).getPropertyValue("--nexa-colors-primary-solid").trim() ||
-                "#3b82f6";
+            return SERIES_PALETTE[s._i % SERIES_PALETTE.length];
         }
 
         clampViewRange(minX, maxX, fullBounds) {
-            if (!fullBounds) return { minX, maxX, vMinX: minX, vMaxX: maxX };
-            const span = Math.max(10, maxX - minX);
-            const margin = span * 0.1;
-
-            let cMin = minX;
-            let cMax = maxX;
-
-            if (cMin < fullBounds.minX - margin) {
-                cMin = fullBounds.minX - margin;
-                cMax = cMin + span;
-            }
-            if (cMax > fullBounds.maxX + margin) {
-                cMax = fullBounds.maxX + margin;
-                cMin = cMax - span;
-            }
-
-            return { minX: cMin, maxX: cMax, vMinX: cMin, vMaxX: cMax };
+            if (!fullBounds) return { minX, maxX };
+            const span = Math.max(10, maxX - minX), margin = span * 0.1;
+            let cMin = minX, cMax = maxX;
+            if (cMin < fullBounds.minX - margin) { cMin = fullBounds.minX - margin; cMax = cMin + span; }
+            if (cMax > fullBounds.maxX + margin) { cMax = fullBounds.maxX + margin; cMin = cMax - span; }
+            return { minX: cMin, maxX: cMax };
         }
 
         getEffectiveTimeRange(fullBounds) {
-            if (!fullBounds) return { vMinX: 0, vMaxX: 1, minX: 0, maxX: 1 };
+            if (!fullBounds) return { vMinX: 0, vMaxX: 1 };
             if (this.viewRange) {
                 const c = this.clampViewRange(this.viewRange.minX, this.viewRange.maxX, fullBounds);
-                return { vMinX: c.minX, vMaxX: c.maxX, minX: c.minX, maxX: c.maxX };
+                return { vMinX: c.minX, vMaxX: c.maxX };
             }
-
             const windowMs = parseTimeWindow(this.p.timeWindow);
-            if (windowMs > 0) {
-                const vMaxX = fullBounds.maxX;
-                const vMinX = Math.max(fullBounds.minX, vMaxX - windowMs);
-                return { vMinX, vMaxX, minX: vMinX, maxX: vMaxX };
-            }
+            if (windowMs > 0) return { vMinX: Math.max(fullBounds.minX, fullBounds.maxX - windowMs), vMaxX: fullBounds.maxX };
+            return { vMinX: fullBounds.minX, vMaxX: fullBounds.maxX };
+        }
 
-            return { vMinX: fullBounds.minX, vMaxX: fullBounds.maxX, minX: fullBounds.minX, maxX: fullBounds.maxX };
+        // the decimated points of a series in [vMinX, vMaxX], kept in its own arrays (the decimator's are reused)
+        _decimate(s, vMinX, vMaxX, plotW) {
+            const st = this._state(s), buf = st.buf;
+            const startIdx = Math.max(0, lowerBoundRing(buf, vMinX) - 1);
+            const endIdx = Math.min(buf.count, upperBoundRing(buf, vMaxX) + 1);
+            const n = this.decimator.decimate(buf, startIdx, endIdx, Math.floor(plotW), vMinX, vMaxX);
+            if (!st.dx || st.dx.length < n) { st.dx = new Float64Array(Math.max(n, 256)); st.dy = new Float64Array(Math.max(n, 256)); }
+            st.dx.set(this.decimator.outX.subarray(0, n));
+            st.dy.set(this.decimator.outY.subarray(0, n));
+            st.n = n;
+            return st;
+        }
+
+        _yRange(list, axis) {
+            let lo = Infinity, hi = -Infinity;
+            for (const s of list) {
+                if ((s.axis === "right" ? "right" : "left") !== axis) continue;
+                const st = this._state(s);
+                for (let i = 0; i < st.n; i++) { const y = st.dy[i]; if (y < lo) lo = y; if (y > hi) hi = y; }
+            }
+            if (!Number.isFinite(lo)) { lo = 0; hi = 1; }
+            if (lo === hi) { const pad = Math.abs(lo) * 0.1 || 1; lo -= pad; hi += pad; }
+            else { const pad = (hi - lo) * 0.08; lo -= pad; hi += pad; }
+            const fMin = numOr(this.p[axis + "Min"], NaN), fMax = numOr(this.p[axis + "Max"], NaN);
+            if (Number.isFinite(fMin)) lo = fMin;
+            if (Number.isFinite(fMax)) hi = fMax;
+            if (hi <= lo) hi = lo + 1;
+            return { lo, hi };
         }
 
         draw() {
             if (!this.canvas || !this.ctx) return;
-            const container = this.renderRoot?.querySelector(".chart-container") || this.canvas;
-            const rect = container.getBoundingClientRect();
-            const width = rect.width;
-            const height = rect.height;
+            const box = this._plotEl() || this.canvas;
+            const rect = box.getBoundingClientRect();
+            const width = rect.width, height = rect.height;
             if (width <= 0 || height <= 0) return;
-
-            if (!this.resizeCanvas()) return;   // the capped DPR lives there; same size = nothing done
+            if (!this.resizeCanvas()) return;
 
             const ctx = this.ctx;
             ctx.clearRect(0, 0, width, height);
+            const list = this._visible();
+            this._updateLegend(null);
+            if (!list.length) return;
 
-            const buf = this.ringBuffer;
-            if (buf.count === 0) return;
-
-            const fullBounds = buf.getBounds();
+            const fullBounds = this._bounds(list);
             if (!fullBounds) return;
-
             const { vMinX, vMaxX } = this.getEffectiveTimeRange(fullBounds);
             if (!Number.isFinite(vMinX) || !Number.isFinite(vMaxX)) return;
+            const m = this.getPlotMetrics(width, height);
+            const { plotX, plotY, plotW, plotH } = m;
 
-            const { plotX, plotY, plotW, plotH, combX, combY, combW, combH, showComb } = this.getPlotMetrics(width, height);
-
-            // Virtualized slicing via binary search on ring buffer
-            const startIdx = Math.max(0, lowerBoundRing(buf, vMinX) - 1);
-            const endIdx = Math.min(buf.count, upperBoundRing(buf, vMaxX) + 1);
-
-            // Zero-GC M4 decimation
-            const decCount = this.decimator.decimate(buf, startIdx, endIdx, Math.floor(plotW), vMinX, vMaxX);
-            const dX = this.decimator.outX;
-            const dY = this.decimator.outY;
-
-            // Y follows what is SHOWN (zoomed in: its own scale), from the decimated points (they hold
-            // every column's min and max): no scan of the whole buffer per frame
-            let vMinY = Infinity, vMaxY = -Infinity;
-            for (let i = 0; i < decCount; i++) {
-                const y = dY[i];
-                if (y < vMinY) vMinY = y;
-                if (y > vMaxY) vMaxY = y;
-            }
-            if (!Number.isFinite(vMinY)) { vMinY = 0; vMaxY = 1; }
-            if (vMinY === vMaxY) {
-                const pad = Math.abs(vMinY) * 0.1 || 1;
-                vMinY -= pad; vMaxY += pad;
-            } else {
-                const pad = (vMaxY - vMinY) * 0.08;
-                vMinY -= pad; vMaxY += pad;
-            }
+            for (const s of list) this._decimate(s, vMinX, vMaxX, plotW);
+            const yr = { left: this._yRange(list, "left"), right: this._usesRight() ? this._yRange(list, "right") : null };
 
             const xSpan = Math.max(1, vMaxX - vMinX);
-            const ySpan = Math.max(1e-6, vMaxY - vMinY);
-            const toScreenX = (x) => plotX + ((x - vMinX) / xSpan) * plotW;
-            const toScreenY = (y) => plotY + plotH - ((y - vMinY) / ySpan) * plotH;
+            const toX = (x) => plotX + ((x - vMinX) / xSpan) * plotW;
+            const toY = (y, axis) => { const r = yr[axis] || yr.left; return plotY + plotH - ((y - r.lo) / (r.hi - r.lo)) * plotH; };
+            this._scale = { vMinX, vMaxX, toX, toY, m, yr };
 
-            // 1. Draw Grid and Y-Axis Ticks
-            this.drawAxesAndGrid(ctx, plotX, plotY, plotW, plotH, vMinX, vMaxX, vMinY, vMaxY, showComb);
+            this.drawAxesAndGrid(ctx, plotX, plotY, plotW, plotH, vMinX, vMaxX, yr, m.showComb);
 
-            // 2. Clip to plot area for line and fill
             ctx.save();
             ctx.beginPath();
             ctx.rect(plotX, plotY, plotW, plotH);
             ctx.clip();
+            // the list's order is the layer order: the first is drawn first (under the others)
+            for (const s of list) this._drawSeries(ctx, s, toX, toY, plotY, plotH);
+            this._drawThresholds(ctx, toY, plotX, plotW);
+            this._drawHover(ctx, toX, toY, plotY, plotH);
+            ctx.restore();
 
-            const lineColor = this.getActiveColor();
-
-            // 3. Area gradient fill
-            if (this.p.areaFill && decCount > 1) {
-                ctx.save();
-                ctx.beginPath();
-                ctx.moveTo(toScreenX(dX[0]), plotY + plotH);
-                for (let i = 0; i < decCount; i++) {
-                    ctx.lineTo(toScreenX(dX[i]), toScreenY(dY[i]));
-                }
-                ctx.lineTo(toScreenX(dX[decCount - 1]), plotY + plotH);
-                ctx.closePath();
-
-                const grad = ctx.createLinearGradient(0, plotY, 0, plotY + plotH);
-                grad.addColorStop(0, this.hexToRgba(lineColor, 0.28));
-                grad.addColorStop(1, this.hexToRgba(lineColor, 0.01));
-                ctx.fillStyle = grad;
-                ctx.fill();
-                ctx.restore();
-            }
-
-            // 4. Line stroke
-            if (decCount > 0) {
-                ctx.save();
-                ctx.beginPath();
-                ctx.strokeStyle = lineColor;
-                ctx.lineWidth = Number(this.p.lineWidth) || 2;
-                ctx.lineJoin = "round";
-                ctx.lineCap = "round";
-
-                if (decCount === 1) {
-                    // Single point in viewport: draw visible circle marker
-                    const sx = toScreenX(dX[0]);
-                    const sy = toScreenY(dY[0]);
-                    const pr = Math.max(4, Number(this.p.pointRadius) || 4);
-                    ctx.fillStyle = lineColor;
-                    ctx.beginPath();
-                    ctx.arc(sx, sy, pr, 0, Math.PI * 2);
-                    ctx.fill();
-                } else {
-                    for (let i = 0; i < decCount; i++) {
-                        const sx = toScreenX(dX[i]);
-                        const sy = toScreenY(dY[i]);
-                        if (i === 0) ctx.moveTo(sx, sy);
-                        else ctx.lineTo(sx, sy);
-                    }
-                    ctx.stroke();
-
-                    // Optional Point dots
-                    if (this.p.showPoints) {
-                        const pr = Number(this.p.pointRadius) || 3;
-                        ctx.fillStyle = lineColor;
-                        for (let i = 0; i < decCount; i++) {
-                            ctx.beginPath();
-                            ctx.arc(toScreenX(dX[i]), toScreenY(dY[i]), pr, 0, Math.PI * 2);
-                            ctx.fill();
-                        }
-                    }
-                }
-                ctx.restore();
-            }
-
-            // 5. Crosshair line & hover point highlight
-            if (this.hover && this.hover.x >= vMinX && this.hover.x <= vMaxX) {
-                const hx = toScreenX(this.hover.x);
-                const hy = toScreenY(this.hover.y);
-
-                ctx.save();
-                ctx.beginPath();
-                ctx.setLineDash([4, 4]);
-                ctx.strokeStyle = "rgba(255, 255, 255, 0.4)";
-                ctx.lineWidth = 1;
-                ctx.moveTo(hx, plotY);
-                ctx.lineTo(hx, plotY + plotH);
-                ctx.stroke();
-
-                ctx.beginPath();
-                ctx.setLineDash([]);
-                ctx.fillStyle = lineColor;
-                ctx.strokeStyle = "#fff";
-                ctx.lineWidth = 2;
-                ctx.arc(hx, hy, 5, 0, Math.PI * 2);
-                ctx.fill();
-                ctx.stroke();
-                ctx.restore();
-            }
-
-            ctx.restore(); // end clip
-
-            // 6. Draw Interactive Timestamp Comb (Bottom Scrubber Ruler)
-            if (showComb) {
-                this.drawTimeComb(ctx, vMinX, vMaxX, combX, combY, combW, combH);
-            }
+            if (m.showComb) this.drawTimeComb(ctx, vMinX, vMaxX, m.combX, m.combY, m.combW, m.combH);
+            this._updateLegend(list, vMinX, vMaxX);
         }
 
-        drawAxesAndGrid(ctx, px, py, pw, ph, minX, maxX, minY, maxY, showComb) {
+        // the runs of a series between gaps (a silence longer than gapAfter): [start, end) pairs
+        _runs(st, gapAfter) {
+            const runs = [];
+            let start = 0;
+            for (let i = 1; i < st.n; i++) {
+                if (gapAfter > 0 && st.dx[i] - st.dx[i - 1] > gapAfter) { runs.push(start, i); start = i; }
+            }
+            if (st.n) runs.push(start, st.n);
+            return runs;
+        }
+
+        // the path of one run, by variant (line / step / smooth)
+        _tracePath(ctx, st, a, b, s, toX, toY) {
+            const axis = s.axis === "right" ? "right" : "left";
+            const X = (i) => toX(st.dx[i]), Y = (i) => toY(st.dy[i], axis);
+            ctx.moveTo(X(a), Y(a));
+            if (s.variant === "step") {
+                for (let i = a + 1; i < b; i++) {
+                    if (s.step === "before") ctx.lineTo(X(i - 1), Y(i));
+                    else if (s.step === "center") { const mx = (X(i - 1) + X(i)) / 2; ctx.lineTo(mx, Y(i - 1)); ctx.lineTo(mx, Y(i)); }
+                    else ctx.lineTo(X(i), Y(i - 1));
+                    ctx.lineTo(X(i), Y(i));
+                }
+                return;
+            }
+            if (s.variant === "smooth" && b - a > 2) {
+                // monotone cubic (Fritsch–Carlson): smooth, never overshoots a peak
+                const n = b - a, xs = new Float64Array(n), ys = new Float64Array(n), d = new Float64Array(n), t = new Float64Array(n);
+                for (let k = 0; k < n; k++) { xs[k] = X(a + k); ys[k] = Y(a + k); }
+                for (let k = 0; k < n - 1; k++) { const h = xs[k + 1] - xs[k]; d[k] = h ? (ys[k + 1] - ys[k]) / h : 0; }
+                t[0] = d[0]; t[n - 1] = d[n - 2];
+                for (let k = 1; k < n - 1; k++) t[k] = d[k - 1] * d[k] <= 0 ? 0 : (d[k - 1] + d[k]) / 2;
+                for (let k = 0; k < n - 1; k++) {
+                    if (d[k] === 0) { t[k] = 0; t[k + 1] = 0; continue; }
+                    const al = t[k] / d[k], be = t[k + 1] / d[k], q = al * al + be * be;
+                    if (q > 9) { const tau = 3 / Math.sqrt(q); t[k] = tau * al * d[k]; t[k + 1] = tau * be * d[k]; }
+                }
+                for (let k = 0; k < n - 1; k++) {
+                    const h = (xs[k + 1] - xs[k]) / 3;
+                    ctx.bezierCurveTo(xs[k] + h, ys[k] + t[k] * h, xs[k + 1] - h, ys[k + 1] - t[k + 1] * h, xs[k + 1], ys[k + 1]);
+                }
+                return;
+            }
+            for (let i = a + 1; i < b; i++) ctx.lineTo(X(i), Y(i));
+        }
+
+        _drawSeries(ctx, s, toX, toY, plotY, plotH) {
+            const st = this._state(s);
+            if (!st.n) return;
+            const color = this.colorOf(s);
+            const axis = s.axis === "right" ? "right" : "left";
+            const lw = numOr(s.width, 2);
+            const runs = this._runs(st, numOr(s.gapAfter, 0));
+            const base = plotY + plotH;
+            ctx.save();
+            ctx.globalAlpha = Math.max(0, Math.min(1, numOr(s.opacity, 1)));
+
+            if (s.variant === "bars") {
+                const w = Math.max(1, Math.min(24, ((toX(st.dx[st.n - 1]) - toX(st.dx[0])) / Math.max(1, st.n)) * 0.7));
+                const r = (this._scale.yr[axis] || this._scale.yr.left);
+                const zero = toY(Math.max(r.lo, Math.min(r.hi, 0)), axis);
+                ctx.fillStyle = color;
+                for (let i = 0; i < st.n; i++) {
+                    const x = toX(st.dx[i]), y = toY(st.dy[i], axis);
+                    ctx.fillRect(x - w / 2, Math.min(y, zero), w, Math.max(1, Math.abs(zero - y)));
+                }
+                ctx.restore();
+                return;
+            }
+
+            // fill under the line, per run
+            if (s.fill && s.fill !== "none" && s.variant !== "points" && st.n > 1) {
+                const fo = Math.max(0, Math.min(1, numOr(s.fillOpacity, 0.25)));
+                let style;
+                if (s.fill === "gradient") {
+                    style = ctx.createLinearGradient(0, plotY, 0, base);
+                    style.addColorStop(0, this.hexToRgba(color, fo));
+                    style.addColorStop(1, this.hexToRgba(color, 0.01));
+                } else style = this.hexToRgba(color, fo);
+                ctx.fillStyle = style;
+                for (let r = 0; r < runs.length; r += 2) {
+                    const a = runs[r], b = runs[r + 1];
+                    if (b - a < 2) continue;
+                    ctx.beginPath();
+                    this._tracePath(ctx, st, a, b, s, toX, toY);
+                    ctx.lineTo(toX(st.dx[b - 1]), base);
+                    ctx.lineTo(toX(st.dx[a]), base);
+                    ctx.closePath();
+                    ctx.fill();
+                }
+            }
+
+            // the line
+            if (s.variant !== "points") {
+                ctx.strokeStyle = color;
+                ctx.lineWidth = lw;
+                ctx.lineJoin = "round";
+                ctx.lineCap = "round";
+                ctx.setLineDash(DASHES[s.dash] || []);
+                for (let r = 0; r < runs.length; r += 2) {
+                    const a = runs[r], b = runs[r + 1];
+                    if (b - a === 1) {
+                        // a lone point (between gaps / the only one): a dot
+                        ctx.fillStyle = color;
+                        ctx.beginPath();
+                        ctx.arc(toX(st.dx[a]), toY(st.dy[a], axis), Math.max(3, lw * 1.5), 0, Math.PI * 2);
+                        ctx.fill();
+                        continue;
+                    }
+                    ctx.beginPath();
+                    this._tracePath(ctx, st, a, b, s, toX, toY);
+                    ctx.stroke();
+                }
+                ctx.setLineDash([]);
+            }
+
+            // the points
+            if (s.points || s.variant === "points") {
+                ctx.fillStyle = color;
+                const pr = numOr(s.pointRadius, 3);
+                for (let i = 0; i < st.n; i++) this._marker(ctx, s.pointShape, toX(st.dx[i]), toY(st.dy[i], axis), pr);
+            }
+            ctx.restore();
+        }
+
+        _marker(ctx, shape, x, y, r) {
+            ctx.beginPath();
+            if (shape === "square") ctx.rect(x - r, y - r, r * 2, r * 2);
+            else if (shape === "diamond") { ctx.moveTo(x, y - r * 1.3); ctx.lineTo(x + r * 1.3, y); ctx.lineTo(x, y + r * 1.3); ctx.lineTo(x - r * 1.3, y); ctx.closePath(); }
+            else ctx.arc(x, y, r, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        _drawThresholds(ctx, toY, plotX, plotW) {
+            const list = Array.isArray(this.p.thresholds) ? this.p.thresholds : [];
+            if (!list.length) return;
+            const cs = getComputedStyle(this);
+            ctx.save();
+            ctx.font = "10px " + (cs.getPropertyValue("--mono") || "monospace");
+            ctx.textAlign = "right";
+            ctx.textBaseline = "bottom";
+            for (const t of list) {
+                const v = numOr(t && t.value, NaN);
+                const axis = t && t.axis === "right" && this._scale.yr.right ? "right" : "left";
+                if (!Number.isFinite(v)) continue;
+                const y = Math.round(toY(v, axis)) + 0.5;
+                ctx.strokeStyle = (t && t.color) || "#ef4444";
+                ctx.lineWidth = 1;
+                ctx.setLineDash(DASHES[t && t.dash] || DASHES.dashed);
+                ctx.beginPath();
+                ctx.moveTo(plotX, y);
+                ctx.lineTo(plotX + plotW, y);
+                ctx.stroke();
+                if (t && t.label) {
+                    ctx.fillStyle = (t && t.color) || "#ef4444";
+                    ctx.fillText(String(t.label), plotX + plotW - 4, y - 2);
+                }
+            }
+            ctx.setLineDash([]);
+            ctx.restore();
+        }
+
+        _drawHover(ctx, toX, toY, plotY, plotH) {
+            const h = this.hover;
+            if (!h || !h.hits.length) return;
+            const hx = toX(h.time);
+            ctx.save();
+            ctx.beginPath();
+            ctx.setLineDash([4, 4]);
+            ctx.strokeStyle = "rgba(255, 255, 255, 0.4)";
+            ctx.lineWidth = 1;
+            ctx.moveTo(hx, plotY);
+            ctx.lineTo(hx, plotY + plotH);
+            ctx.stroke();
+            ctx.setLineDash([]);
+            for (const hit of h.hits) {
+                ctx.beginPath();
+                ctx.fillStyle = this.colorOf(hit.s);
+                ctx.strokeStyle = "#fff";
+                ctx.lineWidth = 2;
+                ctx.arc(toX(hit.x), toY(hit.y, hit.s.axis === "right" ? "right" : "left"), 4.5, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.stroke();
+            }
+            ctx.restore();
+        }
+
+        _tick(v) {
+            let s = Math.abs(v) >= 1000 ? (v / 1000).toFixed(1) + "k" : Math.abs(v) < 1 ? v.toFixed(2) : v.toFixed(1);
+            if (s.endsWith(".0")) s = s.slice(0, -2);
+            if (s.endsWith(".0k")) s = s.slice(0, -3) + "k";
+            return s;
+        }
+
+        drawAxesAndGrid(ctx, px, py, pw, ph, minX, maxX, yr, showComb) {
             ctx.save();
             const cs = getComputedStyle(this);
             const gridColor = cs.getPropertyValue("--bd").trim() || "rgba(255, 255, 255, 0.08)";
             const textColor = cs.getPropertyValue("--fg-muted").trim() || "rgba(255, 255, 255, 0.5)";
-
             ctx.font = "10px " + (cs.getPropertyValue("--mono") || "monospace");
-
-            // --- Y Axis Ticks & Grid ---
             const yTicksCount = Math.max(3, Math.min(6, Math.floor(ph / 45)));
-            const yRange = maxY - minY;
-            const yStep = niceNum(yRange / yTicksCount, false);
-            const startY = Math.ceil(minY / yStep) * yStep;
 
-            ctx.textAlign = "right";
-            ctx.textBaseline = "middle";
-
-            for (let yVal = startY; yVal <= maxY; yVal += yStep) {
-                const sy = py + ph - ((yVal - minY) / yRange) * ph;
-                if (sy < py || sy > py + ph) continue;
-
-                if (this.p.showGrid) {
-                    ctx.beginPath();
-                    ctx.strokeStyle = gridColor;
-                    ctx.lineWidth = 1;
-                    ctx.moveTo(px, sy);
-                    ctx.lineTo(px + pw, sy);
-                    ctx.stroke();
+            const axisTicks = (r, side) => {
+                const range = r.hi - r.lo;
+                const step = niceNum(range / yTicksCount, false);
+                ctx.textAlign = side === "left" ? "right" : "left";
+                ctx.textBaseline = "middle";
+                for (let v = Math.ceil(r.lo / step) * step; v <= r.hi; v += step) {
+                    const sy = py + ph - ((v - r.lo) / range) * ph;
+                    if (sy < py || sy > py + ph) continue;
+                    if (side === "left" && this.p.showGrid) {
+                        ctx.beginPath();
+                        ctx.strokeStyle = gridColor;
+                        ctx.lineWidth = 1;
+                        ctx.moveTo(px, sy);
+                        ctx.lineTo(px + pw, sy);
+                        ctx.stroke();
+                    }
+                    ctx.fillStyle = textColor;
+                    ctx.fillText(this._tick(v), side === "left" ? px - 6 : px + pw + 6, sy);
                 }
+            };
+            axisTicks(yr.left, "left");
+            if (yr.right) axisTicks(yr.right, "right");
 
-                let formatted = yVal >= 1000 ? (yVal / 1000).toFixed(1) + "k" : Math.abs(yVal) < 1 ? yVal.toFixed(2) : yVal.toFixed(1);
-                if (formatted.endsWith(".0")) formatted = formatted.slice(0, -2);
-                ctx.fillStyle = textColor;
-                ctx.fillText(formatted, px - 6, sy);
-            }
+            // axis titles, above their ticks
+            ctx.textBaseline = "top";
+            ctx.fillStyle = textColor;
+            if (this.p.leftTitle) { ctx.textAlign = "left"; ctx.fillText(String(this.p.leftTitle), 4, 3); }
+            if (yr.right && this.p.rightTitle) { ctx.textAlign = "right"; ctx.fillText(String(this.p.rightTitle), px + pw + 48, 3); }
 
-            // --- Fallback X Axis Ticks (only if comb is disabled) ---
+            // x ticks without the time ruler
             if (!showComb) {
                 const xTicksCount = Math.max(2, Math.min(6, Math.floor(pw / 100)));
                 const xSpan = maxX - minX;
-
                 ctx.textAlign = "center";
                 ctx.textBaseline = "top";
-
                 for (let i = 0; i <= xTicksCount; i++) {
-                    const ratio = i / xTicksCount;
-                    const tx = minX + ratio * xSpan;
-                    const sx = px + ratio * pw;
-
+                    const ratio = i / xTicksCount, tx = minX + ratio * xSpan, sx = px + ratio * pw;
                     if (this.p.showGrid) {
                         ctx.beginPath();
                         ctx.strokeStyle = gridColor;
@@ -1329,12 +1596,10 @@ export const lineChart = defineUI({
                         ctx.lineTo(sx, py + ph);
                         ctx.stroke();
                     }
-
                     ctx.fillStyle = textColor;
                     ctx.fillText(formatCombTick(tx, xSpan, xSpan / xTicksCount), sx, py + ph + 6);
                 }
             }
-
             ctx.restore();
         }
 
@@ -1344,7 +1609,6 @@ export const lineChart = defineUI({
             const majorStep = getNiceTimeStep(span, targetMajor);
             let minorStep = majorStep / 5;
             if (majorStep <= 20) minorStep = majorStep / 2;
-
             const firstMinor = Math.floor(minX / minorStep) * minorStep;
 
             ctx.save();
@@ -1354,11 +1618,8 @@ export const lineChart = defineUI({
             const majorColor = cs.getPropertyValue("--fg-muted").trim() || "rgba(255, 255, 255, 0.6)";
             const textColor = cs.getPropertyValue("--fg-muted").trim() || "rgba(255, 255, 255, 0.65)";
 
-            // 1. Comb Background Container
             ctx.fillStyle = combBg;
             ctx.fillRect(px, py, pw, ph);
-
-            // 2. Top divider line
             ctx.beginPath();
             ctx.strokeStyle = tickColor;
             ctx.lineWidth = 1;
@@ -1366,7 +1627,7 @@ export const lineChart = defineUI({
             ctx.lineTo(px + pw, py);
             ctx.stroke();
 
-            // 3. Grid line pass (vertical grid lines into main plot)
+            const isMajorAt = (t) => { const rem = Math.abs(t % majorStep); return rem < (minorStep * 0.2) || Math.abs(rem - majorStep) < (minorStep * 0.2); };
             if (this.p.showGrid) {
                 ctx.beginPath();
                 ctx.strokeStyle = "rgba(255, 255, 255, 0.05)";
@@ -1374,69 +1635,41 @@ export const lineChart = defineUI({
                 for (let t = firstMinor; t <= maxX + minorStep; t += minorStep) {
                     const sx = px + ((t - minX) / span) * pw;
                     if (sx < px || sx > px + pw) continue;
-                    const rem = Math.abs(t % majorStep);
-                    if (rem < (minorStep * 0.2) || Math.abs(rem - majorStep) < (minorStep * 0.2)) {
-                        ctx.moveTo(sx, 14);
-                        ctx.lineTo(sx, py);
-                    }
+                    if (isMajorAt(t)) { ctx.moveTo(sx, 14); ctx.lineTo(sx, py); }
                 }
                 ctx.stroke();
             }
 
-            // 4. Minor teeth
             ctx.beginPath();
             ctx.strokeStyle = tickColor;
             ctx.lineWidth = 1;
-
             const majorList = [];
             for (let t = firstMinor; t <= maxX + minorStep; t += minorStep) {
                 const sx = px + ((t - minX) / span) * pw;
                 if (sx < px || sx > px + pw) continue;
-
-                const rem = Math.abs(t % majorStep);
-                const isMajor = rem < (minorStep * 0.2) || Math.abs(rem - majorStep) < (minorStep * 0.2);
-
-                if (isMajor) {
-                    majorList.push({ x: sx, time: t });
-                } else {
-                    ctx.moveTo(sx, py);
-                    ctx.lineTo(sx, py + 4);
-                }
+                if (isMajorAt(t)) majorList.push({ x: sx, time: t });
+                else { ctx.moveTo(sx, py); ctx.lineTo(sx, py + 4); }
             }
             ctx.stroke();
 
-            // 5. Major teeth
             ctx.beginPath();
             ctx.strokeStyle = majorColor;
             ctx.lineWidth = 1.2;
-            for (let i = 0; i < majorList.length; i++) {
-                const sx = majorList[i].x;
-                ctx.moveTo(sx, py);
-                ctx.lineTo(sx, py + 8);
-            }
+            for (const item of majorList) { ctx.moveTo(item.x, py); ctx.lineTo(item.x, py + 8); }
             ctx.stroke();
 
-            // 6. Labels
             ctx.font = "10px " + (cs.getPropertyValue("--mono") || "monospace");
             ctx.textAlign = "center";
             ctx.textBaseline = "top";
             ctx.fillStyle = textColor;
-
-            for (let i = 0; i < majorList.length; i++) {
-                const item = majorList[i];
-                ctx.fillText(formatCombTick(item.time, span, majorStep), item.x, py + 12);
-            }
-
+            for (const item of majorList) ctx.fillText(formatCombTick(item.time, span, majorStep), item.x, py + 12);
             ctx.restore();
         }
 
         hexToRgba(hexOrRgb, alpha) {
             if (!hexOrRgb) return `rgba(59, 130, 246, ${alpha})`;
             if (hexOrRgb.startsWith("rgb")) {
-                return hexOrRgb.replace(/rgba?\(([^)]+)\)/, (m, val) => {
-                    const parts = val.split(",").slice(0, 3).map((s) => s.trim());
-                    return `rgba(${parts.join(",")}, ${alpha})`;
-                });
+                return hexOrRgb.replace(/rgba?\(([^)]+)\)/, (m, val) => `rgba(${val.split(",").slice(0, 3).map((s) => s.trim()).join(",")}, ${alpha})`);
             }
             let hex = hexOrRgb.replace("#", "");
             if (hex.length === 3) hex = hex.split("").map((c) => c + c).join("");
@@ -1445,24 +1678,50 @@ export const lineChart = defineUI({
             return `rgba(${(num >> 16) & 255}, ${(num >> 8) & 255}, ${num & 255}, ${alpha})`;
         }
 
-        // =========================================================================
-        // Pointer & Interaction Handling (Zero-GC, Direct DOM Tooltip, Clamped Scrub)
-        // =========================================================================
+        // ---- legend (DOM, updated in place: no Lit render per frame) -----------------------------
+        _updateLegend(list, vMinX, vMaxX) {
+            const el = this.renderRoot && this.renderRoot.querySelector(".legend");
+            if (!el || !list) return;
+            const mode = this.p.legendValue || "last";
+            const out = { min: 0, max: 0, minAt: 0, maxAt: 0 };
+            for (const s of list) {
+                const v = el.querySelector(`.lg-item[data-key="${CSS.escape(s._key)}"] .lg-val`);
+                if (!v) continue;
+                const buf = this._state(s).buf;
+                let y = NaN;
+                if (mode === "last" && buf.count) y = buf.getY(buf.count - 1);
+                else if ((mode === "min" || mode === "max") && buf.count) {
+                    const i0 = Math.max(0, lowerBoundRing(buf, vMinX)), i1 = Math.min(buf.count, upperBoundRing(buf, vMaxX));
+                    if (i1 > i0) { buf.rangeMinMax(i0, i1, out); y = mode === "min" ? out.min : out.max; }
+                }
+                v.textContent = mode === "none" || !Number.isFinite(y) ? "" : (s.prefix || "") + fmtValue(y, s.decimals) + (s.suffix || "") + (s.unit ? " " + s.unit : "");
+            }
+        }
 
+        _toggle(s, e) {
+            const solo = e && (e.altKey || e.metaKey);
+            if (solo) {
+                const others = this.seriesList().filter((x) => x._key !== s._key);
+                const alone = others.every((x) => this._hidden.has(x._key)) && !this._hidden.has(s._key);
+                others.forEach((x) => { if (alone) this._hidden.delete(x._key); else this._hidden.add(x._key); });
+                this._hidden.delete(s._key);
+            } else if (this._hidden.has(s._key)) this._hidden.delete(s._key);
+            else this._hidden.add(s._key);
+            this.emit("seriesToggle", { series: s.id || s.name, visible: !this._hidden.has(s._key) });
+            this.hover = null;
+            this.requestUpdate();
+            this.scheduleDraw();
+        }
+
+        // ---- pointer ---------------------------------------------------------------------------
         getHitZone(clientX, clientY) {
-            if (!this.canvas) return "none";
-            const container = this.renderRoot?.querySelector(".chart-container") || this.canvas;
-            const rect = container.getBoundingClientRect();
-            const x = clientX - rect.left;
-            const y = clientY - rect.top;
-            const { plotX, plotY, plotW, plotH, combX, combY, combW, combH, showComb } = this.getPlotMetrics(rect.width, rect.height);
-
-            if (showComb && x >= combX && x <= combX + combW && y >= combY && y <= combY + combH) {
-                return "comb";
-            }
-            if (x >= plotX && x <= plotX + plotW && y >= plotY && y <= plotY + plotH) {
-                return "plot";
-            }
+            const box = this._plotEl();
+            if (!box) return "none";
+            const rect = box.getBoundingClientRect();
+            const x = clientX - rect.left, y = clientY - rect.top;
+            const m = this.getPlotMetrics(rect.width, rect.height);
+            if (m.showComb && x >= m.combX && x <= m.combX + m.combW && y >= m.combY && y <= m.combY + m.combH) return "comb";
+            if (x >= m.plotX && x <= m.plotX + m.plotW && y >= m.plotY && y <= m.plotY + m.plotH) return "plot";
             return "none";
         }
 
@@ -1470,241 +1729,233 @@ export const lineChart = defineUI({
             if (e.button !== 0 || !this.canvas) return;
             const zone = this.getHitZone(e.clientX, e.clientY);
             if (zone === "none") return;
-
-            const fullBounds = this.ringBuffer.getBounds();
+            const fullBounds = this._bounds(this._visible());
             if (!fullBounds) return;
-
             const { vMinX, vMaxX } = this.getEffectiveTimeRange(fullBounds);
             this.dragStartX = e.clientX;
             this.dragStartMinX = vMinX;
             this.dragStartMaxX = vMaxX;
-
-            const container = this.renderRoot.querySelector(".chart-container");
-
+            this._moved = false;
+            const box = this._plotEl();
             if (zone === "comb") {
                 this.isScrubbing = true;
-                if (container) container.classList.add("scrubbing");
+                if (box) box.classList.add("scrubbing");
                 try { e.target.setPointerCapture(e.pointerId); } catch (_) { }
-            } else if (zone === "plot" && this.p.enableZoomPan) {
-                this.isPanning = true;
-                if (container) container.classList.add("dragging");
-                try { e.target.setPointerCapture(e.pointerId); } catch (_) { }
+            } else if (zone === "plot") {
+                this._downAt = { x: e.clientX, y: e.clientY };
+                if (this.p.enableZoomPan) {
+                    this.isPanning = true;
+                    if (box) box.classList.add("dragging");
+                    try { e.target.setPointerCapture(e.pointerId); } catch (_) { }
+                }
             }
         }
 
+        // what is under the cursor: each series' point closest to its time (shared), or the
+        // nearest one on the screen (nearest)
+        _hits(px, py, time) {
+            const sc = this._scale;
+            if (!sc) return [];
+            const span = sc.vMaxX - sc.vMinX;
+            const fixed = numOr(this.p.matchWithin, 0);
+            const hits = [];
+            for (const s of this._visible()) {
+                if (s.tooltip === false && this.p.tooltipMode !== "nearest") continue;
+                const buf = this._state(s).buf;
+                // automatic: about this series' own spacing in view (a slow series still shows next to a fast one)
+                let within = fixed;
+                if (!(within > 0)) {
+                    const n = Math.max(1, upperBoundRing(buf, sc.vMaxX) - lowerBoundRing(buf, sc.vMinX));
+                    within = Math.max(span * 0.01, (span / n) * 0.75);
+                }
+                const idx = buf.findClosestIndex(time);
+                if (idx < 0) continue;
+                const x = buf.getX(idx), y = buf.getY(idx);
+                if (Math.abs(x - time) > within) continue;
+                hits.push({ s, x, y, d: Math.hypot(sc.toX(x) - px, sc.toY(y, s.axis === "right" ? "right" : "left") - py) });
+            }
+            if (this.p.tooltipMode === "nearest" && hits.length) {
+                hits.sort((a, b) => a.d - b.d);
+                return [hits[0]];
+            }
+            return hits;
+        }
+
+        _showTooltip(px, py, rectW) {
+            const tip = this.renderRoot.querySelector(".tooltip");
+            if (!tip) return;
+            const h = this.hover;
+            const rows = h ? h.hits.filter((x) => x.s.tooltip !== false) : [];
+            if (!rows.length || this.p.tooltipMode === "off") { tip.style.display = "none"; return; }
+            tip.querySelector(".tooltip-time").textContent = formatTooltipTime(h.time);
+            const body = tip.querySelector(".tooltip-rows");
+            while (body.children.length > rows.length) body.removeChild(body.lastChild);
+            rows.forEach((hit, i) => {
+                let row = body.children[i];
+                if (!row) {
+                    row = document.createElement("div");
+                    row.className = "tooltip-row";
+                    row.innerHTML = '<span class="tooltip-dot"></span><span class="tooltip-name"></span><span class="tooltip-val"></span>';
+                    body.appendChild(row);
+                }
+                const s = hit.s;
+                row.children[0].style.background = this.colorOf(s);
+                row.children[1].textContent = (s.tooltipLabel || s.name || "Value") + ":";
+                row.children[2].textContent = (s.prefix || "") + fmtValue(hit.y, s.decimals) + (s.suffix || "") + (s.unit ? " " + s.unit : "");
+            });
+            const flip = px > rectW - 170;
+            tip.style.display = "block";
+            tip.style.left = `${Math.round(flip ? px - 12 : px + 12)}px`;
+            tip.style.top = `${Math.round(py)}px`;
+            tip.style.transform = flip ? "translate(-100%, -50%)" : "translate(0, -50%)";
+        }
+
         onPointerMove(e) {
-            if (!this.canvas || !this.ringBuffer.count) return;
-            const container = this.renderRoot?.querySelector(".chart-container") || this.canvas;
-            const rect = container.getBoundingClientRect();
-            const { plotX, plotY, plotW, plotH, combX, combY, combW, combH, showComb } = this.getPlotMetrics(rect.width, rect.height);
+            const box = this._plotEl();
+            if (!this.canvas || !box) return;
+            const rect = box.getBoundingClientRect();
+            const m = this.getPlotMetrics(rect.width, rect.height);
+            const px = e.clientX - rect.left, py = e.clientY - rect.top;
 
-            const px = e.clientX - rect.left;
-            const py = e.clientY - rect.top;
-
-            // 1. Handling Comb Scrubbing (Horizontal Drag)
             if (this.isScrubbing || this.isPanning) {
                 const dx = e.clientX - this.dragStartX;
-                const currentSpan = this.dragStartMaxX - this.dragStartMinX;
-                const timeDelta = (dx / plotW) * currentSpan;
-
-                const fullBounds = this.ringBuffer.getBounds();
-                const rawMin = this.dragStartMinX - timeDelta;
-                const rawMax = this.dragStartMaxX - timeDelta;
-
-                // Clamped so line NEVER flies off into empty space
-                this.viewRange = this.clampViewRange(rawMin, rawMax, fullBounds);
+                if (Math.abs(dx) > 3) this._moved = true;
+                if (!this._moved) return;
+                const timeDelta = (dx / m.plotW) * (this.dragStartMaxX - this.dragStartMinX);
+                this.viewRange = this.clampViewRange(this.dragStartMinX - timeDelta, this.dragStartMaxX - timeDelta, this._bounds(this._visible()));
                 this.draw();
                 return;
             }
 
-            // 2. Hover detection (Comb vs Plot)
-            const isOverComb = showComb && px >= combX && px <= combX + combW && py >= combY && py <= combY + combH;
-
-            if (isOverComb !== this.isHoverComb) {
-                this.isHoverComb = isOverComb;
-                if (container) {
-                    if (isOverComb) container.classList.add("hover-comb");
-                    else container.classList.remove("hover-comb");
-                }
+            const overComb = m.showComb && px >= m.combX && px <= m.combX + m.combW && py >= m.combY && py <= m.combY + m.combH;
+            if (overComb !== this.isHoverComb) {
+                this.isHoverComb = overComb;
+                box.classList.toggle("hover-comb", overComb);
             }
-
-            const tip = this.renderRoot.querySelector(".tooltip");
-
-            if (isOverComb || px < plotX || px > plotX + plotW || py < plotY || py > plotY + plotH) {
-                if (this.hover) {
-                    this.hover = null;
-                    this.draw();
-                }
-                if (tip) tip.style.display = "none";
+            if (overComb || px < m.plotX || px > m.plotX + m.plotW || py < m.plotY || py > m.plotY + m.plotH || !this._scale) {
+                if (this.hover) { this.hover = null; this.draw(); }
+                this._showTooltip(0, 0, 0);
                 return;
             }
-
-            const fullBounds = this.ringBuffer.getBounds();
-            if (!fullBounds) return;
-
-            const { vMinX, vMaxX } = this.getEffectiveTimeRange(fullBounds);
-            const timeAtCursor = vMinX + ((px - plotX) / plotW) * (vMaxX - vMinX);
-
-            const closestIdx = this.ringBuffer.findClosestIndex(timeAtCursor);
-            if (closestIdx < 0) return;
-
-            const closestX = this.ringBuffer.getX(closestIdx);
-            const closestY = this.ringBuffer.getY(closestIdx);
-
-            this.hover = {
-                x: closestX,
-                y: closestY,
-                cursorClientX: px,
-                cursorClientY: py
-            };
-
-            // Direct 60 FPS canvas redraw (crosshair & hover point)
+            const sc = this._scale;
+            const time = sc.vMinX + ((px - m.plotX) / m.plotW) * (sc.vMaxX - sc.vMinX);
+            const hits = this._hits(px, py, time);
+            this.hover = { time: hits.length ? hits[0].x : time, px, py, hits };
             this.draw();
-
-            // Direct DOM update of tooltip (zero Lit re-render!)
-            if (tip) {
-                const timeEl = tip.querySelector(".tooltip-time");
-                const valEl = tip.querySelector(".tooltip-val");
-                if (timeEl) timeEl.textContent = formatTooltipTime(closestX);
-                if (valEl) valEl.textContent = `${closestY} ${this.p.unit || ""}`;
-
-                const xSpan = Math.max(1, vMaxX - vMinX);
-                const sx = plotX + ((closestX - vMinX) / xSpan) * plotW;
-                const flip = sx > rect.width - 150;
-                const left = flip ? sx - 12 : sx + 12;
-                const transform = flip ? "translate(-100%, -50%)" : "translate(0, -50%)";
-
-                tip.style.display = "block";
-                tip.style.left = `${Math.round(left)}px`;
-                tip.style.top = `${Math.round(py)}px`;
-                tip.style.transform = transform;
+            this._showTooltip(px, py, rect.width);
+            // Logic hears it (a shared crosshair through a variable, …), at most 10 times a second
+            const now = Date.now();
+            if (now - this._lastHoverEmit > 100) {
+                this._lastHoverEmit = now;
+                const values = {};
+                hits.forEach((h) => { values[h.s.id || h.s.name] = h.y; });
+                this.emit("hover", { time: this.hover.time, values });
             }
         }
 
+        _emitRange(live) {
+            const sc = this._scale;
+            if (!sc) return;
+            this.emit("rangeChange", { from: sc.vMinX, to: sc.vMaxX, live: !!live || !this.viewRange });
+        }
+
         onPointerUp(e) {
-            const container = this.renderRoot.querySelector(".chart-container");
+            const box = this._plotEl();
+            const dragged = this._moved;
             if (this.isScrubbing || this.isPanning) {
                 try { e.target.releasePointerCapture(e.pointerId); } catch (_) { }
                 this.isScrubbing = false;
                 this.isPanning = false;
-                if (container) {
-                    container.classList.remove("scrubbing");
-                    container.classList.remove("dragging");
-                }
-                // Only requestUpdate here to show/hide the reset button if viewRange changed
-                this.requestUpdate();
+                if (box) { box.classList.remove("scrubbing"); box.classList.remove("dragging"); }
+                if (dragged) { this.requestUpdate(); this._emitRange(false); }
             }
+            // a click (no drag) on a point
+            if (!dragged && this._downAt && this.hover && this.hover.hits.length) {
+                const hit = this.hover.hits.slice().sort((a, b) => a.d - b.d)[0];
+                if (hit.d <= 12) this.emit("pointClick", { series: hit.s.id || hit.s.name, x: hit.x, y: hit.y });
+            }
+            this._downAt = null;
         }
 
         onWheel(e) {
             if (!this.p.enableZoomPan || !this.canvas) return;
             e.preventDefault();
-
-            const container = this.renderRoot?.querySelector(".chart-container") || this.canvas;
-            const rect = container.getBoundingClientRect();
-            const { plotX, plotW, combX, combW, combY, combH, showComb } = this.getPlotMetrics(rect.width, rect.height);
-            const cursorX = e.clientX - rect.left;
-            const cursorY = e.clientY - rect.top;
-
-            const fullBounds = this.ringBuffer.getBounds();
+            const box = this._plotEl();
+            if (!box) return;
+            const rect = box.getBoundingClientRect();
+            const m = this.getPlotMetrics(rect.width, rect.height);
+            const cursorX = e.clientX - rect.left, cursorY = e.clientY - rect.top;
+            const fullBounds = this._bounds(this._visible());
             if (!fullBounds) return;
-
             const { vMinX, vMaxX } = this.getEffectiveTimeRange(fullBounds);
             const curSpan = vMaxX - vMinX;
+            const overComb = m.showComb && cursorX >= m.combX && cursorX <= m.combX + m.combW && cursorY >= m.combY && cursorY <= m.combY + m.combH;
 
-            const isOverComb = showComb && cursorX >= combX && cursorX <= combX + combW && cursorY >= combY && cursorY <= combY + combH;
-
-            // Horizontal wheel scroll in comb bar = pan time
-            if (isOverComb && (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY))) {
+            if (overComb && (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY))) {
                 const scrollDelta = e.deltaX !== 0 ? e.deltaX : e.deltaY;
-                const timeShift = (scrollDelta / plotW) * curSpan * 0.4;
-                const rawMin = vMinX + timeShift;
-                const rawMax = vMaxX + timeShift;
-                this.viewRange = this.clampViewRange(rawMin, rawMax, fullBounds);
-                this.draw();
-                this.requestUpdate();
-                return;
+                const shift = (scrollDelta / m.plotW) * curSpan * 0.4;
+                this.viewRange = this.clampViewRange(vMinX + shift, vMaxX + shift, fullBounds);
+            } else {
+                if (cursorX < m.plotX || cursorX > m.plotX + m.plotW) return;
+                const ratio = (cursorX - m.plotX) / m.plotW;
+                const cursorTime = vMinX + ratio * curSpan;
+                const newSpan = curSpan * (e.deltaY < 0 ? 0.75 : 1.33);
+                if (newSpan < 10 && e.deltaY < 0) return;
+                this.viewRange = this.clampViewRange(cursorTime - ratio * newSpan, cursorTime + (1 - ratio) * newSpan, fullBounds);
             }
-
-            // Normal wheel zoom centered at cursor time
-            if (cursorX < plotX || cursorX > plotX + plotW) return;
-            const ratio = (cursorX - plotX) / plotW;
-            const cursorTime = vMinX + ratio * curSpan;
-
-            const zoomFactor = e.deltaY < 0 ? 0.75 : 1.33;
-            const newSpan = curSpan * zoomFactor;
-
-            if (newSpan < 10 && e.deltaY < 0) return;
-
-            const rawMin = cursorTime - ratio * newSpan;
-            const rawMax = cursorTime + (1 - ratio) * newSpan;
-
-            this.viewRange = this.clampViewRange(rawMin, rawMax, fullBounds);
             this.draw();
             this.requestUpdate();
+            const now = Date.now();
+            if (now - this._lastRangeEmit > 150) { this._lastRangeEmit = now; this._emitRange(false); }
         }
 
         onPointerLeave() {
-            if (this.hover) {
-                this.hover = null;
-                this.draw();
-            }
-            const tip = this.renderRoot.querySelector(".tooltip");
-            if (tip) tip.style.display = "none";
-
+            if (this.hover) { this.hover = null; this.draw(); }
+            this._showTooltip(0, 0, 0);
             this.isHoverComb = false;
-            const container = this.renderRoot.querySelector(".chart-container");
-            if (container) container.classList.remove("hover-comb");
-        }
-
-        onDoubleClick() {
-            this.resetZoom();
-        }
-
-        resetZoom() {
-            this.viewRange = null;
-            this.draw();
-            this.requestUpdate();
+            const box = this._plotEl();
+            if (box) box.classList.remove("hover-comb");
         }
 
         render() {
-            const hasData = this.ringBuffer && this.ringBuffer.count > 0;
-            const lineColor = this.getActiveColor();
-
+            const all = this.seriesList();
+            const hasData = all.some((s) => this._state(s).buf.count > 0);
+            const legendAt = this.p.legend || "bottom";
+            const legendList = all.filter((s) => s.legend !== false);
+            const legend = legendAt === "none" || !legendList.length ? "" : html`
+                <div class="legend" part="legend">
+                    ${legendList.map((s) => html`
+                        <button type="button" class="lg-item ${this._hidden.has(s._key) || s.visible === false ? "off" : ""}" data-key="${s._key}"
+                            title="Click: show / hide. Alt+click: only this one."
+                            @click=${(e) => this._toggle(s, e)}>
+                            <span class="lg-swatch" style="background:${this.colorOf(s)}"></span>
+                            <span class="lg-name">${s.name || "Series " + (s._i + 1)}</span>
+                            <span class="lg-val"></span>
+                        </button>`)}
+                </div>`;
             return html`
-                <div
-                    class="chart-container"
-                    part="chart"
-                    @wheel=${(e) => this.onWheel(e)}
-                    @pointerdown=${(e) => this.onPointerDown(e)}
-                    @pointermove=${(e) => this.onPointerMove(e)}
-                    @pointerup=${(e) => this.onPointerUp(e)}
-                    @pointerleave=${() => this.onPointerLeave()}
-                    @dblclick=${() => this.onDoubleClick()}
-                >
-                    <canvas></canvas>
-
-                    ${this.viewRange ? html`
-                        <button class="btn-reset-zoom" @click=${() => this.resetZoom()} title="Double click canvas or click here to resume live auto-follow">
-                            <i class="fa fa-undo"></i> Reset zoom / <span class="live-dot"></span> Live
-                        </button>
-                    ` : ""}
-
-                    <div class="tooltip">
-                        <div class="tooltip-time"></div>
-                        <div class="tooltip-row">
-                            <span class="tooltip-dot" style="background: ${lineColor};"></span>
-                            <span style="color: #94a3b8;">${this.p.label || "Value"}:</span>
-                            <span class="tooltip-val"></span>
-                        </div>
+                <div class="chart-container" part="chart">
+                    ${legendAt === "top" ? legend : ""}
+                    <div class="plot"
+                        @wheel=${(e) => this.onWheel(e)}
+                        @pointerdown=${(e) => this.onPointerDown(e)}
+                        @pointermove=${(e) => this.onPointerMove(e)}
+                        @pointerup=${(e) => this.onPointerUp(e)}
+                        @pointerleave=${() => this.onPointerLeave()}
+                        @dblclick=${() => this.resetZoom()}>
+                        <canvas></canvas>
+                        ${this.viewRange ? html`
+                            <button class="btn-reset-zoom" @click=${() => this.resetZoom()} title="Double click the chart or click here to follow live again">
+                                <i class="fa fa-undo"></i> Reset zoom / <span class="live-dot"></span> Live
+                            </button>` : ""}
+                        <div class="tooltip"><div class="tooltip-time"></div><div class="tooltip-rows"></div></div>
+                        ${!hasData ? html`
+                            <div class="empty">
+                                <i class="fa fa-line-chart" style="font-size: 24px; opacity: 0.4;"></i>
+                                <span>No data received</span>
+                            </div>` : ""}
                     </div>
-
-                    ${!hasData ? html`
-                        <div class="empty">
-                            <i class="fa fa-line-chart" style="font-size: 24px; opacity: 0.4;"></i>
-                            <span>No data received</span>
-                        </div>
-                    ` : ""}
+                    ${legendAt !== "top" ? legend : ""}
                 </div>
             `;
         }
