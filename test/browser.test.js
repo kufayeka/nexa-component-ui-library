@@ -17,7 +17,7 @@ async function ok(label, fn) { await fn(); passed++; console.log('✔ ' + label)
 const P = 'nexa-ui-';
 const ALL = ['button', 'input', 'textarea', 'number-input', 'password-input', 'checkbox', 'switch', 'radio-group', 'segmented', 'select', 'combobox', 'slider', 'tags-input', 'pin-input', 'rating',
     'text', 'heading', 'badge', 'tag', 'card', 'avatar', 'stat', 'alert', 'progress', 'spinner', 'skeleton', 'separator', 'empty-state', 'timeline', 'fieldset',
-    'tabs', 'iframe', 'datetime', 'daterange', 'pagination'];
+    'tabs', 'iframe', 'datetime', 'daterange', 'pagination', 'line-chart'];
 const TAG = '{sparkplug:Plant::Line1::Mixer::Speed}';
 
 withHarness({
@@ -42,9 +42,9 @@ withHarness({
         await settle();
     };
 
-    await ok('all 35 components register (UI · Form / Display / Layout / Embed), each mounts and draws', async () => {
+    await ok('all 36 components register (UI · Form / Display / Layout / Embed / Charts), each mounts and draws', async () => {
         const reg = await js(`${JSON.stringify(ALL)}.map(function (id) { var d = NEXA.getComponent("${P}" + id); return d ? d.category : "MISSING " + id; })`);
-        assert.deepStrictEqual(reg.filter((c) => c !== 'UI · Form' && c !== 'UI · Display' && c !== 'UI · Layout' && c !== 'UI · Embed'), []);
+        assert.deepStrictEqual(reg.filter((c) => c !== 'UI · Form' && c !== 'UI · Display' && c !== 'UI · Layout' && c !== 'UI · Embed' && c !== 'UI · Charts'), []);
         for (const id of ALL) await mount('all-' + id, id, {}, { width: 320, height: 120 });
         const empty = await js(`${JSON.stringify(ALL)}.filter(function (id) { var r = NexaTest.wc("all-" + id).renderRoot; return !r || !r.innerHTML || r.innerHTML.replace(/<!--[^]*?-->/g, "").trim() === ""; })`);
         assert.deepStrictEqual(empty, []);
@@ -421,16 +421,202 @@ withHarness({
         assert.strictEqual(itNum.writes.some((w) => w[0] === 'outputPage' && w[1] === 4), true, 'clicking page 4 button writes page 4');
     });
 
+    await ok('Line Chart: draws virtualized time-series canvas, crosshair, and tooltip', async () => {
+        const testData = [
+            { x: 1727852400000, y: 120 },
+            { x: 1727852401000, y: 123 },
+            { x: 1727852402000, y: 121 }
+        ];
+        await mount('chart-test', 'line-chart', { data: testData, label: 'Speed', unit: 'rpm' }, { width: 500, height: 260 });
+        const canvasExists = await js(`!!${root('chart-test')}.querySelector('canvas')`);
+        assert.strictEqual(canvasExists, true, 'canvas element created');
+
+        // Check hover crosshair and tooltip
+        const containerSel = `${root('chart-test')}.querySelector('.chart-container')`;
+        const b = await js(`(function () { var e = ${containerSel}; e.scrollIntoView({ block: "center" }); var r = e.getBoundingClientRect(); return { x: Math.round(r.left + 200), y: Math.round(r.top + 80) }; })()`);
+        await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: b.x, y: b.y });
+        await settle();
+
+        const tooltipText = await js(`(function () { var t = ${root('chart-test')}.querySelector('.tooltip'); return t ? t.textContent : ''; })()`);
+        assert.ok(tooltipText.includes('Speed:'), 'tooltip displays series label: ' + tooltipText);
+        assert.ok(tooltipText.includes('rpm'), 'tooltip displays unit: ' + tooltipText);
+
+        // Verify inspector exposes timeWindow and maxPoints properties
+        const inspectorProps = await js(`(async function () {
+            var insp = NexaTest.inspector("${P}line-chart", {});
+            await new Promise(function (r) { setTimeout(r, 250); });
+            var rows = NexaTest.rows(insp.box).map(function (r) { return r.label; });
+            return rows;
+        })()`);
+        assert.ok(inspectorProps.includes('Time Range (Last X)'), 'inspector has Time Range property');
+        assert.ok(inspectorProps.includes('Max Points Retention'), 'inspector has Max Points property');
+        assert.ok(inspectorProps.includes('Show Time Comb (Scrubber Ruler)'), 'inspector has Time Comb toggle');
+
+        // Test comb scrubbing: drag in comb area (y = bottom ruler)
+        const combPoint = await js(`(function () {
+            var e = ${containerSel};
+            var r = e.getBoundingClientRect();
+            return { x: Math.round(r.left + 250), y: Math.round(r.bottom - 15) };
+        })()`);
+        await send('Input.dispatchMouseEvent', { type: 'mousePressed', button: 'left', buttons: 1, clickCount: 1, x: combPoint.x, y: combPoint.y });
+        await send('Input.dispatchMouseEvent', { type: 'mouseMoved', buttons: 1, x: combPoint.x - 50, y: combPoint.y });
+        await send('Input.dispatchMouseEvent', { type: 'mouseReleased', button: 'left', buttons: 0, clickCount: 1, x: combPoint.x - 50, y: combPoint.y });
+        await settle();
+
+        const hasResetButton = await js(`!!${root('chart-test')}.querySelector('.btn-reset-zoom')`);
+        assert.strictEqual(hasResetButton, true, 'reset zoom button appears after scrubbing time comb');
+
+        // Verify canvas is NOT white / blank after scrub and hover
+        const hasDrawnPixels = await js(`(function () {
+            var c = ${root('chart-test')}.querySelector('canvas');
+            var ctx = c.getContext('2d');
+            var img = ctx.getImageData(0, 0, c.width, c.height).data;
+            var nonZero = 0;
+            for (var i = 0; i < img.length; i += 4) { if (img[i+3] > 0) nonZero++; }
+            return nonZero > 500;
+        })()`);
+        assert.strictEqual(hasDrawnPixels, true, 'canvas retains drawn chart lines after scrub and hover');
+    });
+
+    await ok('Line Chart: retains drawing and canvas dimensions when switching tabs', async () => {
+        await mount('tab-chart-test', 'tabs', {
+            tabs: [{ value: 'chart', label: 'Chart' }, { value: 'blank', label: 'Blank' }],
+            defaultValue: 'chart'
+        }, { width: 500, height: 300 });
+
+        // Slot a line chart into 'chart' tab
+        await js(`(function () {
+            var tabsEl = NexaTest.wc("tab-chart-test");
+            var comp = NEXA.getComponent("${P}line-chart");
+            var chartEl = document.createElement(comp.tag);
+            chartEl.slot = "chart";
+            chartEl.style.cssText = "position:absolute;inset:0;width:100%;height:100%;";
+            chartEl._nexaRender({
+                data: [
+                    { x: 1000, y: 10 },
+                    { x: 2000, y: 50 },
+                    { x: 3000, y: 30 }
+                ]
+            });
+            tabsEl.appendChild(chartEl);
+            return 1;
+        })()`);
+        await settle();
+        await js('new Promise(function (r) { setTimeout(r, 150); })');
+
+        const tag = await js(`NEXA.getComponent("${P}line-chart").tag`);
+
+        // 1. Initial render on active 'chart' tab
+        const initialPixels = await js(`(function () {
+            var chartEl = NexaTest.wc("tab-chart-test").querySelector("${tag}");
+            var c = chartEl.renderRoot.querySelector("canvas");
+            var ctx = c.getContext("2d");
+            var img = ctx.getImageData(0, 0, c.width, c.height).data;
+            var nonZero = 0;
+            for (var i = 0; i < img.length; i += 4) { if (img[i+3] > 0) nonZero++; }
+            return { width: c.width, height: c.height, nonZero: nonZero };
+        })()`);
+        assert.ok(initialPixels.width > 200, 'canvas width initially > 200: ' + initialPixels.width);
+        assert.ok(initialPixels.nonZero > 100, 'canvas has drawn pixels initially: ' + initialPixels.nonZero);
+
+        // 2. Switch away to 'blank' tab
+        await clickAt(q('tab-chart-test', '.tab[data-value="blank"]'));
+        await settle();
+        await js('new Promise(function (r) { setTimeout(r, 100); })');
+
+        // 3. Switch BACK to 'chart' tab
+        await clickAt(q('tab-chart-test', '.tab[data-value="chart"]'));
+        await settle();
+        await js('new Promise(function (r) { setTimeout(r, 150); })');
+
+        // 4. Verify canvas is NOT 1x1, has full dimensions, and chart lines are still rendered
+        const restoredPixels = await js(`(function () {
+            var chartEl = NexaTest.wc("tab-chart-test").querySelector("${tag}");
+            var c = chartEl.renderRoot.querySelector("canvas");
+            var ctx = c.getContext("2d");
+            var img = ctx.getImageData(0, 0, c.width, c.height).data;
+            var nonZero = 0;
+            for (var i = 0; i < img.length; i += 4) { if (img[i+3] > 0) nonZero++; }
+            return { width: c.width, height: c.height, nonZero: nonZero };
+        })()`);
+        assert.ok(restoredPixels.width > 200, 'canvas width restored > 200 after tab switch: ' + restoredPixels.width);
+        assert.ok(restoredPixels.nonZero > 100, 'canvas has drawn pixels restored after tab switch: ' + restoredPixels.nonZero);
+    });
+
+    await ok('Line Chart: loads and renders array data when inputPoint is bound and single point has marker', async () => {
+        const tag = await js(`NEXA.getComponent("${P}line-chart").tag`);
+        const result = await js(`(async function () {
+            var comp = NEXA.getComponent("${P}line-chart");
+            var el = document.createElement(comp.tag);
+            el.style.cssText = "width:400px;height:250px;";
+            document.body.appendChild(el);
+            // Simulate inputPoint bound to {msg.append} and inputData bound to {msg.payload}
+            el._nexaRender({
+                inputPoint: "{msg.append}",
+                inputData: [
+                    { x: 1790874000000, y: 27.4 },
+                    { x: 1790877600000, y: 29.1 }
+                ],
+                timeWindow: "auto"
+            }, {
+                getRawProps: function () {
+                    return { inputPoint: "{msg.append}", inputData: "{msg.payload}" };
+                }
+            });
+            await new Promise(function (r) { setTimeout(r, 100); });
+            var c = el.renderRoot.querySelector("canvas");
+            var count = el.ringBuffer ? el.ringBuffer.count : 0;
+            var ctx = c.getContext("2d");
+            var img = ctx.getImageData(0, 0, c.width, c.height).data;
+            var nonZero = 0;
+            for (var i = 0; i < img.length; i += 4) { if (img[i+3] > 0) nonZero++; }
+            el.remove();
+            return { count: count, nonZero: nonZero };
+        })()`);
+        assert.strictEqual(result.count, 2, 'ringBuffer loaded 2 array points despite inputPoint being bound');
+        assert.ok(result.nonZero > 50, 'canvas rendered pixels: ' + result.nonZero);
+    });
+
+
+    await ok('Line Chart: keeps every point (several in one tick, late ones in order, exact values, appendPoints, the newest when shrunk)', async () => {
+        await mount('lc-full', 'line-chart', { maxPoints: 1000, inputPoint: '{sparkplug:G::E::D::trend}' }, { width: 500, height: 260 });
+        const buf = `NexaTest.wc("lc-full").ringBuffer`;
+        const xs = () => js(`(function () { var b = ${buf}, o = []; for (var i = 0; i < b.count; i++) o.push(b.getX(i)); return o; })()`);
+        // three values in ONE tick (a burst): none may be lost
+        await js(`(function () { [[1000, 1.1], [2000, 2.2], [3000, 3.3]].forEach(function (p) { NexaTest.setTag("lc-full", { x: p[0], y: p[1] }, "inputPoint"); }); return 1; })()`);
+        await settle();
+        assert.deepStrictEqual(await xs(), [1000, 2000, 3000], 'a burst in one tick: every point');
+        assert.strictEqual(await js(`${buf}.getY(1)`), 2.2, 'exact value (no Float32 rounding)');
+        // a late point (reconnect): put in its place, so search / zoom stay right
+        await js(`NexaTest.setTag("lc-full", { x: 2500, y: 9 }, "inputPoint")`); await settle();
+        assert.deepStrictEqual(await xs(), [1000, 2000, 2500, 3000], 'a late point in order');
+        // the same sample delivered twice is one point
+        await js(`NexaTest.setTag("lc-full", { x: 3000, y: 3.3 }, "inputPoint")`); await settle();
+        assert.strictEqual((await xs()).length, 4, 'an exact repeat of the last point is not added');
+        // a batch from Logic: Update Component -> appendPoints
+        const added = await js(`NexaTest.invoke("lc-full", "appendPoints", { points: Array.from({ length: 2000 }, function (_, i) { return { x: 4000 + i, y: i }; }) })`);
+        assert.strictEqual(added, 2000);
+        assert.strictEqual(await js(`${buf}.count`), 1000, 'bounded by Max Points (the oldest go)');
+        assert.strictEqual(await js(`${buf}.getX(999)`), 5999, 'the newest kept');
+        // Max Points smaller: the NEWEST stay
+        await js(`NexaTest.setProps("lc-full", { maxPoints: 100 })`); await settle();
+        assert.deepStrictEqual([await js(`${buf}.count`), await js(`${buf}.getX(0)`), await js(`${buf}.getX(99)`)], [100, 5900, 5999], 'shrunk: the newest 100');
+        await js(`NexaTest.invoke("lc-full", "clearPoints")`); await settle();
+        assert.strictEqual(await js(`${buf}.count`), 0, 'clearPoints');
+    });
+
     await ok('the inspector: every plain prop takes a binding (⛓); colours and sizes take theme tokens (◆), a token shows as a chip', async () => {
         const r = await js(`(async function () {
             var t = NexaTest.inspector("${P}button", {});
             await new Promise(function (r) { setTimeout(r, 200); });
-            var fields = Array.from(t.box.querySelectorAll(".nx-kit")).filter(function (e) { return e.label; });
-            var by = function (l) { return fields.filter(function (e) { return e.label === l; })[0]; };
-            var out = { text: !!by("Text") && by("Text").querySelector(".nx-icon-btn .fa-link") !== null,
-                radius: by("Corner radius") && (by("Corner radius").querySelector(".nx-token-chip") || {}).textContent,
-                tokenBtn: !!(by("Corner radius") && by("Corner radius").querySelector(".nx-token-btn")),
-                tabs: Array.from(t.box.querySelectorAll("nx-tab")).map(function (x) { return x.label || x.getAttribute("label"); }) };
+            // the property tree: pick a prop's row, its widget is in the pane
+            var rows = NexaTest.rows(t.box);
+            var by = function (l) { var row = rows.filter(function (x) { return x.label === l; })[0]; return row ? t.field(row.id) : Promise.resolve(null); };
+            var text = await by("Text"), out = { text: !!text && text.querySelector(".nx-icon-btn .fa-link") !== null };
+            var radius = await by("Corner radius");
+            out.radius = radius && (radius.querySelector(".nx-token-chip") || {}).textContent;
+            out.tokenBtn = !!(radius && radius.querySelector(".nx-token-btn"));
+            out.tabs = rows.filter(function (x) { return /^@[^/]+$/.test(x.id); }).map(function (x) { return x.label; });
             t.destroy();
             return out;
         })()`);
