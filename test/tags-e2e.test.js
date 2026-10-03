@@ -88,6 +88,9 @@ inSlot.push(chart('s'));
 const MSG = { $bind: [{ src: 'msg', ref: 'payload' }] };
 top.push({ id: 'pLC2', type: 'nexa-ui-line-chart', x: 0, y: 0, w: 380, h: 200,
     props: { series: [{ id: 's1', name: 'A', live: MSG }, { id: 's2', name: 'B', live: MSG }, { id: 's3', name: 'C' }], thresholds: [{ value: 6 }], legend: 'none' } });
+// a chart just dropped (its series = the default Series 1, not in its props): an API's array of
+// points through Series 1's own Update node (Append points)
+top.push({ id: 'pLC3', type: 'nexa-ui-line-chart', x: 0, y: 0, w: 380, h: 200, props: { legend: 'none' } });
 top.push({ id: 'pEV', type: 'nexa-ui-stat', x: 0, y: 0, w: 220, h: 96, props: { label: 'none', inputValue: TAG('Stat'), change: '' } });
 const LOGIC = { nodes: [
     { id: 'i1', type: 'inject', once: true, onceDelay: 2500, intervalMs: 0, payloadType: 'num', payload: '5' },
@@ -97,9 +100,11 @@ const LOGIC = { nodes: [
     { id: 'u2', type: 'ui-update', compId: 'pLC2', item: { list: 'series', id: 's2' }, config: {} },
     { id: 'i4', type: 'inject', once: true, onceDelay: 4500, intervalMs: 0, payloadType: 'json', payload: '[{"x":1,"y":1},{"x":2,"y":2}]' },
     { id: 'u4', type: 'ui-update', compId: 'pLC2', item: { list: 'series', id: 's3' }, action: 'replacePoints', config: {} },
+    { id: 'i5', type: 'inject', once: true, onceDelay: 2500, intervalMs: 0, payloadType: 'json', payload: '[{"x":1000,"y":3},{"x":2000,"y":4},{"x":3000,"y":5}]' },
+    { id: 'u5', type: 'ui-update', compId: 'pLC3', item: { list: 'series', id: 's1' }, action: 'appendPoints', config: {} },
     { id: 'e1', type: 'ui-event', compId: 'pLC2', item: { list: 'series', id: 's1' }, event: 'thresholdCross' },
     { id: 'u3', type: 'ui-update', compId: 'pEV', config: { label: { $bind: [{ src: 'msg', ref: 'payload.direction' }], static: '?' } } }
-], wires: [{ id: 'w1', from: 'i1', to: 'u1' }, { id: 'w2', from: 'i2', to: 'u2' }, { id: 'w3', from: 'i3', to: 'u1' }, { id: 'w4', from: 'e1', to: 'u3' }, { id: 'w5', from: 'i4', to: 'u4' }] };
+], wires: [{ id: 'w1', from: 'i1', to: 'u1' }, { id: 'w2', from: 'i2', to: 'u2' }, { id: 'w3', from: 'i3', to: 'u1' }, { id: 'w4', from: 'e1', to: 'u3' }, { id: 'w5', from: 'i4', to: 'u4' }, { id: 'w6', from: 'i5', to: 'u5' }] };
 const pos = (list, x0) => { let y = 20; list.forEach((c) => { c.x = x0; c.y = y; y += c.h + 12; }); return y; };
 pos(top, 20);
 // the slot set: in a Tabs' "overview" panel (a vertical auto layout places them)
@@ -211,6 +216,7 @@ const portFree = (port) => new Promise((resolve) => { const t = net.createServer
             check('series s1: its own messages (5, then 9)', JSON.stringify(await lcYs('pLC2', 0)) === '[5,9]', await lcYs('pLC2', 0));
             check('series s2: its own message (7), not the one of s1', JSON.stringify(await lcYs('pLC2', 1)) === '[7]', await lcYs('pLC2', 1));
             check('series s1 On Threshold Crossed (5 -> 9 over 6) drives Logic: the stat says "up"', (await label('pEV')) === 'up', await label('pEV'));
+            check('a chart just dropped: an array from an API appended to its Series 1 by the node of that series', JSON.stringify(await lcYs('pLC3', 0)) === '[3,4,5]', await lcYs('pLC3', 0));
             for (let i = 0; i < 20 && JSON.stringify(await lcYs('pLC2', 2)) !== '[1,2]'; i++) await wait(150);
             check('series s3 Replace points (the action of its Update node)', JSON.stringify(await lcYs('pLC2', 2)) === '[1,2]', await lcYs('pLC2', 2));
             // 2. A CHANGE at the edge reaches both copies
