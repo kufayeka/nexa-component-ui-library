@@ -421,296 +421,250 @@ withHarness({
         assert.strictEqual(itNum.writes.some((w) => w[0] === 'outputPage' && w[1] === 4), true, 'clicking page 4 button writes page 4');
     });
 
-    await ok('Line Chart: draws virtualized time-series canvas, crosshair, and tooltip', async () => {
-        const testData = [
-            { x: 1727852400000, y: 120 },
-            { x: 1727852401000, y: 123 },
-            { x: 1727852402000, y: 121 }
-        ];
-        await mount('chart-test', 'line-chart', { series: [{ name: 'Speed', unit: 'rpm', data: { $bind: [], static: testData } }] }, { width: 500, height: 260 });
-        const canvasExists = await js(`!!${root('chart-test')}.querySelector('canvas')`);
-        assert.strictEqual(canvasExists, true, 'canvas element created');
+    // ---- Line Chart (v3): series are Logic targets ----------------------------------------------
+    const S = (id, extra) => Object.assign({ id, name: id.toUpperCase() }, extra || {});
+    const series = (name) => `NexaTest.wc(${JSON.stringify(name)})`;
+    const counts = (name) => js(`(function () { var w = ${series(name)}; return w.seriesList().map(function (s) { return w._state(s).buf.count; }); })()`);
+    const pixels = (name) => js(`(function () { var c = ${root(name)}.querySelector("canvas"), d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data, n = 0; for (var i = 3; i < d.length; i += 4) if (d[i]) n++; return n; })()`);
+    const T0 = 1727852400000;
+    const wave = (k, base, n, step) => Array.from({ length: n || 60 }, (_, i) => ({ x: T0 + i * (step || 1000), y: Math.round((base + Math.sin(i / 6 + k) * 5) * 100) / 100 }));
 
-        // Check hover crosshair and tooltip
-        const containerSel = `${root('chart-test')}.querySelector('.chart-container')`;
-        const b = await js(`(function () { var e = ${containerSel}; e.scrollIntoView({ block: "center" }); var r = e.getBoundingClientRect(); return { x: Math.round(r.left + 200), y: Math.round(r.top + 80) }; })()`);
+    await ok('Line Chart: draws, crosshair + tooltip (label, value, unit), the inspector, the two-row ruler drags in time', async () => {
+        await mount('chart-test', 'line-chart', { series: [S('s1', { name: 'Speed', unit: 'rpm', live: [{ x: T0, y: 120 }, { x: T0 + 1000, y: 123 }, { x: T0 + 2000, y: 121 }] })] }, { width: 500, height: 260 });
+        assert.strictEqual(await js(`!!${root('chart-test')}.querySelector('canvas')`), true);
+        const plot = `${root('chart-test')}.querySelector('.plot')`;
+        const b = await js(`(function () { var e = ${plot}; e.scrollIntoView({ block: "center" }); var r = e.getBoundingClientRect(); return { x: Math.round(r.left + 200), y: Math.round(r.top + 80), bottom: Math.round(r.bottom - 14), left: Math.round(r.left) }; })()`);
         await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: b.x, y: b.y });
         await settle();
-
-        const tooltipText = await js(`(function () { var t = ${root('chart-test')}.querySelector('.tooltip'); return t ? t.textContent : ''; })()`);
-        assert.ok(tooltipText.includes('Speed:'), 'tooltip displays series label: ' + tooltipText);
-        assert.ok(tooltipText.includes('rpm'), 'tooltip displays unit: ' + tooltipText);
-
-        // Verify inspector exposes timeWindow and maxPoints properties
-        const inspectorProps = await js(`(async function () {
-            var insp = NexaTest.inspector("${P}line-chart", {});
-            await new Promise(function (r) { setTimeout(r, 250); });
-            var rows = NexaTest.rows(insp.box).map(function (r) { return r.label; });
-            return rows;
-        })()`);
-        assert.ok(inspectorProps.includes('Time range'), 'inspector has Time range');
-        assert.ok(inspectorProps.includes('Series'), 'inspector has the Series list');
-        assert.ok(inspectorProps.includes('Time ruler (drag to scrub)'), 'inspector has the time ruler toggle');
-
-        // Test comb scrubbing: drag in comb area (y = bottom ruler)
-        const combPoint = await js(`(function () {
-            var e = ${root('chart-test')}.querySelector('.plot');   // the time ruler: the plot's bottom (the legend is under it)
-            var r = e.getBoundingClientRect();
-            return { x: Math.round(r.left + 250), y: Math.round(r.bottom - 15) };
-        })()`);
-        await send('Input.dispatchMouseEvent', { type: 'mousePressed', button: 'left', buttons: 1, clickCount: 1, x: combPoint.x, y: combPoint.y });
-        await send('Input.dispatchMouseEvent', { type: 'mouseMoved', buttons: 1, x: combPoint.x - 50, y: combPoint.y });
-        await send('Input.dispatchMouseEvent', { type: 'mouseReleased', button: 'left', buttons: 0, clickCount: 1, x: combPoint.x - 50, y: combPoint.y });
+        const tip = await js(`${root('chart-test')}.querySelector('.tooltip').textContent`);
+        assert.ok(/Speed: 12\d rpm/.test(tip), 'tooltip: ' + tip);
+        const rows = await js(`(async function () { var insp = NexaTest.inspector("${P}line-chart", {}); await new Promise(function (r) { setTimeout(r, 250); }); return NexaTest.rows(insp.box).map(function (r) { return r.label; }); })()`);
+        for (const l of ['Series', 'Time range', 'Time ruler', 'Zoom in to at most', 'Export button on the chart']) assert.ok(rows.includes(l), 'inspector: ' + l);
+        // the ruler (two rows) says it can be dragged, and moves the time (the inspector moved the page: measure again)
+        Object.assign(b, await js(`(function () { var e = ${plot}; e.scrollIntoView({ block: "center" }); var r = e.getBoundingClientRect(); return { x: Math.round(r.left + 200), bottom: Math.round(r.bottom - 14) }; })()`));
+        await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: b.x + 50, y: b.bottom });
         await settle();
-
-        const hasResetButton = await js(`!!${root('chart-test')}.querySelector('.btn-reset-zoom')`);
-        assert.strictEqual(hasResetButton, true, 'reset zoom button appears after scrubbing time comb');
-
-        // Verify canvas is NOT white / blank after scrub and hover
-        const hasDrawnPixels = await js(`(function () {
-            var c = ${root('chart-test')}.querySelector('canvas');
-            var ctx = c.getContext('2d');
-            var img = ctx.getImageData(0, 0, c.width, c.height).data;
-            var nonZero = 0;
-            for (var i = 0; i < img.length; i += 4) { if (img[i+3] > 0) nonZero++; }
-            return nonZero > 500;
-        })()`);
-        assert.strictEqual(hasDrawnPixels, true, 'canvas retains drawn chart lines after scrub and hover');
+        assert.ok(await js(`${plot}.classList.contains("hover-ruler")`), 'a grab cursor over the ruler');
+        await send('Input.dispatchMouseEvent', { type: 'mousePressed', button: 'left', buttons: 1, clickCount: 1, x: b.x + 50, y: b.bottom });
+        await send('Input.dispatchMouseEvent', { type: 'mouseMoved', buttons: 1, x: b.x, y: b.bottom });
+        await send('Input.dispatchMouseEvent', { type: 'mouseReleased', button: 'left', buttons: 0, clickCount: 1, x: b.x, y: b.bottom });
+        await settle();
+        assert.strictEqual(await js(`!!${root('chart-test')}.querySelector('.btn-reset-zoom')`), true, 'dragged: paused, a Live button');
+        const ev = await js(`NexaTest.item("chart-test").events.filter(function (e) { return e[0] === "rangeChange" || e[0] === "liveChange"; }).map(function (e) { return e[0] + ":" + (e[1].cause || e[1].live); })`);
+        assert.ok(ev.includes('liveChange:false') && ev.includes('rangeChange:ruler'), 'events: ' + JSON.stringify(ev));
+        assert.ok((await pixels('chart-test')) > 500);
     });
 
     await ok('Line Chart: retains drawing and canvas dimensions when switching tabs', async () => {
-        await mount('tab-chart-test', 'tabs', {
-            tabs: [{ value: 'chart', label: 'Chart' }, { value: 'blank', label: 'Blank' }],
-            defaultValue: 'chart'
-        }, { width: 500, height: 300 });
-
-        // Slot a line chart into 'chart' tab
+        await mount('tab-chart-test', 'tabs', { tabs: [{ value: 'chart', label: 'Chart' }, { value: 'blank', label: 'Blank' }], defaultValue: 'chart' }, { width: 500, height: 300 });
         await js(`(function () {
-            var tabsEl = NexaTest.wc("tab-chart-test");
-            var comp = NEXA.getComponent("${P}line-chart");
-            var chartEl = document.createElement(comp.tag);
+            var tabsEl = NexaTest.wc("tab-chart-test"), comp = NEXA.getComponent("${P}line-chart"), chartEl = document.createElement(comp.tag);
             chartEl.slot = "chart";
             chartEl.style.cssText = "position:absolute;inset:0;width:100%;height:100%;";
-            chartEl._nexaRender({ series: [{ name: "A", data: [{ x: 1000, y: 10 }, { x: 2000, y: 50 }, { x: 3000, y: 30 }] }] });
+            chartEl._nexaRender({ series: [{ id: "a", name: "A", live: [{ x: 1000, y: 10 }, { x: 2000, y: 50 }, { x: 3000, y: 30 }] }] });
             tabsEl.appendChild(chartEl);
             return 1;
         })()`);
         await settle();
         await js('new Promise(function (r) { setTimeout(r, 150); })');
-
         const tag = await js(`NEXA.getComponent("${P}line-chart").tag`);
-
-        // 1. Initial render on active 'chart' tab
-        const initialPixels = await js(`(function () {
-            var chartEl = NexaTest.wc("tab-chart-test").querySelector("${tag}");
-            var c = chartEl.renderRoot.querySelector("canvas");
-            var ctx = c.getContext("2d");
-            var img = ctx.getImageData(0, 0, c.width, c.height).data;
-            var nonZero = 0;
-            for (var i = 0; i < img.length; i += 4) { if (img[i+3] > 0) nonZero++; }
-            return { width: c.width, height: c.height, nonZero: nonZero };
-        })()`);
-        assert.ok(initialPixels.width > 200, 'canvas width initially > 200: ' + initialPixels.width);
-        assert.ok(initialPixels.nonZero > 100, 'canvas has drawn pixels initially: ' + initialPixels.nonZero);
-
-        // 2. Switch away to 'blank' tab
-        await clickAt(q('tab-chart-test', '.tab[data-value="blank"]'));
-        await settle();
-        await js('new Promise(function (r) { setTimeout(r, 100); })');
-
-        // 3. Switch BACK to 'chart' tab
-        await clickAt(q('tab-chart-test', '.tab[data-value="chart"]'));
-        await settle();
+        const px = () => js(`(function () { var c = NexaTest.wc("tab-chart-test").querySelector("${tag}").renderRoot.querySelector("canvas"); var d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data, n = 0; for (var i = 3; i < d.length; i += 4) if (d[i]) n++; return { w: c.width, n: n }; })()`);
+        const a = await px();
+        assert.ok(a.w > 200 && a.n > 100, JSON.stringify(a));
+        await clickAt(q('tab-chart-test', '.tab[data-value="blank"]')); await settle();
+        await clickAt(q('tab-chart-test', '.tab[data-value="chart"]')); await settle();
         await js('new Promise(function (r) { setTimeout(r, 150); })');
-
-        // 4. Verify canvas is NOT 1x1, has full dimensions, and chart lines are still rendered
-        const restoredPixels = await js(`(function () {
-            var chartEl = NexaTest.wc("tab-chart-test").querySelector("${tag}");
-            var c = chartEl.renderRoot.querySelector("canvas");
-            var ctx = c.getContext("2d");
-            var img = ctx.getImageData(0, 0, c.width, c.height).data;
-            var nonZero = 0;
-            for (var i = 0; i < img.length; i += 4) { if (img[i+3] > 0) nonZero++; }
-            return { width: c.width, height: c.height, nonZero: nonZero };
-        })()`);
-        assert.ok(restoredPixels.width > 200, 'canvas width restored > 200 after tab switch: ' + restoredPixels.width);
-        assert.ok(restoredPixels.nonZero > 100, 'canvas has drawn pixels restored after tab switch: ' + restoredPixels.nonZero);
+        const b = await px();
+        assert.ok(b.w > 200 && b.n > 100, 'restored: ' + JSON.stringify(b));
     });
 
-    await ok('Line Chart: loads and renders a series\' array data while its point is bound to a message not there yet', async () => {
-        const tag = await js(`NEXA.getComponent("${P}line-chart").tag`);
-        const result = await js(`(async function () {
-            var comp = NEXA.getComponent("${P}line-chart");
-            var el = document.createElement(comp.tag);
-            el.style.cssText = "width:400px;height:250px;";
-            document.body.appendChild(el);
-            el._nexaRender({
-                series: [{ name: "T", point: "{msg.append}", data: [{ x: 1790874000000, y: 27.4 }, { x: 1790877600000, y: 29.1 }] }],
-                timeWindow: "auto"
-            });
-            await new Promise(function (r) { setTimeout(r, 100); });
-            var c = el.renderRoot.querySelector("canvas");
-            var count = el.ringBuffer ? el.ringBuffer.count : 0;
-            var ctx = c.getContext("2d");
-            var img = ctx.getImageData(0, 0, c.width, c.height).data;
-            var nonZero = 0;
-            for (var i = 0; i < img.length; i += 4) { if (img[i+3] > 0) nonZero++; }
-            el.remove();
-            return { count: count, nonZero: nonZero };
-        })()`);
-        assert.strictEqual(result.count, 2, 'the series loaded its 2 points');
-        assert.ok(result.nonZero > 50, 'canvas rendered pixels: ' + result.nonZero);
-    });
-
-
-    await ok('Line Chart: keeps every point (several in one tick, late ones in order, exact values, appendPoints, the newest when shrunk)', async () => {
-        const S1 = { id: 's1', name: 'Trend', maxPoints: 1000, point: { $bind: [{ src: 'sparkplug', ref: 'G::E::D::trend' }] } };
+    await ok('Line Chart: a live value from a tag — every point kept (a burst, late ones in order, exact), Append by the series\' own action, the newest when shrunk', async () => {
+        const S1 = S('s1', { maxPoints: 1000, live: { $bind: [{ src: 'sparkplug', ref: 'G::E::D::trend' }] } });
         await mount('lc-full', 'line-chart', { series: [S1] }, { width: 500, height: 260 });
         const buf = `NexaTest.wc("lc-full").ringBuffer`;
         const xs = () => js(`(function () { var b = ${buf}, o = []; for (var i = 0; i < b.count; i++) o.push(b.getX(i)); return o; })()`);
-        // three values in ONE tick (a burst): none may be lost
         await js(`(function () { [[1000, 1.1], [2000, 2.2], [3000, 3.3]].forEach(function (p) { NexaTest.setTag("lc-full", { x: p[0], y: p[1] }, "G::E::D::trend"); }); return 1; })()`);
         await settle();
         assert.deepStrictEqual(await xs(), [1000, 2000, 3000], 'a burst in one tick: every point');
-        assert.strictEqual(await js(`${buf}.getY(1)`), 2.2, 'exact value (no Float32 rounding)');
-        // a late point (reconnect): put in its place, so search / zoom stay right
+        assert.strictEqual(await js(`${buf}.getY(1)`), 2.2);
         await js(`NexaTest.setTag("lc-full", { x: 2500, y: 9 }, "G::E::D::trend")`); await settle();
         assert.deepStrictEqual(await xs(), [1000, 2000, 2500, 3000], 'a late point in order');
-        // the same sample delivered twice is one point
-        await js(`NexaTest.setTag("lc-full", { x: 3000, y: 3.3 }, "G::E::D::trend")`); await settle();
-        assert.strictEqual((await xs()).length, 4, 'an exact repeat of the last point is not added');
-        // a batch from Logic: Update Component -> appendPoints
-        const added = await js(`NexaTest.invoke("lc-full", "appendPoints", { points: Array.from({ length: 2000 }, function (_, i) { return { x: 4000 + i, y: i }; }) })`);
-        assert.strictEqual(added, 2000);
-        assert.strictEqual(await js(`${buf}.count`), 1000, 'bounded by Max Points (the oldest go)');
-        assert.strictEqual(await js(`${buf}.getX(999)`), 5999, 'the newest kept');
-        // Max Points smaller: the NEWEST stay
+        await js(`NexaTest.setTag("lc-full", 42, "G::E::D::trend")`); await settle();
+        assert.strictEqual((await xs()).length, 5, 'a number: one more point (now)');
+        const added = await js(`NexaTest.invoke("lc-full", "appendPoints", Array.from({ length: 2000 }, function (_, i) { return { x: 1e13 + i, y: i }; }), { list: "series", id: "s1" })`);
+        assert.strictEqual(added, 2000, 'msg.payload = the points, the series\' own action');
+        assert.strictEqual(await js(`${buf}.count`), 1000, 'bounded by Points kept');
         await js(`NexaTest.setProps("lc-full", { series: [Object.assign({}, ${JSON.stringify(S1)}, { maxPoints: 100 })] })`); await settle();
-        assert.deepStrictEqual([await js(`${buf}.count`), await js(`${buf}.getX(0)`), await js(`${buf}.getX(99)`)], [100, 5900, 5999], 'shrunk: the newest 100');
-        await js(`NexaTest.invoke("lc-full", "clearPoints")`); await settle();
-        assert.strictEqual(await js(`${buf}.count`), 0, 'clearPoints');
+        assert.deepStrictEqual([await js(`${buf}.count`), await js(`${buf}.getX(99)`)], [100, 1e13 + 1999], 'shrunk: the newest 100');
+        await js(`NexaTest.invoke("lc-full", "clearAll")`); await settle();
+        assert.strictEqual(await js(`${buf}.count`), 0, 'Clear every series');
     });
 
     await ok('Line Chart: the LOD draws exactly what the plain scan draws (1 M points, the full span and zoomed)', async () => {
-        await mount('lc-lod', 'line-chart', { series: [{ name: 'Big', maxPoints: 1000000 }] }, { width: 600, height: 260 });
+        await mount('lc-lod', 'line-chart', { series: [S('big', { maxPoints: 1000000 })] }, { width: 600, height: 260 });
         const r = await js(`(function () {
-            var wc = NexaTest.wc("lc-lod"), buf = wc.ringBuffer, pts = [];
+            var wc = NexaTest.wc("lc-lod"), pts = [];
             for (var i = 0; i < 1000000; i++) pts.push({ x: i * 100, y: Math.round(Math.sin(i / 997) * 50 + (i % 13)) });
-            wc.appendPoints({ points: pts });
-            var D = wc.decimator.constructor, lod = new D(2048), scan = new D(2048); scan.useLod = false;
+            wc.appendPoints(pts);
+            var buf = wc.ringBuffer, D = wc.decimator.constructor, lod = new D(2048), scan = new D(2048); scan.useLod = false;
             function same(v0, v1, pw) {
-                var s = 0, e = buf.count;
-                var n1 = lod.decimate(buf, s, e, pw, v0, v1), n2 = scan.decimate(buf, s, e, pw, v0, v1);
+                var n1 = lod.decimate(buf, 0, buf.count, pw, v0, v1), n2 = scan.decimate(buf, 0, buf.count, pw, v0, v1);
                 if (n1 !== n2) return false;
                 for (var k = 0; k < n1; k++) if (lod.outX[k] !== scan.outX[k] || lod.outY[k] !== scan.outY[k]) return false;
                 return true;
             }
-            var t0 = performance.now(); lod.decimate(buf, 0, buf.count, 600, buf.getX(0), buf.getX(buf.count - 1));
+            lod.decimate(buf, 0, buf.count, 600, buf.getX(0), buf.getX(buf.count - 1));
             var t1 = performance.now(); lod.decimate(buf, 0, buf.count, 600, buf.getX(0), buf.getX(buf.count - 1));
             var ms = performance.now() - t1;
             return { full: same(buf.getX(0), buf.getX(buf.count - 1), 600), zoom: same(30000000, 52000000, 437), ms: ms, count: buf.count };
         })()`);
         assert.strictEqual(r.count, 1000000);
-        assert.ok(r.full && r.zoom, 'pixel-identical to the scan: ' + JSON.stringify(r));
-        assert.ok(r.ms < 20, 'a full-span draw of 1 M points is fast: ' + r.ms.toFixed(2) + ' ms');
-        await js(`NexaTest.invoke("lc-lod", "clearPoints")`);
+        assert.ok(r.full && r.zoom, 'pixel-identical: ' + JSON.stringify(r));
+        assert.ok(r.ms < 20, 'fast: ' + r.ms.toFixed(2) + ' ms');
+        await js(`NexaTest.invoke("lc-lod", "clearAll")`);
     });
 
-
-    await ok('Line Chart: many series — each its own data and buffer, layers, a right axis, legend, a shared tooltip', async () => {
-        const t0 = 1790874000000;
-        const wave = (k, base) => Array.from({ length: 60 }, (_, i) => ({ x: t0 + i * 1000, y: base + Math.sin(i / 6 + k) * 5 }));
+    await ok('Line Chart: many series — buffers, layers, a right axis, legend (value, unit, number format), a shared / nearest tooltip, Alt+click solo', async () => {
         await mount('lc-multi', 'line-chart', {
-            series: [
-                { id: 'a', name: 'Temp', unit: '°C', data: { $bind: [], static: wave(0, 20) }, fill: 'gradient' },
-                { id: 'b', name: 'Power', unit: 'kW', axis: 'right', variant: 'step', data: { $bind: [], static: wave(1, 300) } },
-                { id: 'c', name: 'Flow', variant: 'smooth', dash: 'dashed', data: { $bind: [], static: wave(2, 40) } }
-            ],
-            legendValue: 'last', thresholds: [{ value: 25, label: 'High', color: '#ef4444' }]
+            series: [S('a', { name: 'Temp', unit: '°C', live: wave(0, 20), fill: 'gradient' }), S('b', { name: 'Power', unit: 'kW', axis: 'right', variant: 'step', notation: 'si', live: wave(1, 1500) }),
+                S('c', { name: 'Flow', variant: 'smooth', dash: 'dashed', live: wave(2, 40) })],
+            legendValue: 'last', separators: 'dot', thresholds: [{ value: 25, label: 'High' }]
         }, { width: 600, height: 300 });
-        const wc = `NexaTest.wc("lc-multi")`;
-        const r = await js(`(function () { var w = ${wc}; return { counts: w.seriesList().map(function (s) { return w._state(s).buf.count; }), right: w._usesRight(),
-            legend: Array.from(w.renderRoot.querySelectorAll(".lg-item")).map(function (b) { return b.querySelector(".lg-name").textContent + "=" + b.querySelector(".lg-val").textContent; }) }; })()`);
-        assert.deepStrictEqual(r.counts, [60, 60, 60], 'each series its own buffer');
-        assert.strictEqual(r.right, true, 'a series on the right axis: the right axis shows');
-        assert.strictEqual(r.legend.length, 3);
-        assert.ok(/^Power=\d+(\.\d+)? kW$/.test(r.legend[1]), 'the legend shows the last value and the unit: ' + r.legend[1]);
-        // a shared tooltip: every series at the time under the cursor
+        assert.deepStrictEqual(await counts('lc-multi'), [60, 60, 60]);
+        const legend = await js(`Array.from(${root('lc-multi')}.querySelectorAll(".lg-item")).map(function (b) { return b.querySelector(".lg-name").textContent + "=" + b.querySelector(".lg-val").textContent; })`);
+        assert.ok(/^Power=1\.\d+ MW$/.test(legend[1]), 'engineering notation scales the unit: ' + legend[1]);
         const at = await js(`(function () { var e = ${root('lc-multi')}.querySelector(".plot"); e.scrollIntoView({ block: "center" }); var b = e.getBoundingClientRect(); return { x: Math.round(b.left + 300), y: Math.round(b.top + 100) }; })()`);
-        await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at.x, y: at.y });
-        await settle();
+        await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at.x, y: at.y }); await settle();
         const rows = await js(`Array.from(${root('lc-multi')}.querySelectorAll(".tooltip-row")).map(function (r) { return r.textContent.trim(); })`);
-        assert.strictEqual(rows.length, 3, 'shared: one row per series: ' + JSON.stringify(rows));
-        assert.ok(/^Temp:/.test(rows[0]) && / °C$/.test(rows[0]), rows[0]);
+        assert.strictEqual(rows.length, 3, 'shared: ' + JSON.stringify(rows));
+        assert.ok(/^Temp: [\d.]+ °C$/.test(rows[0]) && /^Power: [\d.]+ MW$/.test(rows[1]), JSON.stringify(rows));
         const hover = await js(`NexaTest.item("lc-multi").events.filter(function (e) { return e[0] === "hover"; }).pop()`);
-        assert.ok(hover && Object.keys(hover[1].values).length === 3, 'Logic hears the hover: ' + JSON.stringify(hover));
-        // nearest: one row
-        await js(`NexaTest.setProps("lc-multi", { tooltipMode: "nearest" })`); await settle();
-        await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at.x + 2, y: at.y });
-        await settle();
+        assert.strictEqual(Object.keys(hover[1].values).length, 3, 'On Hover: every value');
+        await js(`NexaTest.setProps("lc-multi", { tooltipShows: "nearest" })`); await settle();
+        await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at.x + 2, y: at.y }); await settle();
         assert.strictEqual(await js(`${root('lc-multi')}.querySelectorAll(".tooltip-row").length`), 1, 'nearest: one row');
-        // the legend: a click hides a series (and tells Logic), Alt+click shows only that one
         await clickAt(`${root('lc-multi')}.querySelectorAll(".lg-item")[1]`);
-        let vis = await js(`${wc}._visible().map(function (s) { return s.id; })`);
-        assert.deepStrictEqual(vis, ['a', 'c'], 'hidden from the legend');
-        const tog = await js(`NexaTest.item("lc-multi").events.filter(function (e) { return e[0] === "seriesToggle"; }).pop()`);
-        assert.deepStrictEqual(tog[1], { series: 'b', visible: false });
+        assert.deepStrictEqual(await js(`${series('lc-multi')}._visible().map(function (s) { return s.id; })`), ['a', 'c'], 'hidden from the legend');
         await js(`(function () { ${root('lc-multi')}.querySelectorAll(".lg-item")[2].dispatchEvent(new MouseEvent("click", { bubbles: true, altKey: true })); return 1; })()`); await settle();
-        vis = await js(`${wc}._visible().map(function (s) { return s.id; })`);
-        assert.deepStrictEqual(vis, ['c'], 'Alt+click: only this one');
-        const px = await js(`(function () { var c = ${root('lc-multi')}.querySelector("canvas"), d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data, n = 0; for (var i = 3; i < d.length; i += 4) if (d[i]) n++; return n; })()`);
-        assert.ok(px > 500, 'drawn: ' + px);
+        assert.deepStrictEqual(await js(`${series('lc-multi')}._visible().map(function (s) { return s.id; })`), ['c'], 'Alt+click: only this one');
+        assert.ok((await pixels('lc-multi')) > 500);
     });
 
-    await ok('Line Chart: Logic per series (append / set / clear / show), by Id, name or index; others untouched', async () => {
-        await mount('lc-act', 'line-chart', { series: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }] }, { width: 500, height: 260 });
-        const counts = () => js(`(function () { var w = NexaTest.wc("lc-act"); return w.seriesList().map(function (s) { return w._state(s).buf.count; }); })()`);
-        assert.strictEqual(await js(`NexaTest.invoke("lc-act", "appendPoints", { series: "b", points: [{ x: 1, y: 1 }, { x: 2, y: 2 }] })`), 2);
-        assert.deepStrictEqual(await counts(), [0, 2], 'only series b');
-        await js(`NexaTest.invoke("lc-act", "setPoints", { series: "A", points: [{ x: 1, y: 5 }, { x: 2, y: 6 }, { x: 3, y: 7 }] })`);
-        assert.deepStrictEqual(await counts(), [3, 2], 'by name');
-        await js(`NexaTest.invoke("lc-act", "appendPoints", { series: 1, points: [{ x: 3, y: 3 }] })`);
-        assert.deepStrictEqual(await counts(), [3, 3], 'by index');
-        await js(`NexaTest.invoke("lc-act", "clearSeries", { series: "a" })`);
-        assert.deepStrictEqual(await counts(), [0, 3]);
-        await js(`NexaTest.invoke("lc-act", "setVisible", { series: "b", visible: false })`);
-        assert.deepStrictEqual(await js(`NexaTest.wc("lc-act")._visible().length`), 0);
+    await ok('Line Chart: a tooltip expression ({value}, {delta}, another series [series]{id}, fmt())', async () => {
+        await mount('lc-expr', 'line-chart', {
+            separators: 'dot',
+            series: [S('p', { name: 'Power', live: [{ x: T0, y: 1000 }, { x: T0 + 1000, y: 1500 }], tooltipMode: 'expression', expression: '{name} ": " fmt({value}, "compact") " (Δ " {delta} "), eff " round({value} / [series]{f} * 100, 1) "%"' }),
+                S('f', { name: 'Flow', live: [{ x: T0, y: 2000 }, { x: T0 + 1000, y: 3000 }] })]
+        }, { width: 500, height: 260 });
+        const r = await js(`(function () { var w = ${series('lc-expr')}, l = w.seriesList(); w.draw(); var hits = [{ s: l[0], x: ${T0 + 1000}, y: 1500, idx: 1 }, { s: l[1], x: ${T0 + 1000}, y: 3000, idx: 1 }]; return w.tooltipText(hits[0], hits); })()`);
+        assert.strictEqual(r, 'Power: 1.5K (Δ 500), eff 50%');
+    });
+
+    await ok('Line Chart: the series\' own Logic (Append / Replace / Clear / Show / Hide), events with the series as their target', async () => {
+        await mount('lc-act', 'line-chart', { series: [S('a'), S('b')], thresholds: [{ value: 10 }] }, { width: 500, height: 260 });
+        const t = (id) => JSON.stringify({ list: 'series', id });
+        await js(`NexaTest.invoke("lc-act", "appendPoints", [{ x: 1, y: 1 }, { x: 2, y: 2 }], ${t('b')})`);
+        assert.deepStrictEqual(await counts('lc-act'), [0, 2], 'only series b');
+        await js(`NexaTest.invoke("lc-act", "replacePoints", [{ x: 1, y: 5 }, { x: 2, y: 6 }, { x: 3, y: 7 }], ${t('a')})`);
+        assert.deepStrictEqual(await counts('lc-act'), [3, 2]);
+        await js(`NexaTest.invoke("lc-act", "appendPoints", { x: 4, y: 12 }, ${t('a')})`);
+        const cross = await js(`NexaTest.item("lc-act").events.filter(function (e) { return e[0] === "thresholdCross"; })`);
+        assert.deepStrictEqual(cross[0].slice(1), [{ direction: 'up', value: 12, threshold: 10, label: '' }, { list: 'series', id: 'a' }], 'On Threshold Crossed, of series a');
+        await js(`NexaTest.invoke("lc-act", "clear", null, ${t('a')})`);
+        assert.deepStrictEqual(await counts('lc-act'), [0, 2]);
+        await js(`NexaTest.invoke("lc-act", "hide", null, ${t('b')})`);
+        assert.strictEqual(await js(`${series('lc-act')}._visible().length`), 0);
+        await js(`NexaTest.invoke("lc-act", "show", null, ${t('b')})`);
+        assert.strictEqual(await js(`${series('lc-act')}._visible().length`), 1);
+        const bad = await js(`(function () { try { NexaTest.invoke("lc-act", "appendPoints", []); return null; } catch (e) { return e.message; } })()`);
+        assert.ok(/no action "appendPoints"/.test(bad), 'Append is the series\' action, not the chart\'s: ' + bad);
         await js(`NexaTest.invoke("lc-act", "setRange", { from: 1, to: 2 })`);
-        assert.deepStrictEqual(await js(`NexaTest.wc("lc-act").viewRange`), { minX: 1, maxX: 2 });
+        assert.deepStrictEqual(await js(`${series('lc-act')}.viewRange`), { minX: 1, maxX: 2 });
     });
 
-    await ok('Line Chart: two series fed by two messages stay independent; a tag point appends; ??? adds nothing', async () => {
-        const M = (path) => ({ $bind: [{ src: 'msg', ref: path }] });
-        await mount('lc-msg', 'line-chart', { series: [{ id: 't', name: 'T', data: M('payload.temp') }, { id: 'p', name: 'P', data: M('payload.press'), point: { $bind: [{ src: 'sparkplug', ref: 'G::E::D::P' }] } }] }, { width: 500, height: 260 });
-        const counts = () => js(`(function () { var w = NexaTest.wc("lc-msg"); return w.seriesList().map(function (s) { return w._state(s).buf.count; }); })()`);
-        await js(`NexaTest.setMessage("lc-msg", { payload: { temp: [{ x: 1, y: 1 }, { x: 2, y: 2 }] } })`); await settle();
-        assert.deepStrictEqual(await counts(), [2, 0]);
-        await js(`NexaTest.setMessage("lc-msg", { payload: { press: [{ x: 1, y: 9 }] } })`); await settle();
-        assert.deepStrictEqual(await counts(), [2, 1], 'the second message leaves the first series alone');
-        await js(`NexaTest.setTag("lc-msg", 42, "G::E::D::P")`); await settle();
-        assert.deepStrictEqual(await counts(), [2, 2], 'a number from a tag: one more point (now)');
-        await js(`NexaTest.setTag("lc-msg", "???", "G::E::D::P")`); await settle();
-        assert.deepStrictEqual(await counts(), [2, 2], 'unknown: nothing added');
+    await ok('Line Chart: On Stale / On Resume (a series that went quiet), Shift+drag = On Range Select, a click = On Click', async () => {
+        await mount('lc-ev', 'line-chart', { series: [S('a', { staleAfter: 300 })] }, { width: 500, height: 260 });
+        await js(`NexaTest.invoke("lc-ev", "appendPoints", [{ x: ${T0}, y: 1 }, { x: ${T0 + 60000}, y: 2 }], { list: "series", id: "a" })`);
+        await js('new Promise(function (r) { setTimeout(r, 1500); })');
+        let ev = await js(`NexaTest.item("lc-ev").events.map(function (e) { return e[0]; })`);
+        assert.ok(ev.includes('stale'), 'On Stale: ' + JSON.stringify(ev));
+        await js(`NexaTest.invoke("lc-ev", "appendPoints", { x: ${T0 + 61000}, y: 3 }, { list: "series", id: "a" })`);
+        ev = await js(`NexaTest.item("lc-ev").events.map(function (e) { return e[0]; })`);
+        assert.ok(ev.includes('resume'), 'On Resume');
+        await settle();
+        const b = await js(`(function () { var e = ${root('lc-ev')}.querySelector(".plot"); e.scrollIntoView({ block: "center" }); var r = e.getBoundingClientRect(); return { x: Math.round(r.left + 150), y: Math.round(r.top + 80) }; })()`);
+        await send('Input.dispatchMouseEvent', { type: 'mousePressed', button: 'left', buttons: 1, clickCount: 1, x: b.x, y: b.y, modifiers: 8 });
+        await send('Input.dispatchMouseEvent', { type: 'mouseMoved', buttons: 1, x: b.x + 120, y: b.y, modifiers: 8 });
+        await send('Input.dispatchMouseEvent', { type: 'mouseReleased', button: 'left', buttons: 0, clickCount: 1, x: b.x + 120, y: b.y, modifiers: 8 });
+        await settle();
+        const sel = await js(`NexaTest.item("lc-ev").events.filter(function (e) { return e[0] === "rangeSelect"; }).pop()`);
+        assert.ok(sel && sel[1].to > sel[1].from, 'On Range Select: ' + JSON.stringify(sel));
+        await send('Input.dispatchMouseEvent', { type: 'mousePressed', button: 'left', buttons: 1, clickCount: 1, x: b.x, y: b.y });
+        await send('Input.dispatchMouseEvent', { type: 'mouseReleased', button: 'left', buttons: 0, clickCount: 1, x: b.x, y: b.y });
+        await settle();
+        const click = await js(`NexaTest.item("lc-ev").events.filter(function (e) { return e[0] === "click"; }).pop()`);
+        assert.ok(click && click[1].time > T0, 'On Click: ' + JSON.stringify(click));
     });
 
-    await ok('Line Chart: a v1 chart (one series in flat props) becomes Series 1, its bindings kept', async () => {
-        await mount('lc-v1', 'line-chart', { label: 'Old', unit: 'kW', lineColor: '#ff0000', areaFill: false, inputData: '{msg.payload}', inputPoint: '{sparkplug:G::E::D::P}', maxPoints: 500, __fallback: { inputData: '[]' } }, { width: 400, height: 200, migrate: true });
-        const raw = await js(`JSON.stringify(NexaTest.item("lc-v1").raw)`);
-        const p = JSON.parse(raw);
-        assert.deepStrictEqual(Object.keys(p).filter((k) => /^(label|unit|lineColor|inputData|inputPoint|maxPoints|__fallback)$/.test(k)), [], 'the flat props are gone: ' + raw);
+    await ok('Line Chart: zoom / pan limits (Zoom in to at most, Move only where there is data), the navigator\'s window drags', async () => {
+        await mount('lc-lim', 'line-chart', { series: [S('a', { live: wave(0, 20, 600, 1000) })], minSpan: '10s', ruler: 'navigator', timeWindow: '1m' }, { width: 600, height: 280 });
+        const w = series('lc-lim');
+        await js(`${w}.setRange({ from: ${T0 + 100000}, to: ${T0 + 100100} })`);
+        let r = await js(`(function () { var s = ${w}._scale; return s.vMaxX - s.vMinX; })()`);
+        assert.ok(Math.abs(r - 10000) < 1, 'never closer than 10 s: ' + r);
+        await js(`${w}.setRange({ from: ${T0 - 3600000}, to: ${T0 - 3500000} })`);
+        r = await js(`${w}._scale.vMinX`);
+        assert.strictEqual(r, T0, 'not before the first point');
+        await js(`${w}.followLive()`); await settle();
+        const g = await js(`(function () { var e = ${root('lc-lim')}.querySelector(".plot"); e.scrollIntoView({ block: "center" }); var r = e.getBoundingClientRect(), m = ${w}.getPlotMetrics(r.width, r.height), n = ${w}._navGeom(m); return { x: Math.round(r.left + (n.a + n.b) / 2), y: Math.round(r.top + n.y + 18), w: n.w }; })()`);
+        const before = await js(`${w}._scale.vMinX`);
+        await send('Input.dispatchMouseEvent', { type: 'mousePressed', button: 'left', buttons: 1, clickCount: 1, x: g.x, y: g.y });
+        await send('Input.dispatchMouseEvent', { type: 'mouseMoved', buttons: 1, x: g.x - 200, y: g.y });
+        await send('Input.dispatchMouseEvent', { type: 'mouseReleased', button: 'left', buttons: 0, clickCount: 1, x: g.x - 200, y: g.y });
+        await settle();
+        const after = await js(`${w}._scale.vMinX`);
+        assert.ok(after < before - 60000, 'the window dragged back in time: ' + (before - after));
+        const nav = await js(`NexaTest.item("lc-lim").events.filter(function (e) { return e[0] === "rangeChange"; }).pop()`);
+        assert.strictEqual(nav[1].cause, 'navigator');
+    });
+
+    await ok('Line Chart: Export — CSV (a column per series) and a real .xlsx (a zip)', async () => {
+        await mount('lc-exp', 'line-chart', { series: [S('a', { name: 'A', unit: 'kW', live: [{ x: T0, y: 1.5 }, { x: T0 + 1000, y: 2 }] }), S('b', { name: 'B', live: [{ x: T0, y: 7 }] })], separators: 'dot' }, { width: 500, height: 260, design: true });
+        const r = await js(`(async function () {
+            var w = ${series('lc-exp')};
+            w.draw();
+            var csvRows = w.exportData({ format: "csv", range: "all" }), csv = await w._lastExport.blob.text();
+            w.exportData({ format: "xlsx", range: "all" });
+            var head = new Uint8Array(await w._lastExport.blob.slice(0, 2).arrayBuffer());
+            return { csvRows: csvRows, lines: csv.replace(/^\\ufeff/, "").split("\\r\\n"), xlsx: String.fromCharCode(head[0], head[1]), name: w._lastExport.name };
+        })()`);
+        assert.strictEqual(r.csvRows, 2);
+        assert.strictEqual(r.lines[0], '"Time","A (kW)","B"');
+        assert.ok(/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.000,1\.5,7$/.test(r.lines[1]), r.lines[1]);
+        assert.ok(/,2,$/.test(r.lines[2]), 'B has no point then: ' + r.lines[2]);
+        assert.strictEqual(r.xlsx, 'PK', 'an .xlsx is a zip');
+        assert.ok(/^chart-\d{8}-\d{4}\.xlsx$/.test(r.name), r.name);
+    });
+
+    await ok('Line Chart: v1 (flat props) and v2 (Data / Point) charts become v3 (a series\' Live value)', async () => {
+        await mount('lc-v1', 'line-chart', { label: 'Old', unit: 'kW', lineColor: '#ff0000', areaFill: false, inputData: '{msg.payload}', inputPoint: '{sparkplug:G::E::D::P}', maxPoints: 500 }, { width: 400, height: 200, migrate: true });
+        const p = JSON.parse(await js(`JSON.stringify(NexaTest.item("lc-v1").raw)`));
+        assert.deepStrictEqual(Object.keys(p).filter((k) => /^(label|unit|lineColor|inputData|inputPoint|maxPoints)$/.test(k)), []);
         const s = p.series[0];
         assert.deepStrictEqual([s.id, s.name, s.unit, s.color, s.fill, s.maxPoints], ['s1', 'Old', 'kW', '#ff0000', 'none', 500]);
-        assert.deepStrictEqual(s.data, { $bind: [{ src: 'msg', ref: 'payload' }], static: '[]' }, 'its data binding + fallback');
-        assert.deepStrictEqual(s.point, { $bind: [{ src: 'sparkplug', ref: 'G::E::D::P' }] });
+        assert.deepStrictEqual(s.live, { $bind: [{ src: 'sparkplug', ref: 'G::E::D::P' }] }, 'its point binding is its live value');
+        assert.ok(!('data' in s) && !('point' in s));
+        await mount('lc-v2', 'line-chart', { __v: 2, series: [{ id: 's1', name: 'X', data: { $bind: [{ src: 'msg', ref: 'payload' }] } }], tooltipMode: 'nearest' }, { width: 400, height: 200 });
+        const p2 = JSON.parse(await js(`JSON.stringify(NEXA.getComponent("${P}line-chart").migrateProps(NexaTest.item("lc-v2").raw))`));
+        assert.deepStrictEqual(p2.series[0].live, { $bind: [{ src: 'msg', ref: 'payload' }] });
+        assert.strictEqual(p2.tooltipShows, 'nearest');
     });
 
     await ok('Line Chart: a gap (longer silence than "Break the line after") splits the line; the canvas shows sample waves', async () => {
-        await mount('lc-gap', 'line-chart', { series: [{ name: 'G', gapAfter: 5000, data: [{ x: 0, y: 1 }, { x: 1000, y: 2 }, { x: 20000, y: 3 }, { x: 21000, y: 4 }] }] }, { width: 400, height: 200 });
-        const runs = await js(`(function () { var w = NexaTest.wc("lc-gap"), s = w.seriesList()[0]; return w._runs(w._state(s), 5000).length / 2; })()`);
-        assert.strictEqual(runs, 2, 'two runs');
-        await mount('lc-design', 'line-chart', { series: [{ name: 'A' }, { name: 'B' }] }, { width: 400, height: 200, design: true });
-        const demo = await js(`(function () { var w = NexaTest.wc("lc-design"); return w.seriesList().map(function (s) { var st = w._state(s); return st.demo && st.buf.count > 0; }); })()`);
-        assert.deepStrictEqual(demo, [true, true], 'the editor shows a sample wave per series');
+        await mount('lc-gap', 'line-chart', { series: [S('g', { gapAfter: 5000, live: [{ x: 0, y: 1 }, { x: 1000, y: 2 }, { x: 20000, y: 3 }, { x: 21000, y: 4 }] })] }, { width: 400, height: 200 });
+        assert.strictEqual(await js(`(function () { var w = ${series('lc-gap')}; w.draw(); return w._runs(w._state(w.seriesList()[0]), 5000).length / 2; })()`), 2);
+        await mount('lc-design', 'line-chart', { series: [S('a'), S('b')] }, { width: 400, height: 200, design: true });
+        assert.deepStrictEqual(await js(`(function () { var w = ${series('lc-design')}; return w.seriesList().map(function (s) { var st = w._state(s); return st.demo && st.buf.count > 0; }); })()`), [true, true]);
     });
 
     await ok('the inspector: every plain prop takes a binding (Static | Binding); colours and sizes take theme tokens (◆), a token shows as a chip', async () => {

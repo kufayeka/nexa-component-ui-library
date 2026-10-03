@@ -118,38 +118,63 @@ Modeled after the official IBM Carbon Design System Pagination specifications an
 
 ### Line Chart (`nexa-ui-line-chart`)
 
-A time-series chart with many series. Logic drives it.
+A time-series chart driven by Logic.
 
-- **Series** is a list, like Tabs. Each series has:
-  - its own **data**:
-    - *Data*, an array that replaces what the series holds;
-    - *Point*, which appends: `{x, y}`, a list of them, or a number (its time is now).
+**In Logic** (the Events tab), a chart is:
+- **One "Update chart" node.** It covers the chart's own props (time range, time axis, axes, tooltip, legend, thresholds, zoom & pan, export) and its actions:
+  - **Follow live**;
+  - **Show a time range** (`{from, to}`);
+  - **Clear every series**;
+  - **Export** (`{format: "csv" | "xlsx", range: "visible" | "all"}`): downloads on the viewer's screen.
+- **Per series, its own Update node** for that series' props and its actions:
+  - **Append points** (`{x, y}`, `[{x, y}, …]`, or a number: time = now);
+  - **Replace points**;
+  - **Clear**, **Show**, **Hide**.
 
-    Both are binding lists: a message path, a tag, a variable… A series has its own ring buffer and its own LOD, so series update independently.
-  - a **variant**: line, step (after / before / half way), smooth (monotone: no overshoot), bars, or points only;
-  - a **style**: colour, width, dash, opacity, fill (gradient / solid, opacity), points (shape, size);
-  - an **axis** (left / right) and a unit;
-  - a **tooltip**: label, decimals, text before / after the value;
-  - a **gap**: break the line after N ms without data;
-  - an **Id** that Logic names it by. A new series gets `s2`, `s3`…
-- The list's order is the **layer order**: the first series is drawn first, under the others.
-- **Axes:** left and right, each with a title and a fixed min / max. The right axis shows when a series uses it.
-- **Tooltip:**
-  - shared shows every series at that time, each matched within its own sample spacing (a slow series still shows next to a fast one);
-  - nearest shows one series;
-  - off shows nothing.
-- **Legend:** a click hides a series, Alt+click shows only that one. It can show each series' last / min / max value.
-- **Thresholds:** horizontal lines (a value, an axis, a colour, a label, a dash).
-- **Actions:**
-  - `appendPoints` / `setPoints` / `clearSeries` / `setVisible`, with `series` = an Id, a name or an index;
-  - `clearPoints` (every series), `setRange` and `resetZoom`.
-- **Events:**
-  - `hover` (time, values: a shared crosshair through a variable);
-  - `rangeChange` (from, to, live: load history for the range shown);
-  - `seriesToggle`, `pointClick`.
-- **Capacity:** every point is kept (Float64) and drawn at pixel accuracy (M4 + an LOD pyramid). One million points per series draw in a few milliseconds.
-- **The canvas:** a series with no data shows a sample wave, so you can design the look.
-- **A v1 chart** (one series in flat props) becomes Series 1 when it is loaded, its bindings kept.
+  Its message is the series' own: a series field bound to Message reads what its node got, so two series can both read `msg.payload`.
+- **Chart events:**
+  - **On Range Change** {from, to, live, cause}: load what the time shown needs;
+  - **On Live / Paused**;
+  - **On Hover** / **On Hover End** {time, values}: a crosshair shared with other charts;
+  - **On Click**;
+  - **On Range Select** (Shift + drag);
+  - **On Series Toggle**.
+- **Series events:**
+  - **On Point Click**;
+  - **On Threshold Crossed** {direction, value, threshold}: an alarm without a script;
+  - **On Stale** / **On Resume**: a sensor went quiet, or came back.
+
+**A series:**
+- **Live value**: a tag or a variable; every new value is a point.
+- **Data settings:** points kept, break the line after N ms, stale after N ms, and a **time shift** (yesterday over today).
+- **Look:** variant (line / step / smooth / bars / points), colour, width, dash, opacity, fill, points.
+- **Axis:** left / right, unit, number format.
+- **Tooltip:** simple (label, text before / after the value) or an **expression**:
+  - `{value} {delta} {min} {max} {avg} {name} {unit} {time}`;
+  - `[series]{s2}`: another series at that time, e.g. `round({value} / [series]{flow} * 100, 1) "%"`;
+  - `fmt(x, "compact" | "si")`.
+- **Id:** fixed (`s1`, `s2`…), the id its nodes use.
+
+**Numbers:** per axis (a series can override):
+- as it is · short (1.2K 3.4M 5B) · engineering (k M G: 1 500 kW shows as **1.5 MW**, 0.002 s as **2 ms**) · scientific;
+- decimals, the thousands separator, `1,234.5` or `1.234,5` (or the page's language).
+
+**Time axis:**
+- the ruler:
+  - **two rows** (time + date; the default, and it shows it can be dragged);
+  - **navigator** (the whole history small, a window to drag and resize with the mouse or a touch screen);
+  - comb, labels only, or none;
+- 24 h / 12 h / relative to the newest point; local time or UTC.
+
+**Zoom & pan:** zoom in / out to at most N, move only where there is data (or within the last N, or anywhere), room after the newest point. Y axes have **soft** min / max (they grow with the data) and **hard** min / max (fixed).
+
+**Also:**
+- legend: click hides a series, Alt+click shows it alone; it shows the last / min / max / average value;
+- thresholds;
+- an export button (CSV / Excel);
+- every point kept (Float64), drawn at pixel accuracy (M4 + an LOD pyramid), 1 M points a series in a few ms;
+- the canvas shows sample waves for series without data;
+- v1 / v2 charts are migrated.
 
 ## The look
 

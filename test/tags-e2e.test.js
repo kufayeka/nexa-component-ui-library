@@ -80,9 +80,26 @@ top.push(...lists('p'));
 inSlot.push(...lists('s'));
 // a line chart: a series' point bound to a tag (each change one more point)
 const chart = (prefix) => ({ id: prefix + 'LC', type: 'nexa-ui-line-chart', x: 0, y: 0, w: 380, h: 200,
-    props: { series: [{ id: 's1', name: 'Num', point: { $bind: [L(prefix === 'p' ? 'Num' : 'S_Num')] } }], legend: 'none' } });
+    props: { series: [{ id: 's1', name: 'Num', live: { $bind: [L(prefix === 'p' ? 'Num' : 'S_Num')] } }], legend: 'none' } });
 top.push(chart('p'));
 inSlot.push(chart('s'));
+// a chart whose two series BOTH read msg.payload, each from its own Update node (the series' own
+// message); series s1's On Threshold Crossed writes the direction into a stat's label
+const MSG = { $bind: [{ src: 'msg', ref: 'payload' }] };
+top.push({ id: 'pLC2', type: 'nexa-ui-line-chart', x: 0, y: 0, w: 380, h: 200,
+    props: { series: [{ id: 's1', name: 'A', live: MSG }, { id: 's2', name: 'B', live: MSG }, { id: 's3', name: 'C' }], thresholds: [{ value: 6 }], legend: 'none' } });
+top.push({ id: 'pEV', type: 'nexa-ui-stat', x: 0, y: 0, w: 220, h: 96, props: { label: 'none', inputValue: TAG('Stat'), change: '' } });
+const LOGIC = { nodes: [
+    { id: 'i1', type: 'inject', once: true, onceDelay: 2500, intervalMs: 0, payloadType: 'num', payload: '5' },
+    { id: 'i2', type: 'inject', once: true, onceDelay: 2500, intervalMs: 0, payloadType: 'num', payload: '7' },
+    { id: 'i3', type: 'inject', once: true, onceDelay: 3500, intervalMs: 0, payloadType: 'num', payload: '9' },
+    { id: 'u1', type: 'ui-update', compId: 'pLC2', item: { list: 'series', id: 's1' }, config: {} },
+    { id: 'u2', type: 'ui-update', compId: 'pLC2', item: { list: 'series', id: 's2' }, config: {} },
+    { id: 'i4', type: 'inject', once: true, onceDelay: 4500, intervalMs: 0, payloadType: 'json', payload: '[{"x":1,"y":1},{"x":2,"y":2}]' },
+    { id: 'u4', type: 'ui-update', compId: 'pLC2', item: { list: 'series', id: 's3' }, action: 'replacePoints', config: {} },
+    { id: 'e1', type: 'ui-event', compId: 'pLC2', item: { list: 'series', id: 's1' }, event: 'thresholdCross' },
+    { id: 'u3', type: 'ui-update', compId: 'pEV', config: { label: { $bind: [{ src: 'msg', ref: 'payload.direction' }], static: '?' } } }
+], wires: [{ id: 'w1', from: 'i1', to: 'u1' }, { id: 'w2', from: 'i2', to: 'u2' }, { id: 'w3', from: 'i3', to: 'u1' }, { id: 'w4', from: 'e1', to: 'u3' }, { id: 'w5', from: 'i4', to: 'u4' }] };
 const pos = (list, x0) => { let y = 20; list.forEach((c) => { c.x = x0; c.y = y; y += c.h + 12; }); return y; };
 pos(top, 20);
 // the slot set: in a Tabs' "overview" panel (a vertical auto layout places them)
@@ -97,7 +114,7 @@ function writeFlows() {
     fs.writeFileSync(path.join(dir, 'settings.js'), 'module.exports = { uiPort: ' + PORTS.editor + ', flowFile: "flows.json", nexaDashboard: { screenWorkerPort: ' + PORTS.pages + ' }, logging: { console: { level: "warn" } }, editorTheme: { tours: false, projects: { enabled: false } } };\n');
     fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'nr-tags', version: '0.0.1', private: true }));
     const project = { id: 'tagsproj', type: 'kufayeka-nexa-project', name: 'Tags', sparkplugConnection: 'spc',
-        screens: [{ id: 'sT', name: 'Tags', path: '/tags', width: 900, height: 2000, gridSize: 10, snap: false, treeVersion: 1, orphans: [], components: top.concat([host]), logic: { nodes: [], wires: [] }, variables: [] }],
+        screens: [{ id: 'sT', name: 'Tags', path: '/tags', width: 900, height: 2000, gridSize: 10, snap: false, treeVersion: 1, orphans: [], components: top.concat([host]), logic: LOGIC, variables: [] }],
         templates: [], types: [], breakpoints: [], theme: null, variables: [] };
     const conn = { id: 'spc', type: 'kufayeka-nexa-sparkplug', name: 'test', brokerUrl: 'mqtt://127.0.0.1:' + PORTS.mqtt, groupFilter: '+', edgeNodeFilter: '+', keepAlive: 30, protocolVersion: '4', reconnectPeriod: 1000, connectTimeout: 10000, clientIdOverride: '' };
     fs.writeFileSync(path.join(dir, 'flows.json'), JSON.stringify([{ id: 'tab1', type: 'tab', label: 'T' }, conn, project], null, 1));
@@ -188,6 +205,14 @@ const portFree = (port) => new Promise((resolve) => { const t = net.createServer
             const lcLast = (id) => js(`(function () { var w = document.querySelector('[data-id="${id}"] > *'); var b = w && w.ringBuffer; return b && b.count ? b.getY(b.count - 1) : null; })()`);
             for (const P of ['p', 's']) check(`chart ${P === 'p' ? 'screen' : 'in tab'}: a series' point from a tag`, (await lcCount(P + 'LC')) >= 1 && (await lcLast(P + 'LC')) === 12.5, [await lcCount(P + 'LC'), await lcLast(P + 'LC')]);
             const lcBefore = { p: await lcCount('pLC'), s: await lcCount('sLC') };
+            // 1d. two series, both msg.payload, each from its own Update node; a series event drives Logic
+            const lcYs = (id, k) => js(`(function () { var w = document.querySelector('[data-id="${id}"] > *'); var s = w.seriesList()[${k}], b = w._state(s).buf, o = []; for (var i = 0; i < b.count; i++) o.push(b.getY(i)); return o; })()`);
+            for (let i = 0; i < 40 && (await lcYs('pLC2', 0)).length < 2; i++) await wait(150);
+            check('series s1: its own messages (5, then 9)', JSON.stringify(await lcYs('pLC2', 0)) === '[5,9]', await lcYs('pLC2', 0));
+            check('series s2: its own message (7), not the one of s1', JSON.stringify(await lcYs('pLC2', 1)) === '[7]', await lcYs('pLC2', 1));
+            check('series s1 On Threshold Crossed (5 -> 9 over 6) drives Logic: the stat says "up"', (await label('pEV')) === 'up', await label('pEV'));
+            for (let i = 0; i < 20 && JSON.stringify(await lcYs('pLC2', 2)) !== '[1,2]'; i++) await wait(150);
+            check('series s3 Replace points (the action of its Update node)', JSON.stringify(await lcYs('pLC2', 2)) === '[1,2]', await lcYs('pLC2', 2));
             // 2. A CHANGE at the edge reaches both copies
             values.Num = 99.25; values.S_Num = 99.25; values.Bool = false; values.S_Bool = false; values.Opt = 'c'; values.S_Opt = 'c'; values.Stat = 7; values.S_Stat = 7;
             edge.ddata(['Num', 'S_Num', 'Bool', 'S_Bool', 'Opt', 'S_Opt', 'Stat', 'S_Stat']);
