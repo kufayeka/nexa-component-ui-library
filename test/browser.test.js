@@ -637,7 +637,7 @@ withHarness({
             // the property tree: pick a prop's row, its widget is in the pane
             var rows = NexaTest.rows(t.box);
             var by = function (l) { var row = rows.filter(function (x) { return x.label === l; })[0]; return row ? t.field(row.id) : Promise.resolve(null); };
-            var text = await by("Text"), out = { text: !!text && text.querySelector(".nx-bl-mode .nx-bl-bind-btn") !== null };
+            var text = await by("Text"), out = { text: !!text && text.querySelector(".nx-fs-row .nx-mode-select") !== null };
             var radius = await by("Corner radius");
             out.radius = radius && (radius.querySelector(".nx-token-chip") || {}).textContent;
             out.tokenBtn = !!(radius && radius.querySelector(".nx-token-btn"));
