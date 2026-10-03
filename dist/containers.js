@@ -475,7 +475,9 @@ export const tabs = defineUI({
                     value: {
                         type: "string",
                         label: "Value",
-                        default: ""
+                        default: "",
+                        // it names the tab's panel (a slot): a fixed name, never a binding
+                        bindable: false
                     },
 
                     label: {

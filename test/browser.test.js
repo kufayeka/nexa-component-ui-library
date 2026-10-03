@@ -630,14 +630,14 @@ withHarness({
         await js(`NexaTest.invoke("lc-lod", "clearPoints")`);
     });
 
-    await ok('the inspector: every plain prop takes a binding (⛓); colours and sizes take theme tokens (◆), a token shows as a chip', async () => {
+    await ok('the inspector: every plain prop takes a binding (Static | Binding); colours and sizes take theme tokens (◆), a token shows as a chip', async () => {
         const r = await js(`(async function () {
             var t = NexaTest.inspector("${P}button", {});
             await new Promise(function (r) { setTimeout(r, 200); });
             // the property tree: pick a prop's row, its widget is in the pane
             var rows = NexaTest.rows(t.box);
             var by = function (l) { var row = rows.filter(function (x) { return x.label === l; })[0]; return row ? t.field(row.id) : Promise.resolve(null); };
-            var text = await by("Text"), out = { text: !!text && text.querySelector(".nx-icon-btn .fa-link") !== null };
+            var text = await by("Text"), out = { text: !!text && text.querySelector(".nx-bl-mode .nx-bl-bind-btn") !== null };
             var radius = await by("Corner radius");
             out.radius = radius && (radius.querySelector(".nx-token-chip") || {}).textContent;
             out.tokenBtn = !!(radius && radius.querySelector(".nx-token-btn"));
@@ -645,7 +645,7 @@ withHarness({
             t.destroy();
             return out;
         })()`);
-        assert.strictEqual(r.text, true, 'Text: the ⛓ bind button');
+        assert.strictEqual(r.text, true, 'Text: the Static | Binding switch');
         assert.ok(/radii\.md/.test(r.radius || ''), 'the radius is a token chip: ' + r.radius);
         assert.strictEqual(r.tokenBtn, true);
         assert.deepStrictEqual(r.tabs, ['Data', 'Content', 'Style', 'Behaviour', 'Custom CSS']);
