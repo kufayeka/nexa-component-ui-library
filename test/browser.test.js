@@ -605,6 +605,31 @@ withHarness({
         assert.strictEqual(await js(`${buf}.count`), 0, 'clearPoints');
     });
 
+    await ok('Line Chart: the LOD draws exactly what the plain scan draws (1 M points, the full span and zoomed)', async () => {
+        await mount('lc-lod', 'line-chart', { maxPoints: 1000000 }, { width: 600, height: 260 });
+        const r = await js(`(function () {
+            var wc = NexaTest.wc("lc-lod"), buf = wc.ringBuffer, pts = [];
+            for (var i = 0; i < 1000000; i++) pts.push({ x: i * 100, y: Math.round(Math.sin(i / 997) * 50 + (i % 13)) });
+            wc.appendPoints({ points: pts });
+            var D = wc.decimator.constructor, lod = new D(2048), scan = new D(2048); scan.useLod = false;
+            function same(v0, v1, pw) {
+                var s = 0, e = buf.count;
+                var n1 = lod.decimate(buf, s, e, pw, v0, v1), n2 = scan.decimate(buf, s, e, pw, v0, v1);
+                if (n1 !== n2) return false;
+                for (var k = 0; k < n1; k++) if (lod.outX[k] !== scan.outX[k] || lod.outY[k] !== scan.outY[k]) return false;
+                return true;
+            }
+            var t0 = performance.now(); lod.decimate(buf, 0, buf.count, 600, buf.getX(0), buf.getX(buf.count - 1));
+            var t1 = performance.now(); lod.decimate(buf, 0, buf.count, 600, buf.getX(0), buf.getX(buf.count - 1));
+            var ms = performance.now() - t1;
+            return { full: same(buf.getX(0), buf.getX(buf.count - 1), 600), zoom: same(30000000, 52000000, 437), ms: ms, count: buf.count };
+        })()`);
+        assert.strictEqual(r.count, 1000000);
+        assert.ok(r.full && r.zoom, 'pixel-identical to the scan: ' + JSON.stringify(r));
+        assert.ok(r.ms < 20, 'a full-span draw of 1 M points is fast: ' + r.ms.toFixed(2) + ' ms');
+        await js(`NexaTest.invoke("lc-lod", "clearPoints")`);
+    });
+
     await ok('the inspector: every plain prop takes a binding (⛓); colours and sizes take theme tokens (◆), a token shows as a chip', async () => {
         const r = await js(`(async function () {
             var t = NexaTest.inspector("${P}button", {});

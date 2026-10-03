@@ -169,7 +169,15 @@ const LINE_CHART_CSS = css`
 
 // Every point kept, in time order, up to `capacity` (then the oldest go). Float64 for x AND y:
 // a value is shown as it came (no Float32 rounding: 23.4 stays 23.4, a counter past 16 M stays exact).
-// 16 bytes a point: 1 M points = 16 MB.
+// 16 bytes a point: 1 M points = 16 MB (+ the LOD below: 0.8 MB).
+//
+// LOD: the min and max of every block of 32 slots (and where they are), so the min / max of a long
+// range is its blocks' plus the few points at its two ends: a column of 1 000 points costs ~95
+// steps, not 1 000. A write only marks its block dirty (push stays O(1)); a dirty block is summed
+// again when a draw needs it.
+const LOD_SHIFT = 5;
+const LOD_BLOCK = 1 << LOD_SHIFT;
+
 class TimeSeriesRingBuffer {
     constructor(capacity = 10000) {
         this.capacity = Math.max(50, capacity);
@@ -177,6 +185,65 @@ class TimeSeriesRingBuffer {
         this.y = new Float64Array(this.capacity);
         this.head = 0;
         this.count = 0;
+        this._allocLod();
+    }
+
+    _allocLod() {
+        const n = Math.ceil(this.capacity / LOD_BLOCK);
+        this.bMin = new Float64Array(n);
+        this.bMax = new Float64Array(n);
+        this.bMinAt = new Int32Array(n);
+        this.bMaxAt = new Int32Array(n);
+        this.bDirty = new Uint8Array(n).fill(1);
+    }
+
+    // a block's min / max again (the earliest slot on a tie: what a scan in time order finds)
+    _fixBlock(b) {
+        const start = b << LOD_SHIFT, end = Math.min(start + LOD_BLOCK, this.capacity);
+        let mn = Infinity, mx = -Infinity, mnAt = start, mxAt = start;
+        for (let p = start; p < end; p++) {
+            const y = this.y[p];
+            if (y < mn) { mn = y; mnAt = p; }
+            if (y > mx) { mx = y; mxAt = p; }
+        }
+        this.bMin[b] = mn; this.bMax[b] = mx; this.bMinAt[b] = mnAt; this.bMaxAt[b] = mxAt;
+        this.bDirty[b] = 0;
+    }
+
+    /**
+     * The min and max of the points [i0, i1) (oldest = 0), the earliest on a tie, into
+     * out = { min, minAt, max, maxAt } (minAt / maxAt: point indices). Whole blocks from the LOD.
+     */
+    rangeMinMax(i0, i1, out) {
+        let mn = Infinity, mx = -Infinity, mnAt = -1, mxAt = -1;
+        let s = this._at(i0), len = i1 - i0;
+        while (len > 0) {
+            const segEnd = Math.min(this.capacity, s + len);   // the ring's end splits a range in two
+            let p = s;
+            while (p < segEnd) {
+                const b = p >> LOD_SHIFT, bStart = b << LOD_SHIFT, bEnd = Math.min(bStart + LOD_BLOCK, this.capacity);
+                if (p === bStart && bEnd <= segEnd) {
+                    if (this.bDirty[b]) this._fixBlock(b);
+                    if (this.bMin[b] < mn) { mn = this.bMin[b]; mnAt = this.bMinAt[b]; }
+                    if (this.bMax[b] > mx) { mx = this.bMax[b]; mxAt = this.bMaxAt[b]; }
+                    p = bEnd;
+                } else {
+                    const stop = Math.min(bEnd, segEnd);
+                    for (; p < stop; p++) {
+                        const y = this.y[p];
+                        if (y < mn) { mn = y; mnAt = p; }
+                        if (y > mx) { mx = y; mxAt = p; }
+                    }
+                }
+            }
+            len -= segEnd - s;
+            s = 0;
+        }
+        const oldest = this._at(0), cap = this.capacity;
+        out.min = mn; out.max = mx;
+        out.minAt = (mnAt - oldest + cap) % cap;
+        out.maxAt = (mxAt - oldest + cap) % cap;
+        return out;
     }
 
     // the physical slot of the i-th point (0 = the oldest)
@@ -201,11 +268,13 @@ class TimeSeriesRingBuffer {
         this.capacity = newCapacity;
         this.head = n % newCapacity;
         this.count = n;
+        this._allocLod();
     }
 
     clear() {
         this.head = 0;
         this.count = 0;
+        this.bDirty.fill(1);
     }
 
     /**
@@ -220,6 +289,7 @@ class TimeSeriesRingBuffer {
             if (x === lastX && y === this.y[lastIdx]) return false;
             if (x < lastX) return this._insert(x, y);
         }
+        this.bDirty[this.head >> LOD_SHIFT] = 1;
         this.x[this.head] = x;
         this.y[this.head] = y;
         this.head = (this.head + 1) % this.capacity;
@@ -249,8 +319,10 @@ class TimeSeriesRingBuffer {
             const to = this._at(i), from = this._at(i - 1);
             this.x[to] = this.x[from];
             this.y[to] = this.y[from];
+            this.bDirty[to >> LOD_SHIFT] = 1;
         }
         const at = this._at(lo);
+        this.bDirty[at >> LOD_SHIFT] = 1;
         this.x[at] = x;
         this.y[at] = y;
         return true;
@@ -286,6 +358,7 @@ class TimeSeriesRingBuffer {
             this.head = (this.head + 1) % this.capacity;
             this.count++;
         }
+        this.bDirty.fill(1);
     }
 
     getX(i) {
@@ -350,6 +423,8 @@ function upperBoundRing(buf, targetX) {
 class M4Decimator {
     constructor(initialPixelWidth = 2048) {
         this.alloc(initialPixelWidth);
+        this.useLod = true;                 // false: the plain scan (tests compare both)
+        this._mm = { min: 0, minAt: 0, max: 0, maxAt: 0 };
     }
 
     alloc(size) {
@@ -387,6 +462,40 @@ class M4Decimator {
         }
 
         const range = vMaxX - vMinX || 1;
+
+        // Many points a column: each column's first / last by binary search on the SAME column
+        // formula as the scan (monotonic in time), its min / max from the buffer's LOD.
+        // Pixel-identical to the scan, in ~pw · (log n + 95) steps instead of n.
+        if (this.useLod && typeof buf.rangeMinMax === "function" && count >= pw * 8) {
+            const colOf = (i) => {
+                const c = Math.floor(((buf.getX(i) - vMinX) / range) * pw);
+                return c < 0 ? 0 : c >= pw ? pw - 1 : c;
+            };
+            const mm = this._mm;
+            let outCount = 0, prevIdx = -1, i0 = startIdx;
+            while (i0 < endIdx) {
+                const col = colOf(i0);
+                let lo = i0 + 1, hi = endIdx;
+                while (lo < hi) {
+                    const mid = (lo + hi) >> 1;
+                    if (colOf(mid) <= col) lo = mid + 1; else hi = mid;
+                }
+                buf.rangeMinMax(i0, lo, mm);
+                let a = i0, b = mm.minAt, c = mm.maxAt, d = lo - 1;
+                if (a > b) { const t = a; a = b; b = t; }
+                if (c > d) { const t = c; c = d; d = t; }
+                if (a > c) { const t = a; a = c; c = t; }
+                if (b > d) { const t = b; b = d; d = t; }
+                if (b > c) { const t = b; b = c; c = t; }
+                if (a !== prevIdx) { this.outX[outCount] = buf.getX(a); this.outY[outCount] = buf.getY(a); outCount++; prevIdx = a; }
+                if (b !== prevIdx) { this.outX[outCount] = buf.getX(b); this.outY[outCount] = buf.getY(b); outCount++; prevIdx = b; }
+                if (c !== prevIdx) { this.outX[outCount] = buf.getX(c); this.outY[outCount] = buf.getY(c); outCount++; prevIdx = c; }
+                if (d !== prevIdx) { this.outX[outCount] = buf.getX(d); this.outY[outCount] = buf.getY(d); outCount++; prevIdx = d; }
+                i0 = lo;
+            }
+            return outCount;
+        }
+
         this.first.fill(-1, 0, pw);
         this.minVal.fill(Infinity, 0, pw);
         this.maxVal.fill(-Infinity, 0, pw);
