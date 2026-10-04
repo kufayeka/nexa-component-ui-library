@@ -1238,7 +1238,8 @@ export const lineChart = defineUI({
                         @pointerdown=${(e) => this.onPointerDown(e)}
                         @pointermove=${(e) => this.onPointerMove(e)}
                         @pointerup=${(e) => this.onPointerUp(e)}
-                        @pointerleave=${() => this.onPointerLeave()}
+                        @pointercancel=${(e) => this.onPointerCancel(e)}
+                        @pointerleave=${(e) => this.onPointerLeave(e)}
                         @dblclick=${() => this.followLive()}>
                         <canvas></canvas>
                         <div class="corner" style="right:${this._scale && this._scale.m ? this._scale.m.padRight + 6 : (this._usesRight() ? 60 : 20)}px">

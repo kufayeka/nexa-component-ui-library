@@ -85,8 +85,17 @@ export const CHART_CSS = css`
         flex: 1 1 auto;
         min-height: 0;
         cursor: crosshair;
-        touch-action: none;
+        /* "page first": one finger scrolls the page; "chart first" sets none (TimeChartElement) */
+        touch-action: pan-x pan-y;
     }
+
+    .gesture-hint {
+        position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+        padding: 6px 12px; border-radius: 4px; background: rgba(0, 0, 0, 0.72); color: #fff;
+        font: 12px/1.3 var(--nexa-fonts-body, sans-serif); white-space: nowrap;
+        pointer-events: none; opacity: 0; transition: opacity 0.2s; z-index: 6;
+    }
+    .gesture-hint.on { opacity: 1; }
 
     /* the time ruler / navigator: it says it can be dragged */
     .plot.hover-ruler { cursor: grab; }

@@ -625,6 +625,83 @@ export class TimeChartElement extends ChartElement {
         this._showHitsTooltip(px, py, rectW);
     }
 
+    // ---- gestures: page first (default) or chart first -------------------------------------
+    _pageFirst() { return this.p.gestures !== "chart"; }
+
+    updated(changed) {
+        super.updated(changed);
+        const box = this._plotEl();
+        if (box) {
+            box.style.touchAction = this._pageFirst() ? "pan-x pan-y" : "none";
+            if (!box.__nexaTouch) { box.__nexaTouch = true; this._setupTouch(box); }
+        }
+    }
+
+    connectedCallback() {
+        super.connectedCallback();
+        // a tooltip shown by a tap goes on a tap elsewhere
+        this._tapAway = (e) => { if (this._tapHover && !e.composedPath().includes(this)) this._clearHover(); };
+        window.addEventListener("pointerdown", this._tapAway);
+    }
+
+    disconnectedCallback() {
+        if (this._tapAway) window.removeEventListener("pointerdown", this._tapAway);
+        super.disconnectedCallback();
+    }
+
+    // a short note over the chart: how to zoom when a plain wheel / one finger moved the page
+    _gestureHint(text) {
+        const box = this._plotEl();
+        if (!box || !this.p.enableZoomPan) return;
+        let h = box.querySelector(".gesture-hint");
+        if (!h) { h = document.createElement("div"); h.className = "gesture-hint"; box.appendChild(h); }
+        h.textContent = text;
+        h.classList.add("on");
+        clearTimeout(this._hintTimer);
+        this._hintTimer = setTimeout(() => h.classList.remove("on"), 1500);
+    }
+
+    _clearHover() {
+        this._tapHover = false;
+        if (this.hover) { this.hover = null; this.draw(); this.emit("hoverEnd", {}); }
+        this._showTooltip(0, 0, 0);
+    }
+
+    // two fingers on a page-first chart: pinch zooms, moving pans (one finger is the page's)
+    _setupTouch(box) {
+        let g = null;
+        const two = (e) => {
+            const a = e.touches[0], b = e.touches[1];
+            return { x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2, d: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) || 1 };
+        };
+        box.addEventListener("touchstart", (e) => {
+            if (!this._pageFirst() || !this.p.enableZoomPan || e.touches.length !== 2 || !this._scale) { g = null; return; }
+            const p = two(e), L = this._local({ clientX: p.x, clientY: p.y });
+            if (!L) return;
+            const { vMinX, vMaxX } = this._scale, m = L.m;
+            g = { d: p.d, x: p.x, sx: L.sx, min: vMinX, max: vMaxX, at: Math.max(0, Math.min(1, (L.px - m.plotX) / m.plotW)) };
+            this._clearHover();
+        }, { passive: true });
+        box.addEventListener("touchmove", (e) => {
+            if (!g || e.touches.length !== 2 || !this._scale) return;
+            e.preventDefault();
+            const p = two(e), m = this._scale.m, span0 = g.max - g.min;
+            const span = span0 * (g.d / p.d);
+            const shift = ((p.x - g.x) * g.sx / m.plotW) * span;
+            const at = g.min + g.at * span0 - shift;
+            this.viewRange = this.clampViewRange(at - g.at * span, at + (1 - g.at) * span, this._fullBounds());
+            g.moved = true;
+            this.draw();
+        }, { passive: false });
+        const end = (e) => {
+            if (!g || e.touches.length >= 2) return;
+            if (g.moved) { this.requestUpdate(); this._rangeChanged("pinch"); }
+            g = null;
+        };
+        box.addEventListener("touchend", end);
+        box.addEventListener("touchcancel", end);
+    }
+
     // ---- pointer ---------------------------------------------------------------------------
     _local(e) {
         const { box, w, h } = this._layoutSize();
@@ -652,6 +729,8 @@ export class TimeChartElement extends ChartElement {
 
     onPointerDown(e) {
         if (e.button !== 0 || !this.canvas) return;
+        // page first: a finger is the page's (scroll); lifted where it went down, it is a tap
+        if (e.pointerType === "touch" && this._pageFirst()) { this._tap = { x: e.clientX, y: e.clientY }; return; }
         // the corner's buttons (Live, the export menu) are not a click / drag on the chart
         if (e.composedPath().some((n) => n.classList && (n.classList.contains("corner") || n.classList.contains("menu-dropdown")))) return;
         const L = this._local(e);
@@ -679,6 +758,7 @@ export class TimeChartElement extends ChartElement {
     }
 
     onPointerMove(e) {
+        if (e.pointerType === "touch" && this._pageFirst()) return;
         const L = this._local(e);
         if (!L || !this.canvas) return;
         const { m, px, py, box } = L;
@@ -748,7 +828,33 @@ export class TimeChartElement extends ChartElement {
         this._plotHover(L, sc.vMinX + ((px - m.plotX) / m.plotW) * (sc.vMaxX - sc.vMinX));
     }
 
+    onPointerCancel(e) {
+        // the browser took a finger to scroll the page: say how to move the chart (now and then)
+        if (this._tap && e && e.pointerType === "touch" && Date.now() - (this._lastTouchHint || 0) > 10000) {
+            this._lastTouchHint = Date.now();
+            this._gestureHint("Use two fingers to zoom or pan");
+        }
+        this._tap = null;
+        this.drag = null;
+        const box = this._plotEl();
+        if (box) box.classList.remove("dragging", "scrubbing", "selecting");
+    }
+
+    // a tap on a page-first chart: the tooltip there (until a tap elsewhere), and a click
+    _onTap(e) {
+        const t = this._tap;
+        this._tap = null;
+        if (!t || Math.hypot(e.clientX - t.x, e.clientY - t.y) > 10) return;
+        const L = this._local(e);
+        if (!L || !this._scale || this._zone(L) !== "plot") return;
+        const sc = this._scale, m = L.m, time = sc.vMinX + ((L.px - m.plotX) / m.plotW) * (sc.vMaxX - sc.vMinX);
+        this._tapHover = true;
+        this._plotHover(L, time);
+        this._plotClick(L, time);
+    }
+
     onPointerUp(e) {
+        if (e.pointerType === "touch" && this._pageFirst()) { this._onTap(e); return; }
         const d = this.drag;
         this.drag = null;
         const L = this._local(e);
@@ -779,6 +885,11 @@ export class TimeChartElement extends ChartElement {
 
     onWheel(e) {
         if (!this.p.enableZoomPan || !this.canvas) return;
+        // page first: a plain wheel scrolls the page; Ctrl / ⌘ + wheel (a trackpad pinch sends ctrlKey) zooms
+        if (this._pageFirst() && !e.ctrlKey && !e.metaKey) {
+            this._gestureHint(/Mac|iPhone|iPad/.test(navigator.platform || "") ? "⌘ + scroll to zoom" : "Ctrl + scroll to zoom");
+            return;
+        }
         const L = this._local(e);
         if (!L || !this._scale) return;
         const zone = this._zone(L);
@@ -801,7 +912,9 @@ export class TimeChartElement extends ChartElement {
         this._rangeChanged("wheel");
     }
 
-    onPointerLeave() {
+    onPointerLeave(e) {
+        // a finger lifted: a tapped tooltip stays (a tap elsewhere clears it)
+        if (e && e.pointerType === "touch") return;
         this._hoverAnnotation = null;
         if (this.hover) { this.hover = null; this.draw(); this.emit("hoverEnd", {}); }
         this._showTooltip(0, 0, 0);

@@ -57,6 +57,11 @@ export function refreshProps(def) {
 /** Zoom & pan, and their limits. */
 export function zoomProps() {
     return {
+        gestures: {
+            type: "enum", group: "Zoom & pan", label: "Gestures", default: "page",
+            options: opt([["page", "Page first: scroll / one finger move the page"], ["chart", "Chart first: scroll zooms, one finger pans"]]),
+            help: "Page first: the mouse wheel and one finger scroll the page, also over the chart; Ctrl + wheel (or a trackpad pinch) zooms, a drag pans; on a touchscreen two fingers pinch / pan, a tap shows the tooltip. Chart first: the wheel zooms and one finger pans, for a chart that fills the screen."
+        },
         minSpan: { type: "enum", group: "Zoom & pan", label: "Zoom in to at most", default: "", options: opt(SPANS), help: "The shortest time the chart can show." },
         maxSpan: { type: "enum", group: "Zoom & pan", label: "Zoom out to at most", default: "", options: opt(SPANS), help: "The longest time the chart can show." },
         panLimit: {
@@ -68,7 +73,7 @@ export function zoomProps() {
             type: "enum", group: "Zoom & pan", label: "Room after the newest point", default: "0",
             options: opt([["0", "None"], ["0.02", "2 %"], ["0.05", "5 %"], ["0.1", "10 %"]]), help: "Live: the newest point is not glued to the right edge."
         },
-        enableZoomPan: { type: "boolean", default: true, group: "Zoom & pan", label: "Zoom (wheel) and pan (drag)" }
+        enableZoomPan: { type: "boolean", default: true, group: "Zoom & pan", label: "Zoom and pan" }
     };
 }
 

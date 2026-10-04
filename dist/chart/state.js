@@ -746,7 +746,8 @@ export const stateTimeline = defineUI({
                         @pointerdown=${(e) => this.onPointerDown(e)}
                         @pointermove=${(e) => this.onPointerMove(e)}
                         @pointerup=${(e) => this.onPointerUp(e)}
-                        @pointerleave=${() => this.onPointerLeave()}
+                        @pointercancel=${(e) => this.onPointerCancel(e)}
+                        @pointerleave=${(e) => this.onPointerLeave(e)}
                         @dblclick=${() => this.followLive()}>
                         <canvas></canvas>
                         <div class="corner" style="right:${this._scale && this._scale.m ? this._scale.m.padRight + 6 : 20}px">

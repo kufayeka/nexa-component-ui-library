@@ -1188,6 +1188,71 @@ withHarness({
         assert.strictEqual(z[0], z[1], 'the same plot height at 50 %');
     });
 
+    // ---- gestures: page first (the page scrolls through a chart) / chart first ----------------
+    const gestureChart = async (name, extra) => {
+        await mount(name, 'state-timeline', Object.assign({ rows: [{ id: 'm1', name: 'Filler' }] }, ST, extra || {}), { width: 600, height: 200 });
+        return js(`(function () {
+            var w = ${stw(name)};
+            w.setStates([{ time: ${T0}, state: 1 }, { time: ${T0 + H}, state: 0 }, { time: ${T0 + 2 * H}, state: 1 }, { time: ${T0 + 3 * H}, state: null }], { list: "rows", id: "m1" });
+            var e = w.renderRoot.querySelector(".plot"); e.scrollIntoView({ block: "center" }); w.draw();
+            var r = e.getBoundingClientRect(), m = w._scale.m;
+            return { x: Math.round(r.left + m.plotX + m.plotW / 2), y: Math.round(r.top + m.plotY + m.plotH / 2), touch: e.style.touchAction };
+        })()`);
+    };
+    const span = (name) => js(`(function () { var w = ${stw(name)}; w.draw(); return w._scale.vMaxX - w._scale.vMinX; })()`);
+    // deltaY > 0: scroll down (the page), and on a chart: zoom out; < 0: zoom in
+    const wheel = (at, modifiers, dy) => send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: at.x, y: at.y, deltaX: 0, deltaY: dy || 120, modifiers: modifiers || 0 });
+
+    await ok('Gestures, page first (the default): a plain wheel over a chart scrolls the page (a hint says Ctrl + scroll); Ctrl + wheel zooms', async () => {
+        const at = await gestureChart('g-page');
+        assert.strictEqual(at.touch, 'pan-x pan-y', 'one finger: the page\u2019s');
+        const s0 = await span('g-page'), y0 = await js('window.scrollY');
+        await wheel(at); await js('new Promise(function (r) { setTimeout(r, 250); })');
+        const r = await js(`({ y: window.scrollY, hint: !!${root('g-page')}.querySelector(".gesture-hint.on"), live: !${stw('g-page')}.viewRange })`);
+        assert.ok(r.y > y0, 'the page scrolled (' + y0 + ' -> ' + r.y + ')');
+        assert.ok(r.hint && r.live, 'the chart did not zoom, the hint shows');
+        assert.strictEqual(await span('g-page'), s0);
+        const at2 = await gestureChart('g-page');
+        await wheel(at2, 2, -120); await settle();
+        assert.ok(await span('g-page') < s0, 'Ctrl + wheel zooms');
+    });
+
+    await ok('Gestures, chart first: a plain wheel zooms, one finger pans (touch-action none)', async () => {
+        const at = await gestureChart('g-chart', { gestures: 'chart' });
+        assert.strictEqual(at.touch, 'none');
+        const s0 = await span('g-chart');
+        await wheel(at, 0, -120); await settle();
+        assert.ok(await span('g-chart') < s0);
+    });
+
+    await ok('Gestures on a touchscreen, page first: one finger scrolls the page, a tap shows the tooltip (a tap elsewhere hides it), two fingers pinch-zoom', async () => {
+        await send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
+        try {
+            const touch = (type, pts) => send('Input.dispatchTouchEvent', { type, touchPoints: pts.map((p, i) => ({ x: p[0], y: p[1], id: i })) });
+            let at = await gestureChart('g-touch');
+            const s0 = await span('g-touch'), y0 = await js('window.scrollY');
+            await touch('touchStart', [[at.x, at.y]]);
+            for (let i = 1; i <= 6; i++) await touch('touchMove', [[at.x, at.y - i * 25]]);
+            await touch('touchEnd', []);
+            await js('new Promise(function (r) { setTimeout(r, 300); })');
+            assert.ok(await js('window.scrollY') > y0, 'the page scrolled');
+            assert.ok(await js(`!${stw('g-touch')}.viewRange`), 'the chart did not pan');
+            at = await gestureChart('g-touch');
+            await touch('touchStart', [[at.x, at.y]]); await touch('touchEnd', []); await settle();
+            const tip = () => js(`(function () { var t = ${root('g-touch')}.querySelector(".tooltip"); return !!t && t.style.display !== "none" && t.textContent.trim().length > 0; })()`);
+            assert.ok(await tip(), 'a tap: the tooltip');
+            await touch('touchStart', [[5, 5]]); await touch('touchEnd', []); await settle();
+            assert.ok(!(await tip()), 'a tap elsewhere hides it');
+            at = await gestureChart('g-touch');
+            await touch('touchStart', [[at.x - 20, at.y], [at.x + 20, at.y]]);
+            for (let i = 1; i <= 5; i++) await touch('touchMove', [[at.x - 20 - i * 15, at.y], [at.x + 20 + i * 15, at.y]]);
+            await touch('touchEnd', []); await settle();
+            assert.ok(await span('g-touch') < s0 * 0.6, 'two fingers apart: zoomed in');
+        } finally {
+            await send('Emulation.setTouchEmulationEnabled', { enabled: false });
+        }
+    });
+
     await ok('the inspector: every plain prop takes a binding (Static | Binding); colours and sizes take theme tokens (◆), a token shows as a chip', async () => {
         const r = await js(`(async function () {
             var t = NexaTest.inspector("${P}button", {});

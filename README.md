@@ -193,7 +193,11 @@ A time-series chart driven by Logic.
 - `smooth`: Monotone cubic spline curve through points;
 - Can be set per series (`variant` / `interpolation`) or chart-wide as default (`defaultInterpolation`).
 
-**Zoom & pan:** zoom in / out to at most N, move only where there is data (or within the last N, or anywhere), room after the newest point. Y axes have **soft** min / max (they grow with the data) and **hard** min / max (fixed).
+**Zoom & pan:** zoom in / out to at most N, move only where there is data (or within the last N, or anywhere), room after the newest point.
+
+**Gestures** (every time chart: Line, State Timeline). A page full of charts must still scroll:
+- **Page first** (default): the mouse wheel and one finger scroll the page, also over a chart. **Ctrl / ⌘ + wheel** (or a trackpad pinch) zooms, a mouse drag pans. On a touchscreen **two fingers** pinch-zoom and pan, a **tap** shows the tooltip (a tap elsewhere hides it). A short hint says so when a plain wheel or one finger moved the page instead. The same rule as a Zoom frame in Nexa Dashboard.
+- **Chart first**: the wheel zooms and one finger pans (the page does not scroll through the chart). For a chart that fills an HMI screen. Y axes have **soft** min / max (they grow with the data) and **hard** min / max (fixed).
 
 **Also:**
 - legend: click hides a series, Alt+click shows it alone; it shows the last / min / max / average value;
