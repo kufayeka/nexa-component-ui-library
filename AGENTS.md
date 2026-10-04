@@ -32,5 +32,16 @@ This is a Nexa component plugin (`@kufayeka/nexa-component-ui-library`). Every c
 
 ## This plugin
 
-- Modules: `dist/` → containers.js core.js datetime.js display.js embed.js form.js pagination.js ui-library.js; `dist/chart/` → core.js (ChartElement, the shared look / numbers / times / export menu), time.js, buffer.js, export.js, line.js, index.js (every chart; a new chart: its own file here, on ChartElement) 
-- Tests: `test/browser.test.js` (SDK testkit, headless Chrome).
+- Modules:
+  - `dist/`: containers.js core.js datetime.js display.js embed.js form.js pagination.js ui-library.js;
+  - `dist/chart/`:
+    - core.js (ChartElement: the shared look, numbers, times, the export menu);
+    - time-chart.js (TimeChartElement: time, ruler, zoom / pan, annotations, gestures, the frozen clock, print);
+    - props.js (the shared props / events / actions);
+    - time.js, buffer.js, export.js (the xlsx writer);
+    - line.js (Line Chart), state.js (State Timeline);
+    - index.js (every chart).
+
+    A new chart is its own file there, on ChartElement or TimeChartElement.
+- Skills (in the workspace's `.agents/skills/`): `nexa-ui-library` for a component, `nexa-chart-development` for a chart, `nexa-debugging` for a bug.
+- Tests: `test/browser.test.js` (SDK testkit, headless Chrome; `npm test` runs the lint first), `test/chart-e2e.test.js` (`npm run test:chart`: charts on a real Node-RED driven by Logic), `test/tags-e2e.test.js` (tags end to end).

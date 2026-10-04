@@ -1,14 +1,15 @@
 # @kufayeka/nexa-component-ui-library — Nexa UI
 
-A themed component library for **Nexa Dashboard**: 35 form, display, feedback, navigation and layout components. It is a normal Nexa plugin, built only on the Nexa component SDK, so it is also the example to follow when you **build your own UI library**.
+A themed component library for **Nexa Dashboard**: 37 form, display, feedback, navigation, layout and chart components. It is a normal Nexa plugin, built only on the Nexa component SDK, so it is also the example to follow when you **build your own UI library**.
 
 - **Form**: Button, Input, Textarea, Number Input, Password Input, Date Time, Date Range, Checkbox, Switch, Radio Group, Segmented Control, Select, Combobox, Slider, Tags Input, Pin Input, Rating.
 - **Display & feedback**: Text, Heading, Badge, Tag, Card, Avatar, Stat, Alert, Progress (a bar or a circle), Spinner, Skeleton, Separator, Empty State, Timeline, Fieldset.
 
 - **Layout & Navigation**: Tabs — each tab has a panel you drop components into (the SDK's *slots*); Pagination — IBM Carbon-inspired pagination bar.
 - **Embed**: Iframe — another web page (Grafana, a camera, a report), with Logic both ways.
+- **Charts**: Line Chart (time series, an axis per series, thresholds, 1 M+ points) and State Timeline (machine states, statistics). Both are driven item by item from Logic, export CSV / Excel / PNG, and print as they look.
 
-In the editor they are in the palette under **UI · Form**, **UI · Display** and **UI · Layout**.
+In the editor they are in the palette under **UI · Form**, **UI · Display**, **UI · Layout** and **UI · Charts**.
 
 ### Iframe
 
@@ -213,6 +214,54 @@ A time-series chart driven by Logic.
 - the canvas shows sample waves for series without data;
 - v1 / v2 charts are migrated.
 
+### State Timeline (`nexa-ui-state-timeline`)
+
+Machine states along time (Running / Stopped / Idle…): one bar per machine, a coloured block per state. Use it for availability, downtime and the OEE of a line.
+
+**States** are defined in the props: a label, a colour, and a match.
+- The match is either an exact **value** (`"1"`) or a **range** (`min`–`max`, e.g. 80–1000 = "High").
+- A value nobody defined shows grey, with its own text.
+
+**Rows** (one per machine) are Logic targets. Each row has its own Update node and its own events.
+- **Live state:** a tag or a variable. Every *change* becomes a block; the same value again is ignored.
+- **Set states** (`setStates`, replaces the row's history). Two shapes:
+  - changes: `[{ time, state, note }, …]`, where a `state: null` ends the last block;
+  - intervals: `[{ start, end, state, note }, …]`, where a gap between intervals stays empty.
+- **Append change** (`appendChange`): `{ time, state, note }`. A late change goes into its place.
+- **Clear.**
+- **On State Change** `{ from, to, time, label }`, with the row as the target.
+
+**The chart:**
+- **Lanes:** one lane per row (combined), or one lane per row and state (split: every state on its own line).
+- **Statistics column** for each lane, over the time shown. Pick any of:
+  - **%** of the time;
+  - **total time**;
+  - **count** (how often it entered the state);
+  - **first** and **last**;
+  - **now** (the current state and how long it has lasted).
+
+  The state the statistics are about is selectable.
+- **Tooltip** on a block: state, start → end, duration, note. On a touchscreen: a tap.
+- **On Segment Click** `{ row, state, value, start, end, duration, note }`, for drill-down.
+- **Annotations**, **zoom & pan**, the **time ruler / navigator**, **Follow live**: the same as the Line Chart.
+- **Refresh:** On new data (the default), or Every 100 ms … 30 s. With a ticker, the current block keeps growing up to now. It pauses while you hover, zoom or pan, and when the chart is off screen.
+- **Export:**
+  - CSV: one row per block (row, state, value, start, end, duration in seconds, note);
+  - Excel: the state cells in their colour, plus Summary, Annotations and Info sheets;
+  - PNG.
+
+Example: Inject (on open) → Function → Update (row *Filler*, **Set states**):
+
+```js
+const H = 3600000, now = Date.now();
+msg.payload = [
+    { start: now - 3 * H, end: now - 2 * H, state: 1 },
+    { start: now - 2 * H, end: now - 1.5 * H, state: 0, note: "Jam" },
+    { start: now - 1.5 * H, end: now, state: 1 }
+];
+return msg;
+```
+
 ## The look
 
 Nexa UI's look is based on **IBM Carbon**: sharp and clear, made a little softer (4px corners, clear focus rings, a little depth on tiles and menus). You can tell it apart by:
@@ -344,9 +393,16 @@ export const chip = defineComponent({
 ## Tests
 
 ```
-node test/browser.test.js      # headless Chrome; build the dashboard first (npm run build there)
+npm test                       # the plugin lint, then 63 headless-Chrome tests (build the dashboard first: npm run build there)
+npm run test:chart             # charts end to end: a real Node-RED, the charts driven by Logic, live tags, exports
 node test/tags-e2e.test.js     # tags end to end (~1 min): a real Node-RED, MQTT broker and Sparkplug edge
 ```
+
+`test:chart` checks the Line Chart and the State Timeline on a real page:
+- each series' / row's own Update node (append / replace / set states);
+- events to Logic (threshold crossed, stale / resume, state change, range change);
+- a live Sparkplug tag;
+- exports started from Update nodes (CSV / Excel / PNG, the downloads captured and read).
 
 `tags-e2e` starts its own Node-RED in the temp folder on ports 1899 / 1898 and an MQTT broker (aedes) on 1893. It never touches your `data/`. A simulated Sparkplug edge answers each write like a PLC: it applies it and reports it back.
 
@@ -366,3 +422,4 @@ It covers:
 - the zag widgets by pointer and keyboard;
 - the theme's palettes, tokens and dark mode;
 - the inspector (⛓ / ◆ on the fields, the tabs).
+- the charts: data shapes, item actions and events, statistics, tooltips, export, the editor's zoomed canvas, gestures (wheel, touch), print.
