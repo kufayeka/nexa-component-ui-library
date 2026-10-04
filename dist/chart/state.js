@@ -446,7 +446,7 @@ export const stateTimeline = defineUI({
 
         // ---- drawing ----------------------------------------------------------------------------------
         _drawInto(ctx, width, height, range) {
-            ctx.clearRect(0, 0, width, height);
+            this._clearCanvas(ctx, width, height);
             const lanes = this.lanes();
             if (!lanes.length) { this._scale = null; return; }
             const fb = this._fullBounds();

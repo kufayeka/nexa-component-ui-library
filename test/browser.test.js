@@ -1253,6 +1253,23 @@ withHarness({
         }
     });
 
+    await ok('Print: a chart paints its own background into the canvas (a browser prints transparent canvas pixels as white paper), sharp (3x); back to transparent after', async () => {
+        await gestureChart('g-print');
+        const px = () => js(`(function () {
+            var w = ${stw('g-print')}, cv = w.renderRoot.querySelector("canvas"), d = cv.getContext("2d").getImageData(1, 1, 1, 1).data;
+            var bg = getComputedStyle(w.renderRoot.querySelector(".chart-container")).backgroundColor;
+            return { px: Array.from(d), bg: bg, k: Math.round(cv.width / cv.clientWidth) };
+        })()`);
+        assert.strictEqual((await px()).px[3], 0, 'on screen: transparent (what is behind shows)');
+        await js('window.dispatchEvent(new Event("beforeprint")); 1');
+        const p = await px();
+        const rgb = p.bg.match(/\d+/g).slice(0, 3).map(Number);
+        assert.deepStrictEqual(p.px, rgb.concat(255), 'printing: the container’s colour, opaque');
+        assert.strictEqual(p.k, 3, 'drawn 3x for paper');
+        await js('window.dispatchEvent(new Event("afterprint")); 1');
+        assert.strictEqual((await px()).px[3], 0, 'after: transparent again');
+    });
+
     await ok('the inspector: every plain prop takes a binding (Static | Binding); colours and sizes take theme tokens (◆), a token shows as a chip', async () => {
         const r = await js(`(async function () {
             var t = NexaTest.inspector("${P}button", {});

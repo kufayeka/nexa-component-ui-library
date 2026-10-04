@@ -265,6 +265,24 @@ export class TimeChartElement extends ChartElement {
      * noThresholds? }) into that one instead (an export): no hover, no selection, the screen's
      * state left as it was. -> { vMinX, vMaxX } drawn (a target), or nothing.
      */
+    // a fresh canvas for a draw. Printing: the chart's own background painted in, since the browser
+    // prints a canvas's transparent pixels as white paper (on screen they show what is behind)
+    _clearCanvas(ctx, w, h) {
+        ctx.clearRect(0, 0, w, h);
+        if (!this._printing || this._exporting) return;
+        const bg = this._backgroundColor();
+        if (bg) { ctx.fillStyle = bg; ctx.fillRect(0, 0, w, h); }
+    }
+
+    // the colour the chart is seen on: its container's, else the first opaque one around it
+    _backgroundColor() {
+        const opaque = (c) => c && c !== "transparent" && !/rgba\(.*,\s*0\)$/.test(c);
+        let el = this.renderRoot && this.renderRoot.querySelector(".chart-container");
+        let c = el && getComputedStyle(el).backgroundColor;
+        for (el = this; !opaque(c) && el; el = el.parentElement || (el.getRootNode && el.getRootNode().host)) c = getComputedStyle(el).backgroundColor;
+        return opaque(c) ? c : "";
+    }
+
     draw(target) {
         if (target) {
             const keep = { scale: this._scale, full: this._full, newest: this._newest, hover: this.hover, sel: this._selection, hr: this._hoverRuler, drag: this.drag, ha: this._hoverAnnotation, hits: this._annotationHits };

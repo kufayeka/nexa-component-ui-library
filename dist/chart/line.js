@@ -721,7 +721,7 @@ export const lineChart = defineUI({
         }
 
         _drawInto(ctx, width, height, range) {
-            ctx.clearRect(0, 0, width, height);
+            this._clearCanvas(ctx, width, height);
             const list = this._visible();
             if (!list.length) { this._scale = null; if (!this._exporting) this._updateLegend(null); return; }
             const fb = this._bounds(list);
