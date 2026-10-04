@@ -27,7 +27,7 @@ let failures = 0, passed = 0, skipped = false;
 const check = (label, ok, actual) => { if (!ok) failures++; else passed++; console.log((ok ? 'ok   ' : 'FAIL ') + label + (ok ? '' : '   actual: ' + JSON.stringify(actual))); };
 
 // ---- the edge: one metric, Temp -------------------------------------------------------------
-let temp = 40;
+let temp = 40, mstate = 1;
 
 // ---- the screen ------------------------------------------------------------------------------
 const MSG = { $bind: [{ src: 'msg', ref: 'payload' }] };
@@ -46,9 +46,19 @@ const chart = {
         thresholds: [{ value: 50, kind: 'upper', series: 's1', label: 'High', color: '#ef4444' }]
     }
 };
-const comps = [chart, Object.assign(stat('pEV'), { y: 360 }), Object.assign(stat('pStale'), { y: 460 }), Object.assign(stat('pResume'), { y: 560 }), Object.assign(stat('pRange'), { y: 660 })];
+// a State Timeline: a row's Live state from a tag, a row from an Update node
+const timeline = {
+    id: 'C2', type: 'nexa-ui-state-timeline', x: 20, y: 760, w: 700, h: 220,
+    props: {
+        timeZone: 'utc', exportTitle: 'Line',
+        rows: [{ id: 'r1', name: 'Filler', live: { $bind: [{ src: 'sparkplug', ref: 'G::E1::D1::State' }] } }, { id: 'r2', name: 'Capper' }],
+        states: [{ label: 'Running', value: '1', color: '#10b981' }, { label: 'Stopped', value: '0', color: '#ef4444' }]
+    }
+};
+const comps = [chart, timeline, Object.assign(stat('pEV'), { y: 360 }), Object.assign(stat('pStale'), { y: 460 }), Object.assign(stat('pResume'), { y: 560 }), Object.assign(stat('pRange'), { y: 660 }), Object.assign(stat('pState'), { x: 740, y: 760 })];
 const inj = (id, ms, type, payload) => ({ id, type: 'inject', once: true, onceDelay: ms, intervalMs: 0, payloadType: type, payload });
 const item = (id) => ({ list: 'series', id });
+const row = (id) => ({ list: 'rows', id });
 const nodes = [
     // two series, both msg.payload, each from its own Update node
     inj('iA', 2500, 'num', '5'), { id: 'uA', type: 'ui-update', compId: 'C1', item: item('s2'), config: {} },
@@ -74,11 +84,16 @@ const nodes = [
     // a series hidden: never exported
     inj('iHide', 9000, 'date', ''), { id: 'uHide', type: 'ui-update', compId: 'C1', item: item('s3'), action: 'hide', config: {} },
     inj('iX5', 9400, 'json', '{"format":"csv","range":"all"}'), { id: 'uX5', type: 'ui-update', compId: 'C1', action: 'exportData', config: {} },
-    inj('iClr', 9800, 'date', ''), { id: 'uClr', type: 'ui-update', compId: 'C1', item: item('s2'), action: 'clear', config: {} }
+    inj('iClr', 9800, 'date', ''), { id: 'uClr', type: 'ui-update', compId: 'C1', item: item('s2'), action: 'clear', config: {} },
+    // the State Timeline: a row's history from an Update node; a row's State Change -> Logic; its export
+    inj('iSt', 2500, 'json', '[{"start":1000,"end":4000,"state":1},{"start":4000,"end":5000,"state":0,"note":"jam"}]'), { id: 'uSt', type: 'ui-update', compId: 'C2', item: row('r2'), action: 'setStates', config: {} },
+    { id: 'eSt', type: 'ui-event', compId: 'C2', item: row('r1'), event: 'stateChange' }, Object.assign({ id: 'uSc' }, sinkOf('pState', 'payload.label')),
+    inj('iX6', 10400, 'json', '{"format":"csv","range":"all"}'), { id: 'uX6', type: 'ui-update', compId: 'C2', action: 'exportData', config: {} }
 ];
 const w = (a, b) => ({ id: 'w-' + a + '-' + b, from: a, to: b });
 const wires = [w('iA', 'uA'), w('iB', 'uB'), w('iApp', 'uApp'), w('iRep', 'uRep'), w('iAnn', 'uAnn'), w('eX', 'uX'), w('eS', 'uS'), w('eR', 'uR'),
-    w('iX1', 'uX1'), w('iX2', 'uX2'), w('iX3', 'uX3'), w('iRg', 'uRg'), w('eRg', 'uRc'), w('iX4', 'uX4'), w('iLive', 'uLive'), w('iHide', 'uHide'), w('iX5', 'uX5'), w('iClr', 'uClr')];
+    w('iX1', 'uX1'), w('iX2', 'uX2'), w('iX3', 'uX3'), w('iRg', 'uRg'), w('eRg', 'uRc'), w('iX4', 'uX4'), w('iLive', 'uLive'), w('iHide', 'uHide'), w('iX5', 'uX5'), w('iClr', 'uClr'),
+    w('iSt', 'uSt'), w('eSt', 'uSc'), w('iX6', 'uX6')];
 
 function writeFlows() {
     const dir = path.join(S, 'nr-chart');
@@ -86,7 +101,7 @@ function writeFlows() {
     fs.writeFileSync(path.join(dir, 'settings.js'), 'module.exports = { uiPort: ' + PORTS.editor + ', flowFile: "flows.json", nexaDashboard: { screenWorkerPort: ' + PORTS.pages + ' }, logging: { console: { level: "warn" } }, editorTheme: { tours: false, projects: { enabled: false } } };\n');
     fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'nr-chart', version: '0.0.1', private: true }));
     const project = { id: 'chartproj', type: 'kufayeka-nexa-project', name: 'Chart', sparkplugConnection: 'spc',
-        screens: [{ id: 'sC', name: 'Chart', path: '/chart', width: 900, height: 800, gridSize: 10, snap: false, treeVersion: 1, orphans: [], components: comps, logic: { nodes, wires }, variables: [] }],
+        screens: [{ id: 'sC', name: 'Chart', path: '/chart', width: 900, height: 1000, gridSize: 10, snap: false, treeVersion: 1, orphans: [], components: comps, logic: { nodes, wires }, variables: [] }],
         templates: [], types: [], breakpoints: [], theme: null, variables: [] };
     const conn = { id: 'spc', type: 'kufayeka-nexa-sparkplug', name: 'test', brokerUrl: 'mqtt://127.0.0.1:' + PORTS.mqtt, groupFilter: '+', edgeNodeFilter: '+', keepAlive: 30, protocolVersion: '4', reconnectPeriod: 1000, connectTimeout: 10000, clientIdOverride: '' };
     fs.writeFileSync(path.join(dir, 'flows.json'), JSON.stringify([{ id: 'tab1', type: 'tab', label: 'T' }, conn, project], null, 1));
@@ -102,13 +117,14 @@ async function startEdge() {
     let seq = 0;
     const birth = () => {
         edge.publish('spBv1.0/G/NBIRTH/E1', sp.encodePayload({ timestamp: Date.now(), seq: seq = 0, metrics: [{ name: 'bdSeq', type: 'UInt64', value: 0 }] }));
-        edge.publish('spBv1.0/G/DBIRTH/E1/D1', sp.encodePayload({ timestamp: Date.now(), seq: ++seq % 256, metrics: [{ name: 'Temp', type: 'Double', value: temp }] }));
+        edge.publish('spBv1.0/G/DBIRTH/E1/D1', sp.encodePayload({ timestamp: Date.now(), seq: ++seq % 256, metrics: [{ name: 'Temp', type: 'Double', value: temp }, { name: 'State', type: 'Int32', value: mstate }] }));
     };
     const ddata = () => edge.publish('spBv1.0/G/DDATA/E1/D1', sp.encodePayload({ timestamp: Date.now(), seq: ++seq % 256, metrics: [{ name: 'Temp', type: 'Double', value: temp }] }));
+    const dstate = () => edge.publish('spBv1.0/G/DDATA/E1/D1', sp.encodePayload({ timestamp: Date.now(), seq: ++seq % 256, metrics: [{ name: 'State', type: 'Int32', value: mstate }] }));
     edge.subscribe(['spBv1.0/G/NCMD/E1']);
     edge.on('message', (topic, buf) => { const p = sp.decodePayload(buf); if ((p.metrics || []).some((m) => /Rebirth/.test(m.name))) birth(); });
     birth();
-    return { birth, ddata, close: () => { edge.end(true); server.close(); broker.close(); } };
+    return { birth, ddata, dstate, close: () => { edge.end(true); server.close(); broker.close(); } };
 }
 
 // every download the page makes: its name, size, and (CSV / Excel) its text
@@ -188,9 +204,21 @@ const portFree = (port) => new Promise((resolve) => { const t = net.createServer
             check('B hidden (its Hide action): not in the export', head5 === '"Time","Temp (°C)","A","Batch","Annotation"', head5);
             check('A cleared (its Clear action)', JSON.stringify(await until(() => ys('s2'), (v) => v.length === 0)) === '[]', await ys('s2'));
 
+            // 9. the State Timeline
+            const ST = `document.querySelector('[data-id="C2"] > *')`;
+            const changes = (id) => js(`(function () { var w = ${ST}; return w._row(w.findRow(${JSON.stringify(id)})).ch.map(function (c) { return c.v; }); })()`);
+            check('State Timeline: a row from an Update node (Set states)', JSON.stringify(await until(() => changes('r2'), (v) => v.length >= 2)) === '[1,0,null]', await changes('r2'));
+            check('... a row’s Live state from a tag: its state now', JSON.stringify(await until(() => changes('r1'), (v) => v.length >= 1)) === '[1]', await changes('r1'));
+            check('... On State Change (that row) -> Logic: "Running"', (await until(() => label('pState'), (v) => v === 'Running')) === 'Running', await label('pState'));
+            mstate = 0; edge.dstate();
+            check('... the tag changes: a new change, On State Change -> "Stopped"', (await until(() => label('pState'), (v) => v === 'Stopped')) === 'Stopped' && JSON.stringify(await changes('r1')) === '[1,0]', await changes('r1'));
+            const d6 = await until(downloads, (v) => v.filter((x) => x.ready).length >= 6, 6000);
+            const st = ((d6[5] && d6[5].text) || '').replace(/^\ufeff/, '').split('\r\n');
+            check('... its export: a row per segment (Capper Running 3 s, Stopped 1 s "jam")', st[0] === '"Row","State","Value","Start","End","Duration (s)","Note"' && st.some((l) => /^"Capper","Running".*,3,""$/.test(l)) && st.some((l) => /^"Capper","Stopped".*,1,"jam"$/.test(l)), st);
+
             const errs = logs.filter((l) => !/dev mode|DevTools|download/i.test(l));
             check('no errors on the page', errs.length === 0, errs.slice(0, 5));
-        }, { width: 1000, height: 900, initScript: CAPTURE, ready: "!!document.querySelector('[data-id=\"C1\"] > *')", readyTries: 120 });
+        }, { width: 1000, height: 1100, initScript: CAPTURE, ready: "!!document.querySelector('[data-id=\"C1\"] > *') && !!document.querySelector('[data-id=\"C2\"] > *')", readyTries: 120 });
         if (r === null) { console.log('skipped: no Chrome'); skipped = true; }
     } catch (e) {
         failures++;

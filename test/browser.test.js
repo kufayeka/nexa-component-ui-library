@@ -17,7 +17,7 @@ async function ok(label, fn) { await fn(); passed++; console.log('✔ ' + label)
 const P = 'nexa-ui-';
 const ALL = ['button', 'input', 'textarea', 'number-input', 'password-input', 'checkbox', 'switch', 'radio-group', 'segmented', 'select', 'combobox', 'slider', 'tags-input', 'pin-input', 'rating',
     'text', 'heading', 'badge', 'tag', 'card', 'avatar', 'stat', 'alert', 'progress', 'spinner', 'skeleton', 'separator', 'empty-state', 'timeline', 'fieldset',
-    'tabs', 'iframe', 'datetime', 'daterange', 'pagination', 'line-chart'];
+    'tabs', 'iframe', 'datetime', 'daterange', 'pagination', 'line-chart', 'state-timeline'];
 const TAG = '{sparkplug:Plant::Line1::Mixer::Speed}';
 
 withHarness({
@@ -42,7 +42,7 @@ withHarness({
         await settle();
     };
 
-    await ok('all 36 components register (UI · Form / Display / Layout / Embed / Charts), each mounts and draws', async () => {
+    await ok('all 37 components register (UI · Form / Display / Layout / Embed / Charts), each mounts and draws', async () => {
         const reg = await js(`${JSON.stringify(ALL)}.map(function (id) { var d = NEXA.getComponent("${P}" + id); return d ? d.category : "MISSING " + id; })`);
         assert.deepStrictEqual(reg.filter((c) => c !== 'UI · Form' && c !== 'UI · Display' && c !== 'UI · Layout' && c !== 'UI · Embed' && c !== 'UI · Charts'), []);
         for (const id of ALL) await mount('all-' + id, id, {}, { width: 320, height: 120 });
@@ -1056,6 +1056,118 @@ withHarness({
         assert.deepStrictEqual([r.m2.plotX, r.m2.plotW, r.m2.plotH], [r.m1.plotX, r.m1.plotW, r.m1.plotH], 'the same plot as unzoomed');
         assert.ok(Math.abs(r.w - r.dpr) < 0.02, 'the backing store follows the zoom (sharp, not stretched)');
         assert.deepStrictEqual([Math.round(r.px), Math.round(r.py)], [200, 100], 'a client px at 50 % is 2 layout px');
+    });
+
+    // ---- State Timeline ------------------------------------------------------------------------
+    const ST = { states: [{ label: 'Running', value: '1', color: '#10b981' }, { label: 'Stopped', value: '0', color: '#ef4444' }, { label: 'High', match: 'range', min: 80, max: 1000, color: '#8b5cf6' }], timeZone: 'utc' };
+    const H = 3600000;
+    const stw = (name) => `NexaTest.wc(${JSON.stringify(name)})`;
+
+    await ok('State Timeline: changes and intervals (a gap), states by value / range / unknown, statistics over the time shown', async () => {
+        await mount('st-a', 'state-timeline', Object.assign({ rows: [{ id: 'm1', name: 'Filler' }, { id: 'm2', name: 'Capper' }] }, ST), { width: 700, height: 240 });
+        const r = await js(`(function () {
+            var w = ${stw('st-a')};
+            // m1: changes; m2: intervals with a gap between them
+            w.setStates([{ time: ${T0}, state: 1 }, { time: ${T0 + H}, state: 0 }, { time: ${T0 + 2 * H}, state: 1 }, { time: ${T0 + 3 * H}, state: null }], { list: "rows", id: "m1" });
+            w.setStates([{ start: ${T0}, end: ${T0 + H}, state: 95, note: "hot" }, { start: ${T0 + 2 * H}, end: ${T0 + 3 * H}, state: "JAM" }], { list: "rows", id: "m2" });
+            w.setRange({ from: ${T0}, to: ${T0 + 3 * H} });
+            var l = w.lanes(), m1 = w.statsOf(l[0], ${T0}, ${T0 + 3 * H}), segs2 = w.segmentsOf(w.rowList()[1], ${T0}, ${T0 + 3 * H});
+            return { lanes: l.map(function (x) { return x.label; }), m1: m1, segs2: segs2.map(function (s) { var st = w.stateOf(s.v); return [st.label, (s.end - s.start) / ${H}, s.note]; }),
+                unknownGrey: /^#(9ca3af|a8a29e|94a3b8|a1a1aa)$/.test(w.stateOf("JAM").color) };
+        })()`);
+        assert.deepStrictEqual(r.lanes, ['Filler', 'Capper']);
+        assert.deepStrictEqual([Math.round(r.m1.pct * 1000) / 1000, r.m1.ms / H, r.m1.count, r.m1.first, r.m1.last, r.m1.label], [0.667, 2, 2, T0, T0 + 3 * H, 'Running'], 'Running: 2 of 3 hours, entered twice');
+        assert.deepStrictEqual(r.segs2, [['High', 1, 'hot'], ['JAM', 1, '']], 'a range state (95 ≥ 80), an unknown value with its own text; the gap left out');
+        assert.ok(r.unknownGrey, 'an unknown value: grey');
+        const px = await js(`(function () { var c = ${root('st-a')}.querySelector("canvas"), d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data, n = 0; for (var i = 3; i < d.length; i += 4) if (d[i]) n++; return n; })()`);
+        assert.ok(px > 1000, 'drawn');
+        const head = await js(`(function () { var w = ${stw('st-a')}; w.draw(); return w._scale.layout.cols.map(function (c) { return c[0]; }); })()`);
+        assert.deepStrictEqual(head, ['statsPercent', 'statsDuration'], 'the statistics shown by default: %, total time');
+    });
+
+    await ok('State Timeline: a lane per row and state; the statistics of each lane\u2019s own state', async () => {
+        await mount('st-b', 'state-timeline', Object.assign({ rows: [{ id: 'm1', name: 'Filler' }], lanes: 'split', statsCount: true, statsFirst: true, statsLast: true }, ST), { width: 700, height: 260 });
+        const r = await js(`(function () {
+            var w = ${stw('st-b')};
+            w.setStates([{ time: ${T0}, state: 1 }, { time: ${T0 + H}, state: 0 }, { time: ${T0 + 2 * H}, state: 1 }, { time: ${T0 + 3 * H}, state: null }], { list: "rows", id: "m1" });
+            w.setRange({ from: ${T0}, to: ${T0 + 3 * H} });
+            var l = w.lanes();
+            return l.map(function (x) { var s = w.statsOf(x, ${T0}, ${T0 + 3 * H}); return [x.label, s.label, s.count, Math.round(s.pct * 1000) / 1000]; });
+        })()`);
+        assert.deepStrictEqual(r, [['Filler · Running', 'Running', 2, 0.667], ['Filler · Stopped', 'Stopped', 1, 0.333], ['Filler · High', 'High', 0, 0]], 'the defined states, each its lane and statistics');
+    });
+
+    await ok('State Timeline: a row\u2019s Live state from a tag (a change now, On State Change of that row; the same value: none); Append change in its place; Clear', async () => {
+        await mount('st-c', 'state-timeline', Object.assign({ rows: [{ id: 'm1', name: 'Filler', live: { $bind: [{ src: 'sparkplug', ref: 'G::E::D::State' }] } }, { id: 'm2', name: 'Capper' }] }, ST), { width: 600, height: 200 });
+        await js(`NexaTest.setTag("st-c", 1, "G::E::D::State")`); await settle();
+        await js(`NexaTest.setTag("st-c", 0, "G::E::D::State")`); await settle();
+        await js(`NexaTest.setTag("st-c", 0, "G::E::D::State")`); await settle();
+        const r = await js(`(function () { var w = ${stw('st-c')}; return { ch: w._row(w.rowList()[0]).ch.map(function (c) { return c.v; }), ev: NexaTest.item("st-c").events.filter(function (e) { return e[0] === "stateChange"; }).map(function (e) { return [e[1].from, e[1].to, e[1].label, e[2].id]; }) }; })()`);
+        assert.deepStrictEqual(r.ch, [1, 0], 'two changes; the same value again: none');
+        assert.deepStrictEqual(r.ev, [[null, 1, 'Running', 'm1'], [1, 0, 'Stopped', 'm1']]);
+        const r2 = await js(`(function () {
+            var w = ${stw('st-c')};
+            w.appendChange({ time: ${T0 + 2 * H}, state: 1 }, { list: "rows", id: "m2" });
+            w.appendChange({ time: ${T0}, state: 0, note: "late" }, { list: "rows", id: "m2" });
+            var a = w._row(w.rowList()[1]).ch.map(function (c) { return [c.t, c.v, c.note]; });
+            w.clear(null, { list: "rows", id: "m2" });
+            return { a: a, cleared: w._row(w.rowList()[1]).ch.length, byName: w.findRow("Capper").id, byIndex: w.findRow(1).id };
+        })()`);
+        assert.deepStrictEqual(r2.a, [[T0, 0, 'late'], [T0 + 2 * H, 1, '']], 'a late change in its place');
+        assert.deepStrictEqual([r2.cleared, r2.byName, r2.byIndex], [0, 'm2', 'm2']);
+        const bad = await js(`(function () { try { NexaTest.invoke("st-c", "appendChange", 1); return null; } catch (e) { return e.message; } })()`);
+        assert.ok(/no action "appendChange"/.test(bad), 'Append change is the row\u2019s action, not the chart\u2019s');
+    });
+
+    await ok('State Timeline: hover shows the segment (state, start, end, duration, note); a click: On Segment Click', async () => {
+        await mount('st-d', 'state-timeline', Object.assign({ rows: [{ id: 'm1', name: 'Filler' }], showStats: false }, ST), { width: 600, height: 200 });
+        await js(`(function () { var w = ${stw('st-d')}; w.setStates([{ start: ${T0}, end: ${T0 + H}, state: 1, note: "Batch 7" }, { start: ${T0 + H}, end: ${T0 + 2 * H}, state: 0 }], { list: "rows", id: "m1" }); w.setRange({ from: ${T0}, to: ${T0 + 2 * H} }); return 1; })()`);
+        await settle();
+        const at = await js(`(function () { var w = ${stw('st-d')}, e = w.renderRoot.querySelector(".plot"); e.scrollIntoView({ block: "center" }); w.draw(); var r = e.getBoundingClientRect(), m = w._scale.m, b = w._scale.boxes[0]; return { x: Math.round(r.left + m.plotX + m.plotW * 0.25), y: Math.round(r.top + b.y + b.h / 2) }; })()`);
+        await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at.x, y: at.y }); await settle();
+        const tip = await js(`${root('st-d')}.querySelector(".tooltip").textContent.replace(/\\s+/g, " ")`);
+        assert.ok(/Filler — Running/.test(tip) && /Duration: 1h 00m/.test(tip) && /Batch 7/.test(tip), 'tooltip: ' + tip);
+        await send('Input.dispatchMouseEvent', { type: 'mousePressed', button: 'left', buttons: 1, clickCount: 1, x: at.x, y: at.y });
+        await send('Input.dispatchMouseEvent', { type: 'mouseReleased', button: 'left', buttons: 0, clickCount: 1, x: at.x, y: at.y });
+        await settle();
+        const ev = await js(`NexaTest.item("st-d").events.filter(function (e) { return e[0] === "segmentClick"; }).pop()`);
+        assert.deepStrictEqual(ev && [ev[1].row, ev[1].state, ev[1].start, ev[1].duration, ev[1].note], ['m1', 'Running', T0, H, 'Batch 7']);
+    });
+
+    await ok('State Timeline: export — a row per segment (times to the ms), Excel the state\u2019s colour, a Summary and an Annotations sheet; PNG', async () => {
+        await mount('st-e', 'state-timeline', Object.assign({ rows: [{ id: 'm1', name: 'Filler' }], annotations: [{ label: 'Shift 2', time: String(T0 + 30 * 60000) }], exportTitle: 'Line 1' }, ST), { width: 600, height: 200, design: true });
+        const r = await js(`(async function () {
+            var w = ${stw('st-e')};
+            w.setStates([{ start: ${T0}, end: ${T0 + H}, state: 1 }, { start: ${T0 + H}, end: ${T0 + 2 * H}, state: 0, note: "jam" }], { list: "rows", id: "m1" });
+            w.draw();
+            w.exportData({ format: "csv", range: "all" });
+            var csv = (await w._lastExport.blob.text()).replace(/^\\ufeff/, "").split("\\r\\n");
+            w.exportData({ format: "xlsx", range: "all" });
+            var xl = new TextDecoder().decode(new Uint8Array(await w._lastExport.blob.arrayBuffer()));
+            var png = await w.exportPNG({ range: "all" });
+            return { csv: csv, xl: xl, png: png && png.width };
+        })()`);
+        assert.strictEqual(r.csv[0], '"Row","State","Value","Start","End","Duration (s)","Note"');
+        assert.ok(/^"Filler","Running","1",\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.000,.*,3600,""$/.test(r.csv[1]), r.csv[1]);
+        assert.ok(/"Stopped".*,3600,"jam"$/.test(r.csv[2]), r.csv[2]);
+        assert.ok(/^"Annotation","Shift 2"/.test(r.csv[3]), 'the annotation: ' + r.csv[3]);
+        assert.ok(/<sheet name="Summary"/.test(r.xl) && /<sheet name="Annotations"/.test(r.xl) && /<sheet name="Info"/.test(r.xl), 'Summary, Annotations, Info');
+        assert.ok(/<c r="B2" t="inlineStr" s="3">/.test(r.xl), 'the state cell in its colour');
+        assert.ok(r.png > 0, 'a PNG');
+    });
+
+    await ok('State Timeline: the editor shows sample states; in a zoomed canvas it draws at its layout size', async () => {
+        await mount('st-f', 'state-timeline', Object.assign({ rows: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }] }, ST), { width: 600, height: 220, design: true });
+        const demo = await js(`(function () { var w = ${stw('st-f')}; return w.rowList().map(function (r) { return w._row(r).demo && w._row(r).ch.length > 0; }); })()`);
+        assert.deepStrictEqual(demo, [true, true]);
+        await mount('st-g', 'state-timeline', Object.assign({ rows: [{ id: 'a', name: 'A' }] }, ST), { width: 600, height: 220, design: true });
+        const z = await js(`(async function () {
+            var slot = NexaTest.item("st-g").el; slot.style.transform = "scale(0.5)"; slot.style.transformOrigin = "0 0";
+            await new Promise(function (r) { setTimeout(r, 100); });
+            var a = ${stw('st-f')}, b = ${stw('st-g')}; a.draw(); b.draw();
+            return [a._scale.m.plotH, b._scale.m.plotH];
+        })()`);
+        assert.strictEqual(z[0], z[1], 'the same plot height at 50 %');
     });
 
     await ok('the inspector: every plain prop takes a binding (Static | Binding); colours and sizes take theme tokens (◆), a token shows as a chip', async () => {
