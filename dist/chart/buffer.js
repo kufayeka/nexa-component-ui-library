@@ -204,6 +204,25 @@ export class TimeSeriesRingBuffer {
         return this.y[this._at(i)];
     }
 
+    get length() {
+        return this.count;
+    }
+
+    timeAt(i) {
+        return this.getX(i);
+    }
+
+    valAt(i) {
+        return this.getY(i);
+    }
+
+    valAtTime(targetX) {
+        if (this.count === 0) return 0;
+        const idx = this.findClosestIndex(targetX);
+        if (idx === -1) return 0;
+        return this.getY(idx);
+    }
+
     /** The time span held: O(1) (the points are in order). */
     getBounds() {
         if (this.count === 0) return null;

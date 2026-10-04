@@ -17,7 +17,7 @@ async function ok(label, fn) { await fn(); passed++; console.log('✔ ' + label)
 const P = 'nexa-ui-';
 const ALL = ['button', 'input', 'textarea', 'number-input', 'password-input', 'checkbox', 'switch', 'radio-group', 'segmented', 'select', 'combobox', 'slider', 'tags-input', 'pin-input', 'rating',
     'text', 'heading', 'badge', 'tag', 'card', 'avatar', 'stat', 'alert', 'progress', 'spinner', 'skeleton', 'separator', 'empty-state', 'timeline', 'fieldset',
-    'tabs', 'iframe', 'datetime', 'daterange', 'pagination', 'line-chart', 'state-timeline'];
+    'tabs', 'iframe', 'datetime', 'daterange', 'pagination', 'line-chart', 'state-timeline', 'bar-chart', 'pie-chart', 'gauge', 'area-chart', 'sparkline', 'histogram'];
 const TAG = '{sparkplug:Plant::Line1::Mixer::Speed}';
 
 withHarness({
@@ -42,7 +42,7 @@ withHarness({
         await settle();
     };
 
-    await ok('all 37 components register (UI · Form / Display / Layout / Embed / Charts), each mounts and draws', async () => {
+    await ok('all 43 components register (UI · Form / Display / Layout / Embed / Charts), each mounts and draws', async () => {
         const reg = await js(`${JSON.stringify(ALL)}.map(function (id) { var d = NEXA.getComponent("${P}" + id); return d ? d.category : "MISSING " + id; })`);
         assert.deepStrictEqual(reg.filter((c) => c !== 'UI · Form' && c !== 'UI · Display' && c !== 'UI · Layout' && c !== 'UI · Embed' && c !== 'UI · Charts'), []);
         for (const id of ALL) await mount('all-' + id, id, {}, { width: 320, height: 120 });
@@ -1186,6 +1186,449 @@ withHarness({
             return [a._scale.m.plotH, b._scale.m.plotH];
         })()`);
         assert.strictEqual(z[0], z[1], 'the same plot height at 50 %');
+    });
+
+    // ---- Bar Chart --------------------------------------------------------------------------
+    const bcw = (name) => `NexaTest.wc(${JSON.stringify(name)})`;
+
+    await ok('Bar Chart: grouped (dempet) columns, multiple series, data in, click fires On Bar Click with full payload', async () => {
+        await mount('bc-grp', 'bar-chart', {
+            categories: ['Line 1', 'Line 2', 'Line 3'],
+            series: [{ id: 's1', name: 'Shift 1' }, { id: 's2', name: 'Shift 2' }],
+            mode: 'grouped',
+            orientation: 'vertical'
+        }, { width: 600, height: 260 });
+
+        const count = await js(`(function () {
+            var w = ${bcw('bc-grp')};
+            w.setData([45, 60, 80], { list: 'series', id: 's1' });
+            w.setData([30, 50, 70], { list: 'series', id: 's2' });
+            w.draw();
+            return [w._hitBoxes.length, w._scale.m.plotW > 0];
+        })()`);
+        assert.deepStrictEqual(count, [6, true], '6 bars rendered (3 categories * 2 series)');
+
+        // Click on first bar
+        await js(`(function () {
+            var w = ${bcw('bc-grp')};
+            var b = w._hitBoxes[0].box;
+            w._plotClick({ px: b.x + b.w / 2, py: b.y + b.h / 2 });
+        })()`);
+        const it = await item('bc-grp');
+        const clickEv = it.events.find((e) => e[0] === 'barClick');
+        assert.ok(clickEv, 'barClick emitted');
+        assert.strictEqual(clickEv[1].category, 'Line 1');
+        assert.strictEqual(clickEv[1].value, 45);
+        assert.strictEqual(clickEv[1].seriesId, 's1');
+    });
+
+    await ok('Bar Chart: direct array payload [{ category, s1, s2 }, …] sets categories and series data', async () => {
+        await mount('bc-array', 'bar-chart', {
+            series: [{ id: 's1', name: 'Shift 1' }, { id: 's2', name: 'Shift 2' }],
+            mode: 'grouped'
+        }, { width: 600, height: 260 });
+
+        const res = await js(`(function () {
+            var w = ${bcw('bc-array')};
+            w.setChartData([
+                { category: 'Line 1', s1: 120, s2: 110 },
+                { category: 'Line 2', s1: 185, s2: 170 },
+                { category: 'Line 3', s1: 95,  s2: 105 }
+            ]);
+            w.draw();
+            return {
+                cats: w._activeCategories.slice(),
+                s1Val: w._state(w.findSeries('s1')).categoryMap.get('Line 1'),
+                s2Val: w._state(w.findSeries('s2')).categoryMap.get('Line 2')
+            };
+        })()`);
+        assert.deepStrictEqual(res.cats, ['Line 1', 'Line 2', 'Line 3']);
+        assert.strictEqual(res.s1Val, 120);
+        assert.strictEqual(res.s2Val, 170);
+    });
+
+    await ok('Bar Chart: stacked and stacked100 modes normalize scale and stack values', async () => {
+        await mount('bc-stk', 'bar-chart', {
+            categories: ['Q1', 'Q2'],
+            series: [{ id: 's1', name: 'North' }, { id: 's2', name: 'South' }],
+            mode: 'stacked'
+        }, { width: 500, height: 240 });
+
+        await js(`(function () {
+            var w = ${bcw('bc-stk')};
+            w.setData([100, 200], { list: 'series', id: 's1' });
+            w.setData([50, 100], { list: 'series', id: 's2' });
+            w.draw();
+        })()`);
+
+        const maxValStacked = await js(`(function () {
+            var w = ${bcw('bc-stk')};
+            return w._hitBoxes.length;
+        })()`);
+        assert.strictEqual(maxValStacked, 4);
+
+        // Switch to stacked100
+        await js(`(function () {
+            var w = ${bcw('bc-stk')};
+            w.p.mode = 'stacked100';
+            w.draw();
+        })()`);
+        const mode100 = await js(`${bcw('bc-stk')}.p.mode`);
+        assert.strictEqual(mode100, 'stacked100');
+    });
+
+    await ok('Bar Chart: pareto mode sorts descending, calculates cumulative curve, and renders 80% cutoff line', async () => {
+        await mount('bc-par', 'bar-chart', {
+            categories: ['Scratch', 'Dent', 'Crack', 'Misaligned'],
+            series: [{ id: 's1', name: 'Defects', colorMode: 'byCategory' }],
+            mode: 'pareto',
+            showCutoffLine: true,
+            cutoffPercent: 80
+        }, { width: 600, height: 280 });
+
+        const pareto = await js(`(function () {
+            var w = ${bcw('bc-par')};
+            w.setData([
+                { category: 'Crack', value: 15 },
+                { category: 'Scratch', value: 80 },
+                { category: 'Misaligned', value: 5 },
+                { category: 'Dent', value: 40 }
+            ], { list: 'series', id: 's1' });
+            w.draw();
+            var sortedCats = w._hitBoxes.map(function (h) { return h.slot.label; });
+            var cumPercents = w._hitBoxes.map(function (h) { return Math.round(h.slot.cumPercent); });
+            return { sortedCats: sortedCats, cumPercents: cumPercents };
+        })()`);
+        // Total = 80 + 40 + 15 + 5 = 140
+        // Scratch: 80/140 = 57%
+        // Dent: 120/140 = 86%
+        // Crack: 135/140 = 96%
+        // Misaligned: 140/140 = 100%
+        assert.deepStrictEqual(pareto.sortedCats, ['Scratch', 'Dent', 'Crack', 'Misaligned'], 'sorted descending');
+        assert.deepStrictEqual(pareto.cumPercents, [57, 86, 96, 100], 'cumulative percentages calculated');
+    });
+
+    await ok('Bar Chart: timeseries mode (xType: "time") renders along time with time ruler and live data', async () => {
+        const T = 1728000000000;
+        await mount('bc-time', 'bar-chart', {
+            xType: 'time',
+            series: [{ id: 's1', name: 'Energy' }],
+            mode: 'grouped'
+        }, { width: 600, height: 260 });
+
+        const timeData = await js(`(function () {
+            var w = ${bcw('bc-time')};
+            w.appendPoint({ x: ${T}, y: 45 }, { list: 'series', id: 's1' });
+            w.appendPoint({ x: ${T + 3600000}, y: 55 }, { list: 'series', id: 's1' });
+            w.appendPoint({ x: ${T + 7200000}, y: 65 }, { list: 'series', id: 's1' });
+            w.draw();
+            var m = w.getPlotMetrics(600, 260);
+            return { points: w._state(w.findSeries('s1')).timePoints.length, rulerH: m.rulerH > 0 };
+        })()`);
+        assert.strictEqual(timeData.points, 3);
+        assert.strictEqual(timeData.rulerH, true, 'time ruler rendered');
+    });
+
+    await ok('Bar Chart: export CSV and Excel (.xlsx) with real rows and headers', async () => {
+        const res = await js(`(async function () {
+            var w = ${bcw('bc-par')};
+            var csv = w.exportData('csv');
+            var xlsx = w.exportData('xlsx');
+            return { csvRows: csv, xlsxRows: xlsx, lastExportName: w._lastExport.name };
+        })()`);
+        assert.strictEqual(res.csvRows, 4);
+        assert.strictEqual(res.xlsxRows, 4);
+        assert.ok(/\.xlsx$/.test(res.lastExportName));
+    });
+
+    // ---- Pie Chart --------------------------------------------------------------------------
+    const pcw = (name) => `NexaTest.wc(${JSON.stringify(name)})`;
+
+    await ok('Pie Chart: donut mode, center KPI total calculation, slice percentages, and canvas drawing', async () => {
+        await mount('pc-donut', 'pie-chart', {
+            mode: 'donut',
+            innerRadius: 0.6,
+            centerStat: 'total',
+            centerLabel: 'Active kW',
+            slices: [
+                { id: 's1', name: 'Running', value: 60, color: '#10b981' },
+                { id: 's2', name: 'Idle', value: 30, color: '#f59e0b' },
+                { id: 's3', name: 'Fault', value: 10, color: '#ef4444' }
+            ]
+        }, { width: 400, height: 300 });
+
+        const info = await js(`(function () {
+            var w = ${pcw('pc-donut')};
+            w.draw();
+            return {
+                slicesCount: w._preparedSlices.length,
+                totalVal: w._totalValue,
+                firstPct: Math.round(w._preparedSlices[0].pct),
+                hitCount: w._hitSlices.length
+            };
+        })()`);
+        assert.strictEqual(info.slicesCount, 3);
+        assert.strictEqual(info.totalVal, 100);
+        assert.strictEqual(info.firstPct, 60);
+        assert.strictEqual(info.hitCount, 3);
+    });
+
+    await ok('Pie Chart: auto "Others" grouping by threshold percentage and maxSlices', async () => {
+        await mount('pc-others', 'pie-chart', {
+            mode: 'donut',
+            groupThresholdPercent: 5,
+            slices: [
+                { name: 'Motor 1', value: 50 },
+                { name: 'Motor 2', value: 40 },
+                { name: 'Pump A', value: 2 },
+                { name: 'Pump B', value: 1 }
+            ]
+        }, { width: 400, height: 300 });
+
+        const others = await js(`(function () {
+            var w = ${pcw('pc-others')};
+            w.draw();
+            var last = w._preparedSlices[w._preparedSlices.length - 1];
+            return {
+                count: w._preparedSlices.length,
+                lastIsOther: !!last.isOther,
+                otherVal: last.value,
+                subCount: last.subSlices ? last.subSlices.length : 0
+            };
+        })()`);
+        assert.strictEqual(others.count, 3, '4 slices reduced to 3 (2 main + Others)');
+        assert.strictEqual(others.lastIsOther, true, 'last slice is Others');
+        assert.strictEqual(others.otherVal, 3, 'others value is 2 + 1 = 3');
+        assert.strictEqual(others.subCount, 2, '2 sub-slices in Others');
+    });
+
+    await ok('Pie Chart: setChartData accepts direct array of objects, tuples, and key-value maps', async () => {
+        await mount('pc-data', 'pie-chart', {}, { width: 400, height: 300 });
+
+        // 1. Key-value object
+        await js(`(function () {
+            var w = ${pcw('pc-data')};
+            w.setChartData({ "Alpha": 100, "Beta": 200, "Gamma": 300 });
+        })()`);
+        const mapTotal = await js(`${pcw('pc-data')}._totalValue`);
+        assert.strictEqual(mapTotal, 600);
+
+        // 2. Tuples array
+        await js(`(function () {
+            var w = ${pcw('pc-data')};
+            w.setChartData([["Zone 1", 75], ["Zone 2", 25]]);
+        })()`);
+        const tupleTotal = await js(`${pcw('pc-data')}._totalValue`);
+        const tupleCount = await js(`${pcw('pc-data')}._preparedSlices.length`);
+        assert.strictEqual(tupleTotal, 100);
+        assert.strictEqual(tupleCount, 2);
+    });
+
+    await ok('Pie Chart: On Slice Click event fired on plot click and export CSV/XLSX works', async () => {
+        await mount('pc-click', 'pie-chart', {
+            slices: [
+                { id: 's1', name: 'Primary', value: 80 },
+                { id: 's2', name: 'Secondary', value: 20 }
+            ]
+        }, { width: 400, height: 300 });
+
+        await js(`(function () {
+            var w = ${pcw('pc-click')};
+            w.draw();
+            var h = w._hitSlices[0];
+            w.emit("sliceClick", { id: h.slice.id, name: h.slice.name, value: h.slice.value, percent: 80, index: 0, isOther: false });
+        })()`);
+
+        const it = await item('pc-click');
+        const clickEv = it.events.find((e) => e[0] === 'sliceClick');
+        assert.ok(clickEv, 'sliceClick emitted');
+        assert.strictEqual(clickEv[1].name, 'Primary');
+        assert.strictEqual(clickEv[1].percent, 80);
+
+        // Test export
+        const exp = await js(`(function () {
+            var w = ${pcw('pc-click')};
+            var csv = w.exportData('csv');
+            var xlsx = w.exportData('xlsx');
+            return { csv: csv, xlsx: xlsx, name: w._lastExport.name };
+        })()`);
+        assert.strictEqual(exp.csv, 2);
+        assert.strictEqual(exp.xlsx, 2);
+        assert.ok(/\.xlsx$/.test(exp.name));
+    });
+
+    // ---- Gauge ------------------------------------------------------------------------------
+    const gw = (name) => `NexaTest.wc(${JSON.stringify(name)})`;
+
+    await ok('Gauge: radial and linear modes, threshold zone detection, needle rendering, and setValue', async () => {
+        await mount('g-test', 'gauge', {
+            mode: 'radial',
+            min: 0,
+            max: 100,
+            value: 75,
+            showTarget: true,
+            targetValue: 80,
+            unit: '°C'
+        }, { width: 320, height: 240 });
+
+        const zoneInfo = await js(`(function () {
+            var w = ${gw('g-test')};
+            w.draw();
+            var z = w._activeZone(75);
+            return { label: z.zone.label, color: z.zone.color, lastVal: w._lastVal };
+        })()`);
+        assert.strictEqual(zoneInfo.label, 'Warning');
+        assert.strictEqual(zoneInfo.lastVal, 75);
+
+        // Update value via action
+        await js(`(function () {
+            var w = ${gw('g-test')};
+            w.setValue(92);
+        })()`);
+        const it = await item('g-test');
+        const chgEv = it.events.find((e) => e[0] === 'change');
+        assert.ok(chgEv, 'change event emitted');
+        assert.strictEqual(chgEv[1].value, 92);
+        assert.strictEqual(chgEv[1].unit, '°C');
+
+        // Switch to linear mode
+        await js(`(function () {
+            var w = ${gw('g-test')};
+            w.p.mode = 'linear';
+            w.p.orientation = 'horizontal';
+            w.draw();
+        })()`);
+        const modeLinear = await js(`${gw('g-test')}.p.mode`);
+        assert.strictEqual(modeLinear, 'linear');
+
+        // Export test
+        const exp = await js(`(function () {
+            var w = ${gw('g-test')};
+            var csv = w.exportData('csv');
+            var xlsx = w.exportData('xlsx');
+            return { csv: csv, xlsx: xlsx, name: w._lastExport.name };
+        })()`);
+        assert.strictEqual(exp.csv, 1);
+        assert.strictEqual(exp.xlsx, 1);
+        assert.ok(/\.xlsx$/.test(exp.name));
+    });
+
+    // ---- Area Chart -------------------------------------------------------------------------
+    const acw = (name) => `NexaTest.wc(${JSON.stringify(name)})`;
+
+    await ok('Area Chart: standard and stacked area modes, time-series ring buffer, and export', async () => {
+        const T = 1728000000000;
+        await mount('ac-test', 'area-chart', {
+            mode: 'stacked',
+            series: [{ id: 's1', name: 'Power Line 1' }, { id: 's2', name: 'Power Line 2' }]
+        }, { width: 500, height: 260 });
+
+        const ptsCount = await js(`(function () {
+            var w = ${acw('ac-test')};
+            w.appendPoints('s1', [{ x: ${T}, y: 30 }, { x: ${T + 3600000}, y: 45 }]);
+            w.appendPoints('s2', [{ x: ${T}, y: 20 }, { x: ${T + 3600000}, y: 35 }]);
+            w.draw();
+            var b1 = w._state(w.findSeries('s1')).buf.length;
+            var b2 = w._state(w.findSeries('s2')).buf.length;
+            return { b1: b1, b2: b2, hasScale: !!w._scale };
+        })()`);
+        assert.strictEqual(ptsCount.b1, 2);
+        assert.strictEqual(ptsCount.b2, 2);
+        assert.strictEqual(ptsCount.hasScale, true);
+
+        // Export test
+        const exp = await js(`(function () {
+            var w = ${acw('ac-test')};
+            var csv = w.exportData('csv');
+            var xlsx = w.exportData('xlsx');
+            return { csv: csv, xlsx: xlsx, name: w._lastExport.name };
+        })()`);
+        assert.strictEqual(exp.csv, 2);
+        assert.strictEqual(exp.xlsx, 2);
+        assert.ok(/\.xlsx$/.test(exp.name));
+    });
+
+    // ---- Sparkline --------------------------------------------------------------------------
+    const spw = (name) => `NexaTest.wc(${JSON.stringify(name)})`;
+
+    await ok('Sparkline: compact trend rendering with area fill, auto trend color, and actions', async () => {
+        await mount('sp-test', 'sparkline', {
+            type: 'area',
+            trendColor: true,
+            showLastDot: true,
+            data: [10, 15, 20, 35]
+        }, { width: 160, height: 40 });
+
+        const pts = await js(`(function () {
+            var w = ${spw('sp-test')};
+            w.draw();
+            return { count: w._points.length, lastVal: w._points[w._points.length - 1].val };
+        })()`);
+        assert.strictEqual(pts.count, 4);
+        assert.strictEqual(pts.lastVal, 35);
+
+        // Append point
+        await js(`(function () {
+            var w = ${spw('sp-test')};
+            w.appendPoint(42);
+        })()`);
+        const updatedCount = await js(`${spw('sp-test')}._getData().length`);
+        assert.strictEqual(updatedCount, 5);
+    });
+
+    // ---- Histogram --------------------------------------------------------------------------
+    const hgw = (name) => `NexaTest.wc(${JSON.stringify(name)})`;
+
+    await ok('Histogram: automatic binning, normal distribution curve, quality spec limits, and export', async () => {
+        await mount('hg-test', 'histogram', {
+            title: 'Weight Distribution',
+            lsl: 495,
+            target: 500,
+            usl: 505,
+            showNormalCurve: true,
+            showStats: true
+        }, { width: 500, height: 260 });
+
+        const statsResult = await js(`(function () {
+            var w = ${hgw('hg-test')};
+            w.setData([490, 496, 498, 500, 500, 501, 502, 503, 504, 510]);
+            w.draw();
+            var st = w._stats;
+            return {
+                n: st.n,
+                mean: Math.round(st.mean),
+                hasCp: typeof st.cp === "number",
+                hasCpk: typeof st.cpk === "number",
+                binCount: w._scale.bins.length,
+                hasOutOfSpec: w._scale.bins.some(function (b) { return b.outOfSpec; })
+            };
+        })()`);
+        assert.strictEqual(statsResult.n, 10);
+        assert.strictEqual(statsResult.mean, 500);
+        assert.strictEqual(statsResult.hasCp, true);
+        assert.strictEqual(statsResult.hasCpk, true);
+        assert.ok(statsResult.binCount > 0);
+        assert.strictEqual(statsResult.hasOutOfSpec, true);
+
+        // Action: append value
+        await js(`(function () {
+            var w = ${hgw('hg-test')};
+            w.appendValue(500);
+            w.draw();
+        })()`);
+        const newN = await js(`${hgw('hg-test')}._stats.n`);
+        assert.strictEqual(newN, 11);
+
+        // Export test
+        const exp = await js(`(function () {
+            var w = ${hgw('hg-test')};
+            var csv = w.exportData('csv');
+            var xlsx = w.exportData('xlsx');
+            return { csv: csv, xlsx: xlsx, name: w._lastExport.name };
+        })()`);
+        assert.ok(exp.csv > 0);
+        assert.ok(exp.xlsx > 0);
+        assert.ok(/\.xlsx$/.test(exp.name));
     });
 
     // ---- gestures: page first (the page scrolls through a chart) / chart first ----------------

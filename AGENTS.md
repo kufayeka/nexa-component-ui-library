@@ -40,7 +40,7 @@ This is a Nexa component plugin (`@kufayeka/nexa-component-ui-library`). Every c
     - time-chart.js (TimeChartElement: time, ruler, zoom / pan, annotations, gestures, the frozen clock, print);
     - props.js (the shared props / events / actions);
     - time.js, buffer.js, export.js (the xlsx writer);
-    - line.js (Line Chart), state.js (State Timeline);
+    - line.js (Line Chart), state.js (State Timeline), bar.js (Bar / Column Chart), pie.js (Pie / Donut Chart), gauge.js (Radial & Linear Gauge), area.js (Area & Stacked Area Chart), sparkline.js (Sparkline), histogram.js (Histogram);
     - index.js (every chart).
 
     A new chart is its own file there, on ChartElement or TimeChartElement.

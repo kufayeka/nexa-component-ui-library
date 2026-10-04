@@ -1,13 +1,13 @@
 # @kufayeka/nexa-component-ui-library — Nexa UI
 
-A themed component library for **Nexa Dashboard**: 37 form, display, feedback, navigation, layout and chart components. It is a normal Nexa plugin, built only on the Nexa component SDK, so it is also the example to follow when you **build your own UI library**.
+A themed component library for **Nexa Dashboard**: 43 form, display, feedback, navigation, layout and chart components. It is a normal Nexa plugin, built only on the Nexa component SDK, so it is also the example to follow when you **build your own UI library**.
 
 - **Form**: Button, Input, Textarea, Number Input, Password Input, Date Time, Date Range, Checkbox, Switch, Radio Group, Segmented Control, Select, Combobox, Slider, Tags Input, Pin Input, Rating.
 - **Display & feedback**: Text, Heading, Badge, Tag, Card, Avatar, Stat, Alert, Progress (a bar or a circle), Spinner, Skeleton, Separator, Empty State, Timeline, Fieldset.
 
 - **Layout & Navigation**: Tabs — each tab has a panel you drop components into (the SDK's *slots*); Pagination — IBM Carbon-inspired pagination bar.
 - **Embed**: Iframe — another web page (Grafana, a camera, a report), with Logic both ways.
-- **Charts**: Line Chart (time series, an axis per series, thresholds, 1 M+ points) and State Timeline (machine states, statistics). Both are driven item by item from Logic, export CSV / Excel / PNG, and print as they look.
+- **Charts**: Line Chart (time series, an axis per series, thresholds, 1 M+ points), State Timeline (machine states, statistics), Bar Chart (grouped / dempet, stacked, 100% stacked, and Pareto 80/20 analysis), Pie / Donut Chart (categorical proportions, center KPI, auto "Others" grouping), Radial & Linear Gauge (dial / linear meter, needle pointer, bounds, threshold zones, target marker), Area & Stacked Area Chart (cumulative volume/flow, 100% stacked, time ruler), Sparkline (compact KPI trend indicator for cards and tables), and Histogram (statistical distribution and frequency analysis, Freedman-Diaconis binning, normal Gaussian curve overlay, and Six Sigma Cp/Cpk tolerance limits). All are driven item by item from Logic, export CSV / Excel / PNG, and print as they look.
 
 In the editor they are in the palette under **UI · Form**, **UI · Display**, **UI · Layout** and **UI · Charts**.
 
@@ -261,6 +261,426 @@ msg.payload = [
 ];
 return msg;
 ```
+
+### Bar Chart (`nexa-ui-bar-chart`)
+
+Bar and column chart for discrete categories or time series, supporting comparison and Pareto analysis.
+
+**Modes (`mode`)**:
+- **Grouped ("dempet")**: bars of each series stand side-by-side within each category or timestamp slot.
+- **Stacked**: series stack vertically on top of each other (accumulating total $\sum$).
+- **100% Stacked**: stacks normalized to 100% for proportional distribution.
+- **Pareto**: categories automatically sorted descending by value + dual right Y-axis with a cumulative percentage line curve and an **80% Cutoff Line** (the 80/20 rule).
+
+**Orientations**:
+- **Vertical**: standard column chart (categories on bottom, values on left).
+- **Horizontal**: horizontal bars (categories on left, values on bottom), ideal for long category names or horizontal rankings.
+
+**X-Axis Types (`xType`)**:
+- **Category (`category`)**: discrete categories (`categories` prop, data keys, or `setCategories` action). Supports automatic label rotation (0°, 45°, 90°, -45°).
+- **Time series (`time`)**: timestamps along the time ruler. Supports live following, time windows, zoom & pan gestures, and event annotations.
+
+**Series as Logic targets (`target: true`)**:
+Each series has its own Update node and click events in Logic (Events tab).
+- **Actions**:
+  - **Set data** (`setData`): replaces data for this series (`[10, 20, 30]` or `[{category, value}, …]` or `[{x: timestamp, y: value}, …]`).
+  - **Set point / bar** (`setPoint`): updates a single category bar `{category, value}` or timestamp point `{x, y}`.
+  - **Append point** (`appendPoint`): appends `{x, y}` or a scalar (time = now).
+  - **Clear**, **Show**, **Hide**.
+- **Events**:
+  - **On Bar Click** `{ category, time, value, percent, index }`.
+
+**Chart-level Logic**:
+- **Actions**:
+  - `setCategories(["A", "B", "C"])`: sets or replaces category labels.
+  - `setChartData({ categories, series: { s1: [...], s2: [...] } })`: bulk data update for all series from a single SQL / REST payload.
+  - `clearAll()`: empties all series.
+  - `export({ format: "csv" | "xlsx" | "png" })`.
+- **Events**:
+  - **On Bar Click** `{ category, time, seriesId, seriesName, value, percent, cumulativePercent, index }` — for drill-down flows.
+  - **On Hover**, **On Hover End**, **On Legend Toggle**, **On Range Change**.
+
+**Export**:
+- CSV: tabular data with category/time and all visible series.
+- Excel (`.xlsx`): real multi-sheet workbook with numbers and dates formatted.
+- PNG: 2× crisp rendering with title, axis scales, and bottom legend.
+
+### Pie & Donut Chart (`nexa-ui-pie-chart`)
+
+Pie and Donut chart for categorical proportions of a whole, designed to solve the common pain points found in industrial SCADA and monitoring platforms (Ignition label truncation, Grafana missing "Others" grouping, Optix rigid bindings):
+
+**Key Features**:
+- **Modes (`mode`)**:
+  - **Donut (`donut`)**: hollow center with configurable inner radius (`innerRadius: 0.6`).
+  - **Pie (`pie`)**: classic solid circular chart.
+- **Center KPI / Metric**:
+  - Displays large bold metric inside the donut hole: **Total Sum (∑)**, **Average (mean)**, **Count of slices**, or **Custom value**.
+  - Subtitle label beneath the number (e.g. `"Total"`, `"Active Power"`, `"Total Units"`).
+- **Auto "Others" Grouping** *(Solves Grafana & Ignition limitations)*:
+  - `groupThresholdPercent`: automatically bundles slices below a certain percentage (e.g. `< 3%` or `< 5%`) into an `"Others"` category slice.
+  - `maxSlices`: keeps the top $N$ slices and collapses remaining slices into `"Others"`.
+  - Rich tooltip displays a nested breakdown list of the sub-slices contained within the "Others" slice!
+- **Smart Anti-Collision Labels** *(Solves Ignition clipping issues)*:
+  - Positions: `outside` (clean leader lines with elbow hooks), `inside` (centered in slice), or `legend-only`.
+  - `minAngleForLabel`: automatically hides labels for narrow slices (e.g. `< 10°`) so text never collides or overlaps.
+- **Micro-Animations & Visuals**:
+  - Slice gap (`padAngle`): clean 1.5° separation between slices.
+  - Hover Explosion: hovered slice smoothly pushes radially outward by 6px with highlight.
+- **Interactive Legend & Logic Targeting**:
+  - Slices can be defined in properties (`slices` prop) and targeted in Logic (`{ list: "slices", id: slice.id }`).
+  - Clicking a legend item toggles/mutes that slice; Alt+click solos that slice.
+  - Fires **On Slice Click** `{ id, name, value, percent, index, isOther }` for instant HMI drilldowns and page navigation.
+- **Export**:
+  - Direct download to CSV, formatted Excel (`.xlsx` with auto column types), and PNG 2× sharp snapshot.
+
+---
+
+#### Node-RED Function Node Examples for Testing
+
+Copy and paste these scripts into a Node-RED **Function Node** connected to `nexa-ui-pie-chart`:
+
+##### 1. Basic Object Array (with Custom Colours)
+```js
+// Sends machine status breakdown
+msg.payload = [
+    { name: "Running", value: 145, color: "#10b981" },
+    { name: "Idle", value: 65, color: "#f59e0b" },
+    { name: "Maintenance", value: 25, color: "#3b82f6" },
+    { name: "Fault", value: 15, color: "#ef4444" },
+    { name: "Offline", value: 8, color: "#6b7280" }
+];
+return msg;
+```
+
+##### 2. Key-Value Object / Map (Direct Production Lines)
+```js
+// Directly feeds a dictionary/map of line totals
+msg.payload = {
+    "Line 1 (Packaging)": 350,
+    "Line 2 (Bottling)": 280,
+    "Line 3 (Assembly)": 190,
+    "Line 4 (Quality Check)": 45
+};
+return msg;
+```
+
+##### 3. 2D Array / Tuples (Energy Breakdown)
+```js
+// Feeds [name, value] pairs
+msg.payload = [
+    ["Chiller Plant", 54.2],
+    ["Air Compressor", 38.5],
+    ["Cooling Tower", 21.0],
+    ["Pumps", 12.8],
+    ["Lighting", 6.5]
+];
+return msg;
+```
+
+##### 4. Testing Auto "Others" Grouping (Threshold < 5%)
+```js
+// Notice small items (< 5%) will automatically collapse into "Others"
+msg.payload = [
+    { name: "Extruder Main", value: 120 },
+    { name: "Hydraulic Pump", value: 95 },
+    { name: "Cooling Fan", value: 70 },
+    { name: "Feeder", value: 50 },
+    { name: "Valve A", value: 4 },    // < 5% -> auto grouped into Others!
+    { name: "Sensor B", value: 2 },   // < 5% -> auto grouped into Others!
+    { name: "Auxiliary", value: 1 }   // < 5% -> auto grouped into Others!
+];
+return msg;
+```
+
+##### 5. Handling Slice Clicks for HMI Drilldown
+Connect a Function Node to the output of `nexa-ui-pie-chart` (wired to the `On Slice Click` event):
+```js
+// Event payload: { id, name, value, percent, index, isOther }
+const slice = msg.payload;
+node.warn(`Operator clicked: ${slice.name} (${slice.percent}% of total)`);
+
+if (slice.name === "Fault") {
+    // Navigate to alarm page or open modal
+    msg.action = "navigate";
+    msg.url = "/alarms";
+    return msg;
+}
+
+// Or filter an active table / query
+msg.filter = { status: slice.name };
+return msg;
+```
+
+---
+
+### Radial & Linear Gauge (`nexa-ui-gauge`)
+
+Industrial and dashboard gauge component inspired by Power BI, Ignition, and modern SCADA HMI meters. Supports both radial dial/speedometer and horizontal/vertical linear level bar modes.
+
+**Modes (`mode`)**:
+- **Radial (`radial`)**: circular dial/speedometer with configurable start angle (`startAngle: 135°`) and end angle (`endAngle: 45°`, covering a 270° sweep) or custom semicircular/horseshoe arcs.
+- **Linear (`linear`)**: rectangular level gauge with orientation (`orientation: "horizontal"` or `"vertical"`). Ideal for tank levels, temperature thermometers, or compact bar indicators.
+
+**Pointer Styles (`pointerType`)**:
+- **Needle (`needle`)**: classic instrument pointer with center circular pivot boss, tapered needle blade, and customizable needle color (`needleColor: "#ef4444"`), width, and length.
+- **Track (`track`)**: progress arc/bar filled with color (theme palette, gradient, or dynamic threshold color).
+- **Combo (`combo`)**: both filled progress track and high-precision needle pointer rendered simultaneously.
+
+**Bounds & Scale**:
+- **Lower bound (`min`)** and **Upper bound (`max`)**: strict bounds clamping with configurable tick intervals (`tickInterval`) and sub-ticks (`subTicks`).
+- Number formatting with unit display (e.g. `°C`, `bar`, `RPM`, `kW`, `%`).
+
+**Threshold Alert Zones (`thresholds`)**:
+- Array of zones: `[{ from: 0, to: 70, color: "#10b981", label: "Normal" }, { from: 70, to: 85, color: "#f59e0b", label: "Warning" }, { from: 85, to: 100, color: "#ef4444", label: "Critical" }]`.
+- Configurable zone style: `colorTrack` (colorizes the gauge track), `colorNeedle` (changes needle color to match current zone), or `outerBand` (colored boundary stripes along the outer bezel).
+
+**Target Setpoint Marker (Power BI style)**:
+- Optional `target` setpoint (e.g. `target: 80`): renders a crisp contrast marker tick and label indicating the target benchmark or alarm trip point.
+
+**Logic Actions**:
+- `setValue({ value })` or direct scalar `msg.payload = 78.5`.
+- `setTarget({ target })`.
+- `setThresholds([{ from, to, color, label }])`.
+- `export({ format: "csv" | "xlsx" | "png" })`.
+
+**Logic Events**:
+- **On Threshold Exceeded** `{ value, previousValue, zone: { from, to, color, label } }`: fires when entering an alarm or warning zone.
+- **On Click** `{ value, min, max, target }`.
+
+#### Gauge Function Node Examples
+
+##### 1. Simple Live Value Feed
+```js
+// Sends instantaneous temperature or pressure value
+msg.payload = 78.4;
+return msg;
+```
+
+##### 2. Dynamic Update with Target and Custom Thresholds
+```js
+// Updates reading along with dynamic setpoint and alarm bands
+msg.payload = {
+    value: 84.2,
+    target: 80.0,
+    thresholds: [
+        { from: 0, to: 70, color: "#10b981", label: "Optimal" },
+        { from: 70, to: 85, color: "#f59e0b", label: "High" },
+        { from: 85, to: 100, color: "#ef4444", label: "Critical Alarm" }
+    ]
+};
+return msg;
+```
+
+---
+
+### Area & Stacked Area Chart (`nexa-ui-area-chart`)
+
+Continuous time-series area visualization built on top of the high-performance `TimeChartElement` engine (shared with Line Chart), providing smooth, hardware-accelerated cumulative and distribution graphics.
+
+**Modes (`mode`)**:
+- **Standard (`standard`)**: each series renders an independent continuous filled region down to the zero baseline, with customizable linear gradient fade (`fillType: "gradient"`) or solid color (`fillType: "solid"`).
+- **Stacked (`stacked`)**: series values stack cumulatively on top of one another along time, showing total volume, energy load, or network throughput ($\sum Y_i$).
+- **100% Stacked (`stacked100`)**: stacks normalize to 100% relative percentage over time, showing shifting proportions across components or power sources.
+
+**Engine Capabilities**:
+- Zero-GC Float64 time-series ring buffer (`TimeSeriesRingBuffer`) capable of maintaining 1,000,000+ points without frame drops.
+- Interactive time ruler, zoom & pan gestures, time window selector (`"1h"`, `"24h"`, `"7d"`), and live follower.
+- Multi-series inspector, hover crosshair, and rich tooltip showing series values and cumulative stack total.
+
+**Logic Targeting (`target: true`)**:
+- Each series has its own Update node and actions: `appendPoints`, `replacePoints`, `clearPoints`, `show`, `hide`.
+- Chart-level action: `setChartData({ series: { s1: [...], s2: [...] } })` or direct array `[{ time, s1, s2 }, ...]`.
+- Export: CSV, Excel (`.xlsx`), and 2× sharp PNG.
+
+#### Area Chart Function Node Examples
+
+##### 1. Direct Time-Series Multi-Data Payload
+```js
+// Sets historical points for multiple series at once
+const now = Date.now();
+const H = 3600000;
+
+msg.payload = {
+    series: {
+        "solar": [
+            { x: now - 3 * H, y: 120 },
+            { x: now - 2 * H, y: 340 },
+            { x: now - 1 * H, y: 480 },
+            { x: now, y: 390 }
+        ],
+        "grid": [
+            { x: now - 3 * H, y: 250 },
+            { x: now - 2 * H, y: 180 },
+            { x: now - 1 * H, y: 90 },
+            { x: now, y: 140 }
+        ],
+        "battery": [
+            { x: now - 3 * H, y: 50 },
+            { x: now - 2 * H, y: 80 },
+            { x: now - 1 * H, y: 110 },
+            { x: now, y: 60 }
+        ]
+    }
+};
+return msg;
+```
+
+##### 2. Streaming Real-Time Points (Live Append)
+```js
+// Appends a single new timestamp point to all series
+const timestamp = Date.now();
+
+msg.payload = [
+    { seriesId: "solar", x: timestamp, y: Math.floor(300 + Math.random() * 50) },
+    { seriesId: "grid", x: timestamp, y: Math.floor(150 + Math.random() * 30) },
+    { seriesId: "battery", x: timestamp, y: Math.floor(80 + Math.random() * 20) }
+];
+return msg;
+```
+
+---
+
+### Sparkline (`nexa-ui-sparkline`)
+
+Compact micro-trend chart designed for space-constrained interfaces: KPI stat cards, table rows, equipment summary tiles, and status headers.
+
+**Types (`type`)**:
+- **Area (`area`)**: smooth filled micro-area trend with soft gradient baseline.
+- **Line (`line`)**: sharp, minimalist trend stroke.
+- **Bar (`bar`)**: micro vertical columns for discrete intervals or periodic deltas.
+
+**Smart Visual Highlights**:
+- **Dynamic Trend Coloring (`trendColor: true`)**: automatically styles the sparkline with success green (`#10b981`) if the overall trend is ascending ($Y_{last} \ge Y_{first}$) or danger red (`#ef4444`) if descending.
+- **End Value Glow Dot (`showLastDot: true`)**: glowing accent marker at the latest point.
+- **Min / Max Peak Markers (`showMinMax: true`)**: subtle indicator dots on the lowest and highest values in the sequence.
+- **Micro Tooltip**: lightweight floating tooltip showing point value and index on hover.
+
+**Logic Actions**:
+- `setData({ data: [10, 20, 15, 30] })` or direct array `msg.payload = [10, 15, 22, 18, 35]`.
+- `appendPoint({ value })`.
+- `clear()`.
+
+#### Sparkline Function Node Examples
+
+##### 1. Direct Numeric Array
+```js
+// Feeds a sequence of recent sensor readings or hourly trend
+msg.payload = [23.1, 24.5, 23.8, 26.2, 28.0, 27.4, 29.8, 31.2];
+return msg;
+```
+
+##### 2. Streaming Live Point Append
+```js
+// Appends newest reading to live sparkline buffer (maintains sliding window)
+msg.payload = {
+    action: "appendPoint",
+    value: 28.5 + (Math.random() * 2 - 1)
+};
+return msg;
+```
+
+---
+
+### Histogram (`nexa-ui-histogram`)
+
+Distribution and frequency analysis chart for quality control (QC), manufacturing tolerances, and Six Sigma Statistical Process Control (SPC).
+
+**Binning Modes (`binMode`)**:
+- **Automatic (`auto`)**: Automatically chooses the optimal bin interval width using the **Freedman-Diaconis rule** ($h = 2 \cdot \text{IQR} \cdot N^{-1/3}$) with fallback to Sturges' formula.
+- **Fixed Count (`count`)**: Divides the data range into an exact number of boxes (`binCount: 15`).
+- **Fixed Width (`width`)**: Segments data into fixed interval widths (`binWidth: 5` unit intervals).
+- **Bounds**: Optional `binMin` and `binMax` limits.
+
+**Quality Control & Six Sigma Capabilities**:
+- **Normal Distribution Curve (Gaussian Bell Curve Overlay)**:
+  - `showNormalCurve: true`: Calculates the mean ($\mu$) and standard deviation ($\sigma$) of the sample and plots the theoretical Gaussian probability bell curve scaled to bin counts.
+- **Specification Limits (LSL, Target, USL)**:
+  - `lsl`: Lower Specification Limit (dashed red line).
+  - `target`: Target setpoint (solid/dashed green line).
+  - `usl`: Upper Specification Limit (dashed red line).
+  - `highlightOutOfSpec: true`: Bins outside the specification limits are automatically highlighted with danger color (`#ef4444`) to immediately isolate defects.
+- **Real-Time Capability Metrics ($C_p$ & $C_{pk}$)**:
+  - The stats bar automatically computes and displays:
+    - **$N$**: Total sample count.
+    - **Mean ($\mu$)** and **Std Dev ($\sigma$)**.
+    - **$C_p$**: Process capability potential ($(USL - LSL) / 6\sigma$).
+    - **$C_{pk}$**: Process capability index ($\min((USL - \mu)/3\sigma, (\mu - LSL)/3\sigma)$) with color badge (Green $\ge 1.33$, Amber $1.00 - 1.33$, Red $< 1.00$).
+
+**Multi-Series Comparison**:
+- Compare distributions across shifts ("Shift 1" vs "Shift 2") or equipment lines with semi-transparent overlapping bins.
+
+**Logic Actions & Events**:
+- **Actions**:
+  - `setData(rawNumericArray)`: Replaces data with raw numbers (`[23.1, 24.5, ...]`).
+  - `appendValue({ value })`: Appends single point to sliding sample buffer (sliding window).
+  - `setBinnedData([{ binStart, binEnd, count }, ...])`: Replaces bins with pre-aggregated SQL/backend intervals.
+  - `setLimits({ lsl, target, usl })`: Dynamically updates quality tolerance limits.
+  - `clear()`: Clears all data.
+  - `export({ format: "csv" | "xlsx" | "png" })`.
+- **Events**:
+  - **On Bin Click** `{ binStart, binEnd, count, percent, outOfSpec }`: Triggers drill-down inspections or table filters.
+  - **On Out of Spec** `{ value, lsl, usl, seriesId }`: Fires alarm when a defect point or bin is detected.
+
+#### Histogram Function Node Examples
+
+##### 1. Batch Product Weight / Dimension QC Test
+```js
+// Sends 50 random sample bottle weights around 500g target
+const samples = [];
+const mean = 500, std = 2.0;
+
+for (let i = 0; i < 60; i++) {
+    // Normal distribution sample
+    const u1 = Math.max(1e-6, Math.random());
+    const u2 = Math.random();
+    const z = Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2);
+    samples.push(Number((mean + z * std).toFixed(2)));
+}
+
+msg.payload = samples;
+return msg;
+```
+
+##### 2. Streaming Real-Time Sensor Value
+```js
+// Pushes single temperature reading into sliding buffer (auto re-bins)
+msg.payload = {
+    action: "appendValue",
+    value: Number((24.0 + (Math.random() * 4 - 2)).toFixed(2))
+};
+return msg;
+```
+
+##### 3. Pre-Binned SQL / Backend Result
+```js
+// Directly feeds pre-calculated distribution buckets from SQL GROUP BY
+msg.payload = [
+    { binStart: 0, binEnd: 10, count: 5 },
+    { binStart: 10, binEnd: 20, count: 28 },
+    { binStart: 20, binEnd: 30, count: 85 },
+    { binStart: 30, binEnd: 40, count: 140 },
+    { binStart: 40, binEnd: 50, count: 92 },
+    { binStart: 50, binEnd: 60, count: 22 },
+    { binStart: 60, binEnd: 70, count: 3 }
+];
+return msg;
+```
+
+##### 4. Handling Bin Click for Defect Drilldown
+Connect a Function Node to the `On Bin Click` event of `nexa-ui-histogram`:
+```js
+// Payload: { binStart, binEnd, count, percent, outOfSpec }
+const bin = msg.payload;
+
+if (bin.outOfSpec) {
+    node.warn(`Alert: Operator clicked Out-of-Spec bin [${bin.binStart} - ${bin.binEnd}] containing ${bin.count} rejects!`);
+    // Filter defect log table
+    msg.filter = { min: bin.binStart, max: bin.binEnd, status: "REJECT" };
+    return msg;
+}
+```
+
+---
 
 ## The look
 
