@@ -384,6 +384,59 @@ withHarness({
         assert.strictEqual(badge, 'UTC', 'displays UTC badge');
     });
 
+    await ok('Date Time: a Milliseconds unit (shown once Seconds is on), exact to the ms, ISO keeps it', async () => {
+        await mount('dt-ms', 'datetime', { inputValue: '2026-09-30T10:15:30.123Z', timezoneMode: 'utc', unitPreset: 'datetime-seconds', showMs: true, format: 'YYYY-MM-DD HH:mm:ss.SSS' }, { width: 280, height: 40 });
+        assert.strictEqual(await js(`${q('dt-ms', '.input-field')}.value`), '2026-09-30 10:15:30.123', 'the .SSS token');
+        // showMs with no seconds shown: no ms field (it would have nothing to attach to)
+        await mount('dt-ms2', 'datetime', { inputValue: '2026-09-30T10:15:30.123Z', timezoneMode: 'utc', unitPreset: 'datetime', showMs: true }, { width: 280, height: 40 });
+        await js(`NexaTest.wc('dt-ms2').togglePopover()`); await settle();
+        assert.strictEqual(await js(`!!${root('dt-ms2')}.querySelector('.time-input.ms')`), false, 'no Seconds shown: Milliseconds does not render');
+        // edit the ms field: On Change carries the exact value, ISO keeps 3 digits
+        await mount('dt-ms3', 'datetime', { inputValue: '2026-09-30T10:15:30.000Z', timezoneMode: 'utc', unitPreset: 'datetime-seconds', showMs: true }, { width: 280, height: 40 });
+        await js(`NexaTest.wc('dt-ms3').togglePopover()`); await settle();
+        await js(`(function () { var i = ${root('dt-ms3')}.querySelector('.time-input.ms'); i.value = '45'; i.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`); await settle();
+        const ev = await js(`NexaTest.item('dt-ms3').events.filter(function (e) { return e[0] === 'change'; }).pop()`);
+        assert.ok(/\.045Z$/.test(ev[1].iso), 'the ISO ends in .045Z: ' + ev[1].iso);
+        await js(`['dt-ms2', 'dt-ms3'].forEach(function (n) { NexaTest.wc(n).closePopover(); }) || true`); await settle();   // nothing left over the next tests
+    });
+
+    await ok('Date Range: a day click always spans the whole day to the millisecond (…00:00:00.000 to …23:59:59.999), whichever day is clicked first', async () => {
+        await mount('dr-day', 'daterange', { timezoneMode: 'utc' }, { width: 340, height: 40 });
+        // click day 10 then day 5 (backwards): day 5 becomes the start, day 10 the end — each the full day
+        const r = await js(`(function () { var w = NexaTest.wc('dr-day'); w._pickDay(2026, 9, 10); w._pickDay(2026, 9, 5); return { s: w._tempStart.toISOString(), e: w._tempEnd.toISOString() }; })()`);
+        assert.strictEqual(r.s, '2026-10-05T00:00:00.000Z');
+        assert.strictEqual(r.e, '2026-10-10T23:59:59.999Z');
+    });
+
+    await ok('Date Range: time granularity — off / minutes / seconds / milliseconds, the ms input, the display format', async () => {
+        await mount('dr-gran', 'daterange', { timezoneMode: 'utc', timeGranularity: 'milliseconds', defaultStart: '2026-09-01T08:15:30.250Z', defaultEnd: '2026-09-03T18:00:00.000Z' }, { width: 340, height: 40 });
+        assert.strictEqual(await js(`${root('dr-gran')}.querySelectorAll('.range-display-segment')[0].textContent.trim()`), '2026-09-01 08:15:30.250', 'the default format includes seconds and ms');
+        await js(`NexaTest.wc('dr-gran').togglePopover()`); await settle();
+        const msInputs = await js(`${root('dr-gran')}.querySelectorAll('.time-input.ms').length`);
+        assert.strictEqual(msInputs, 2, 'a millisecond input for start and end');
+        await js(`(function () { var i = ${root('dr-gran')}.querySelectorAll('.time-input.ms')[1]; i.value = '7'; i.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`); await settle();
+        const ev = await js(`NexaTest.item('dr-gran').events.filter(function (e) { return e[0] === 'change'; }).pop()`);
+        assert.ok(ev && /T18:00:00\.007Z$/.test(ev[1].endIso) && ev[1].end === ev[1].endIso, 'On Change: the end keeps the edited millisecond (ISO output): ' + (ev && ev[1].endIso));
+
+        await mount('dr-sec', 'daterange', { timezoneMode: 'utc', timeGranularity: 'seconds' }, { width: 340, height: 40 });
+        await js(`NexaTest.wc('dr-sec').togglePopover()`); await settle();
+        assert.strictEqual(await js(`${root('dr-sec')}.querySelectorAll('.time-input.ms').length`), 0, 'seconds granularity: no ms input');
+        assert.ok(await js(`${root('dr-sec')}.querySelectorAll('.time-group .time-input').length`) >= 6, 'h, m, s for both start and end');
+
+        await mount('dr-off', 'daterange', { timezoneMode: 'utc' }, { width: 340, height: 40 });
+        await js(`NexaTest.wc('dr-off').togglePopover()`); await settle();
+        assert.strictEqual(await js(`!!${root('dr-off')}.querySelector('.time-strip')`), false, 'off (the default): no time strip');
+        await js(`['dr-gran', 'dr-sec', 'dr-off'].forEach(function (n) { NexaTest.wc(n).closePopover(); }) || true`); await settle();
+    });
+
+    await ok('Date Range: a v1 save (enableTime: true) becomes minutes granularity; ISO output always carries exact milliseconds', async () => {
+        const m = await js(`NEXA.getComponent("${P}daterange").migrateProps({ __v: 1, enableTime: true })`);
+        assert.deepStrictEqual([m.timeGranularity, 'enableTime' in m], ['minutes', false]);
+        await mount('dr-iso', 'daterange', { timezoneMode: 'utc', defaultStart: '2026-09-01T00:00:00.000Z', defaultEnd: 1727999999123 }, { width: 340, height: 40 });
+        const w = await js(`NexaTest.wc('dr-iso')._formatOutput(NexaTest.wc('dr-iso').endDate)`);
+        assert.strictEqual(w, '2024-10-03T23:59:59.123Z', 'a millisecond-precision input stays exact in the ISO output');
+    });
+
     await ok('Pagination: IBM Carbon pagination bar with items per page, item range, and page navigation', async () => {
         await mount('pag-test', 'pagination', {
             total: 120,
@@ -422,7 +475,8 @@ withHarness({
     });
 
     // ---- Line Chart (v3): series are Logic targets ----------------------------------------------
-    const S = (id, extra) => Object.assign({ id, name: id.toUpperCase() }, extra || {});
+    // a series (numbers as 1,234.5 whatever the machine's language: separators are per series)
+    const S = (id, extra) => Object.assign({ id, name: id.toUpperCase(), separators: 'dot' }, extra || {});
     const series = (name) => `NexaTest.wc(${JSON.stringify(name)})`;
     const counts = (name) => js(`(function () { var w = ${series(name)}; return w.seriesList().map(function (s) { return w._state(s).buf.count; }); })()`);
     const pixels = (name) => js(`(function () { var c = ${root(name)}.querySelector("canvas"), d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data, n = 0; for (var i = 3; i < d.length; i += 4) if (d[i]) n++; return n; })()`);
@@ -439,7 +493,7 @@ withHarness({
         const tip = await js(`${root('chart-test')}.querySelector('.tooltip').textContent`);
         assert.ok(/Speed: 12\d rpm/.test(tip), 'tooltip: ' + tip);
         const rows = await js(`(async function () { var insp = NexaTest.inspector("${P}line-chart", {}); await new Promise(function (r) { setTimeout(r, 250); }); return NexaTest.rows(insp.box).map(function (r) { return r.label; }); })()`);
-        for (const l of ['Series', 'Time range', 'Time ruler', 'Zoom in to at most', 'Export button on the chart']) assert.ok(rows.includes(l), 'inspector: ' + l);
+        for (const l of ['Series', 'Time range', 'Time ruler', 'Zoom in to at most', 'Export menu on the chart (⋮)', 'What it exports']) assert.ok(rows.includes(l), 'inspector: ' + l);
         // the ruler (two rows) says it can be dragged, and moves the time (the inspector moved the page: measure again)
         Object.assign(b, await js(`(function () { var e = ${plot}; e.scrollIntoView({ block: "center" }); var r = e.getBoundingClientRect(); return { x: Math.round(r.left + 200), bottom: Math.round(r.bottom - 14) }; })()`));
         await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: b.x + 50, y: b.bottom });
@@ -528,7 +582,7 @@ withHarness({
         await mount('lc-multi', 'line-chart', {
             series: [S('a', { name: 'Temp', unit: '°C', live: wave(0, 20), fill: 'gradient' }), S('b', { name: 'Power', unit: 'kW', axis: 'right', variant: 'step', notation: 'si', live: wave(1, 1500) }),
                 S('c', { name: 'Flow', variant: 'smooth', dash: 'dashed', live: wave(2, 40) })],
-            legendValue: 'last', separators: 'dot', thresholds: [{ value: 25, label: 'High' }]
+            legendValue: 'last', thresholds: [{ value: 25, label: 'High' }]
         }, { width: 600, height: 300 });
         assert.deepStrictEqual(await counts('lc-multi'), [60, 60, 60]);
         const legend = await js(`Array.from(${root('lc-multi')}.querySelectorAll(".lg-item")).map(function (b) { return b.querySelector(".lg-name").textContent + "=" + b.querySelector(".lg-val").textContent; })`);
@@ -552,7 +606,6 @@ withHarness({
 
     await ok('Line Chart: a tooltip expression ({value}, {delta}, another series [series]{id}, fmt())', async () => {
         await mount('lc-expr', 'line-chart', {
-            separators: 'dot',
             series: [S('p', { name: 'Power', live: [{ x: T0, y: 1000 }, { x: T0 + 1000, y: 1500 }], tooltipMode: 'expression', expression: '{name} ": " fmt({value}, "compact") " (Δ " {delta} "), eff " round({value} / [series]{f} * 100, 1) "%"' }),
                 S('f', { name: 'Flow', live: [{ x: T0, y: 2000 }, { x: T0 + 1000, y: 3000 }] })]
         }, { width: 500, height: 260 });
@@ -629,7 +682,7 @@ withHarness({
     });
 
     await ok('Line Chart: Export — CSV (a column per series) and a real .xlsx (a zip)', async () => {
-        await mount('lc-exp', 'line-chart', { series: [S('a', { name: 'A', unit: 'kW', live: [{ x: T0, y: 1.5 }, { x: T0 + 1000, y: 2 }] }), S('b', { name: 'B', live: [{ x: T0, y: 7 }] })], separators: 'dot' }, { width: 500, height: 260, design: true });
+        await mount('lc-exp', 'line-chart', { series: [S('a', { name: 'A', unit: 'kW', live: [{ x: T0, y: 1.5 }, { x: T0 + 1000, y: 2 }] }), S('b', { name: 'B', live: [{ x: T0, y: 7 }] })] }, { width: 500, height: 260, design: true });
         const r = await js(`(async function () {
             var w = ${series('lc-exp')};
             w.draw();
@@ -644,6 +697,116 @@ withHarness({
         assert.ok(/,2,$/.test(r.lines[2]), 'B has no point then: ' + r.lines[2]);
         assert.strictEqual(r.xlsx, 'PK', 'an .xlsx is a zip');
         assert.ok(/^chart-\d{8}-\d{4}\.xlsx$/.test(r.name), r.name);
+    });
+
+    await ok('Line Chart: export what is shown (zoom / pan), the shown series only, annotations in their own column / row, Excel colours values past a limit, an Info sheet', async () => {
+        await mount('lc-x', 'line-chart', {
+            series: [S('a', { name: 'Temp', unit: '°C', live: [{ x: T0, y: 10 }, { x: T0 + 1000, y: 30 }, { x: T0 + 2000, y: 5 }, { x: T0 + 3000, y: 20 }] }),
+                S('b', { name: 'Hidden', live: [{ x: T0, y: 1 }] })],
+            thresholds: [{ value: 25, kind: 'upper', color: '#ef4444', label: 'High' }, { value: 8, kind: 'lower', color: '#3b82f6', label: 'Low' }, { value: 15, kind: 'line' }],
+            annotations: [{ label: 'Batch start', time: T0 + 500, description: 'B-104' }, { label: 'Out of view', time: T0 + 9000 }],
+            exportTitle: 'Reactor 1'
+        }, { width: 500, height: 260, design: true });
+        const r = await js(`(async function () {
+            var w = ${series('lc-x')};
+            w.hide(null, { list: "series", id: "b" });
+            w.setRange({ from: ${T0}, to: ${T0 + 2000} });
+            w.exportData({ format: "csv" });
+            var csv = (await w._lastExport.blob.text()).replace(/^\\ufeff/, "").split("\\r\\n");
+            w.exportData({ format: "xlsx" });
+            var xl = new TextDecoder().decode(new Uint8Array(await w._lastExport.blob.arrayBuffer()));
+            w.exportData({ format: "csv", range: "all", annotations: false });
+            var all = (await w._lastExport.blob.text()).replace(/^\\ufeff/, "").split("\\r\\n");
+            return { csv: csv, xl: xl, all: all };
+        })()`);
+        assert.strictEqual(r.csv[0], '"Time","Temp (°C)","Annotation"', 'the hidden series is left out; an Annotation column');
+        assert.strictEqual(r.csv.length, 4 + 1, 'zoomed to T0…T0+2s: 3 points + the annotation row (+ the header)');
+        assert.ok(/,,"Batch start · B-104"$/.test(r.csv[2]), 'the annotation: its own row at its exact time: ' + r.csv[2]);
+        assert.ok(!r.csv.some((l) => /Out of view/.test(l)), 'an annotation outside the time shown: not exported');
+        // Excel: 30 past the upper limit (red), 5 past the lower one (blue), 10 / 20 plain; an Info sheet
+        const cell = (v) => { const m = new RegExp('<c r="B\\d+"( s="(\\d+)")?><v>' + v + '</v>').exec(r.xl); return m ? Number(m[2] || 0) : -1; };
+        assert.ok(cell(30) >= 3 && cell(5) >= 3 && cell(30) !== cell(5), 'values past a limit: a fill each (' + cell(30) + ', ' + cell(5) + ')');
+        assert.strictEqual(cell(10), 0, 'a value inside the limits: plain');
+        assert.ok(/<sheet name="Info"/.test(r.xl) && /Reactor 1/.test(r.xl) && /High: ≥ 25/.test(r.xl), 'the Info sheet: the title, the limits');
+        assert.ok(/<numFmt numFmtId="164" formatCode="yyyy-mm-dd hh:mm:ss.000"/.test(r.xl), 'times to the millisecond');
+        // everything it holds, annotations off: 4 points, no Annotation column, still no hidden series
+        assert.strictEqual(r.all[0], '"Time","Temp (°C)"');
+        assert.strictEqual(r.all.length, 4 + 1);
+    });
+
+    await ok('Line Chart: PNG — 2× sharp, a title and the time span above, the legend below; what is shown or everything', async () => {
+        await mount('lc-png', 'line-chart', { series: [S('a', { name: 'Temp', live: [{ x: T0, y: 1 }, { x: T0 + 60000, y: 5 }] }), S('h', { name: 'Gone', live: [{ x: T0, y: 3 }] })], exportTitle: 'Line 1' }, { width: 480, height: 240 });
+        const r = await js(`(async function () {
+            var w = ${series('lc-png')}; w.draw();
+            w.hide(null, { list: "series", id: "h" });
+            var p = w.renderRoot.querySelector(".plot"), lw = p.clientWidth, lh = p.clientHeight;
+            var a = await w.exportPNG();
+            w.setRange({ from: ${T0 + 10000}, to: ${T0 + 20000} });
+            var b = await w.exportData({ format: "png", range: "all" });
+            var shown = w._scale.vMinX;
+            return { lw: lw, lh: lh, a: [a.width, a.height], b: [b.width, b.height], name: a.name, shown: shown };
+        })()`);
+        assert.strictEqual(r.a[0], r.lw * 2, '2× the chart width');
+        assert.ok(r.a[1] > r.lh * 2, 'taller than the chart: the title, the span, the legend');
+        assert.ok(/\.png$/.test(r.name));
+        assert.strictEqual(r.shown, T0 + 10000, 'the screen keeps its own zoom after an export');
+    });
+
+    await ok('Line Chart: zero in the middle (− and +); a threshold kind', async () => {
+        await mount('lc-zc', 'line-chart', { series: [S('a', { zeroCenter: true, live: [{ x: T0, y: -3 }, { x: T0 + 1000, y: 10 }] }), S('b', { live: [{ x: T0, y: 2 }, { x: T0 + 1000, y: 4 }] })] }, { width: 480, height: 240 });
+        const r = await js(`(function () { var w = ${series('lc-zc')}; w.draw(); var l = w.seriesList(); return [w._scale.yr[l[0]._key], w._scale.yr[l[1]._key]]; })()`);
+        assert.strictEqual(r[0].lo, -r[0].hi, 'symmetric around 0: ' + JSON.stringify(r[0]));
+        assert.ok(r[0].hi >= 10);
+        assert.ok(r[1].lo > 0, 'another series: its own range');
+        const kinds = await js(`NEXA.getComponent("${P}line-chart").nexa.props.thresholds.item.fields.kind.options.map(function (o) { return o.value; })`);
+        assert.deepStrictEqual(kinds, ['line', 'upper', 'lower']);
+    });
+
+    await ok('Line Chart: Export menu — 3-dots panel menu (CSV, Excel, PNG) and exportFilename expression', async () => {
+        await mount('lc-menu', 'line-chart', {
+            title: 'Motor Telemetry',
+            exportFilename: '{title}-{format}',
+            series: [S('m1', { name: 'RPM', live: [{ x: T0, y: 1500 }] })]
+        }, { width: 500, height: 260, design: true });
+
+        // 3-dots button exists in corner
+        assert.strictEqual(await js(`!!${root('lc-menu')}.querySelector('.btn-menu')`), true);
+        assert.strictEqual(await js(`!!${root('lc-menu')}.querySelector('.menu-dropdown')`), false, 'dropdown closed initially');
+
+        // Click 3-dots button -> dropdown opens with CSV, Excel, PNG
+        await js(`${root('lc-menu')}.querySelector('.btn-menu').click()`);
+        await settle();
+        assert.strictEqual(await js(`!!${root('lc-menu')}.querySelector('.menu-dropdown')`), true, 'dropdown opened');
+        const items = await js(`Array.from(${root('lc-menu')}.querySelectorAll('.menu-item')).map(function (el) { return el.textContent.trim(); })`);
+        assert.deepStrictEqual(items, ['⤓ Download CSV', '⤓ Download Excel', '📷 Download PNG']);
+
+        // Test exportData with exportFilename
+        const csvRes = await js(`(async function () {
+            var w = ${series('lc-menu')};
+            w.exportData({ format: "csv" });
+            return w._lastExport.name;
+        })()`);
+        assert.strictEqual(csvRes, 'Motor Telemetry-csv.csv', '{title}: a token of the chart, never a page variable named title');
+
+        const xlsxRes = await js(`(async function () {
+            var w = ${series('lc-menu')};
+            w.exportData({ format: "xlsx" });
+            return w._lastExport.name;
+        })()`);
+        assert.strictEqual(xlsxRes, 'Motor Telemetry-xlsx.xlsx');
+
+        // Test exportPNG
+        const pngRes = await js(`(async function () {
+            var w = ${series('lc-menu')};
+            await w.exportPNG();
+            var head = new Uint8Array(await w._lastExport.blob.slice(0, 4).arrayBuffer());
+            return {
+                name: w._lastExport.name,
+                sig: Array.from(head)
+            };
+        })()`);
+        assert.strictEqual(pngRes.name, 'Motor Telemetry-png.png');
+        assert.deepStrictEqual(pngRes.sig, [137, 80, 78, 71], 'PNG magic bytes');
     });
 
     await ok('Line Chart: v1 (flat props) and v2 (Data / Point) charts become v3 (a series\' Live value)', async () => {
@@ -665,6 +828,234 @@ withHarness({
         assert.strictEqual(await js(`(function () { var w = ${series('lc-gap')}; w.draw(); return w._runs(w._state(w.seriesList()[0]), 5000).length / 2; })()`), 2);
         await mount('lc-design', 'line-chart', { series: [S('a'), S('b')] }, { width: 400, height: 200, design: true });
         assert.deepStrictEqual(await js(`(function () { var w = ${series('lc-design')}; return w.seriesList().map(function (s) { var st = w._state(s); return st.demo && st.buf.count > 0; }); })()`), [true, true]);
+    });
+
+    await ok('Line Chart: time axis settings — showTime, showDate, dateFormat and tickDensity', async () => {
+        await mount('lc-tax', 'line-chart', { series: [S('a', { live: [{ x: T0, y: 1 }] })], showTime: true, showDate: false }, { width: 400, height: 200 });
+        const rh1 = await js(`(function () { var w = ${series('lc-tax')}; return w._rulerHeight(); })()`);
+        assert.strictEqual(rh1, 28, 'only the time row: ticks 10 + a row 11 + the grip 6 (28 px)');
+        await js(`NexaTest.setProps("lc-tax", { showTime: true, showDate: true, dateFormat: "iso" })`); await settle();
+        const rh2 = await js(`(function () { var w = ${series('lc-tax')}; return w._rulerHeight(); })()`);
+        assert.strictEqual(rh2, 40, 'both rows: ticks 10 + two rows 24 + the grip 6 (40 px)');
+        const dt = await js(`(function () { var w = ${series('lc-tax')}; return w.fmtDate(${T0}); })()`);
+        assert.ok(/^\d{4}-\d\d-\d\d$/.test(dt), 'ISO format YYYY-MM-DD: ' + dt);
+        // with a date row, a tick's label never repeats the date; a date that does not fit gets shorter
+        const tk = await js(`(function () { var w = ${series('lc-tax')}, t = ${T0}; return [w.fmtTick(t, 6 * 3600000, false), w.fmtTick(t, 6 * 3600000, true), w.fmtDateShort(t)]; })()`);
+        assert.ok(/ \d\d:\d\d$/.test(tk[0]) && /^\d+ \w{3} /.test(tk[0]), 'no date row: the day in the label: ' + tk[0]);
+        assert.ok(/^\d\d:\d\d$/.test(tk[1]), 'a date row: the time only: ' + tk[1]);
+        assert.ok(/^\d\d-\d\d$/.test(tk[2]), 'the short ISO date: ' + tk[2]);
+        const steps = await js(`(function () {
+            var w = ${series('lc-tax')};
+            var sNorm = w._timeStep(86400000, 600);
+            w.p.tickDensity = "loose";
+            var sLoose = w._timeStep(86400000, 600);
+            w.p.tickDensity = "dense";
+            var sDense = w._timeStep(86400000, 600);
+            return { sNorm: sNorm, sLoose: sLoose, sDense: sDense };
+        })()`);
+        assert.ok(steps.sLoose >= steps.sNorm, 'loose step >= normal step');
+        assert.ok(steps.sNorm >= steps.sDense, 'normal step >= dense step');
+        await js(`NexaTest.setProps("lc-tax", { rulerHeight: 20 })`); await settle();
+        const rhPct = await js(`(function () { var w = ${series('lc-tax')}; return w._rulerHeight(200); })()`);
+        assert.strictEqual(rhPct, 40, '20% of 200px = 40px');
+
+        // verify across other ruler types (axis, comb, navigator)
+        await js(`NexaTest.setProps("lc-tax", { ruler: "axis", rulerHeight: 20 })`); await settle();
+        const rhAxis = await js(`(function () { var w = ${series('lc-tax')}; return w._rulerHeight(200); })()`);
+        assert.strictEqual(rhAxis, 40, 'axis rulerHeight 20% of 200px = 40px');
+
+        await js(`NexaTest.setProps("lc-tax", { ruler: "axis", showTime: false, showDate: false })`); await settle();
+        const rhAxisOff = await js(`(function () { var w = ${series('lc-tax')}; return w._rulerHeight(200); })()`);
+        assert.strictEqual(rhAxisOff, 0, 'axis with showTime & showDate false = 0px');
+
+        await js(`NexaTest.setProps("lc-tax", { ruler: "comb", rulerHeight: 20, showTime: true, showDate: true })`); await settle();
+        const rhComb = await js(`(function () { var w = ${series('lc-tax')}; return w._rulerHeight(200); })()`);
+        assert.strictEqual(rhComb, 40, 'comb rulerHeight 20% of 200px = 40px');
+
+        await js(`NexaTest.setProps("lc-tax", { ruler: "navigator", rulerHeight: 30, showTime: true, showDate: true })`); await settle();
+        const rhNav = await js(`(function () {
+            var w = ${series('lc-tax')};
+            var m = w.getPlotMetrics(400, 300);
+            var g = w._navGeom(m);
+            return { rh: w._rulerHeight(300), navH: g ? g.h : 0 };
+        })()`);
+        assert.strictEqual(rhNav.rh, 90, 'navigator rulerHeight 30% of 300px = 90px');
+        assert.ok(rhNav.navH > 38, 'navigator dynamic height scaled beyond default: ' + rhNav.navH);
+    });
+
+    await ok('Line Chart: annotations (event markers) and line interpolation (step, smooth, linear)', async () => {
+        await mount('lc-ann', 'line-chart', {
+            series: [S('s1', { live: [{ x: T0, y: 10 }, { x: T0 + 5000, y: 20 }] })],
+            annotations: [
+                { time: T0 + 1000, label: 'Shift 1', color: '#10b981', description: 'Morning crew' }
+            ]
+        }, { width: 500, height: 260 });
+
+        // 1. Initial annotation from props
+        const count0 = await js(`${series('lc-ann')}._allAnnotations().length`);
+        assert.strictEqual(count0, 1);
+
+        // 2. addAnnotation with object { time, label, color }
+        await js(`${series('lc-ann')}.addAnnotation({ time: ${T0 + 3000}, label: 'Trip', color: '#ef4444' })`);
+        await settle();
+        const count1 = await js(`${series('lc-ann')}._allAnnotations().length`);
+        assert.strictEqual(count1, 2);
+
+        // 3. addAnnotation with second object { time, label, color }
+        await js(`${series('lc-ann')}.addAnnotation({ time: ${T0 + 4000}, label: 'Restart', color: '#3b82f6' })`);
+        await settle();
+        const count2 = await js(`${series('lc-ann')}._allAnnotations().length`);
+        assert.strictEqual(count2, 3);
+
+        // 4. Check drawn annotation hits
+        const hits = await js(`${series('lc-ann')}._annotationHits.map(function (h) { return h.label; })`);
+        assert.deepStrictEqual(hits, ['Shift 1', 'Trip', 'Restart']);
+
+        // 5. Hover over 'Trip' badge and click it
+        await js(`(function () { var el = ${root('lc-ann')}.querySelector(".plot"); el.scrollIntoView({ block: "center" }); })()`);
+        await settle();
+        const tripPos = await js(`(function () {
+            var w = ${series('lc-ann')};
+            var h = w._annotationHits.find(function (x) { return x.label === "Trip"; });
+            var el = ${root('lc-ann')}.querySelector(".plot");
+            var r = el.getBoundingClientRect();
+            return { x: Math.round(r.left + h.box.x + h.box.w / 2), y: Math.round(r.top + h.box.y + h.box.h / 2) };
+        })()`);
+        await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: tripPos.x, y: tripPos.y });
+        await settle();
+        const isHovered = await js(`${series('lc-ann')}._hoverAnnotation && ${series('lc-ann')}._hoverAnnotation.label`);
+        assert.strictEqual(isHovered, 'Trip');
+        const tipText = await js(`${root('lc-ann')}.querySelector(".tooltip .tooltip-text").textContent`);
+        assert.strictEqual(tipText, 'Trip');
+
+        await send('Input.dispatchMouseEvent', { type: 'mousePressed', button: 'left', buttons: 1, clickCount: 1, x: tripPos.x, y: tripPos.y });
+        await send('Input.dispatchMouseEvent', { type: 'mouseReleased', button: 'left', buttons: 0, clickCount: 1, x: tripPos.x, y: tripPos.y });
+        await settle();
+        const annEv = await js(`NexaTest.item("lc-ann").events.filter(function (e) { return e[0] === "annotationClick"; }).pop()`);
+        assert.ok(annEv, 'annotationClick event fired');
+        assert.strictEqual(annEv[1].label, 'Trip');
+
+        // 6. setAnnotations and clearAnnotations
+        await js(`${series('lc-ann')}.setAnnotations([{ time: ${T0 + 2500}, label: 'Solo Batch', color: '#8b5cf6' }])`);
+        await settle();
+        const dynCount = await js(`${series('lc-ann')}._dynamicAnnotations.length`);
+        assert.strictEqual(dynCount, 1);
+        assert.strictEqual(await js(`${series('lc-ann')}._dynamicAnnotations[0].label`), 'Solo Batch');
+
+        await js(`${series('lc-ann')}.clearAnnotations()`);
+        await settle();
+        assert.strictEqual(await js(`${series('lc-ann')}._dynamicAnnotations.length`), 0);
+
+        // 7. Line interpolation (step, smooth, defaultInterpolation)
+        await mount('lc-interp', 'line-chart', {
+            series: [
+                S('s-step', { interpolation: 'step', live: [{ x: T0, y: 0 }, { x: T0 + 1000, y: 1 }, { x: T0 + 2000, y: 0 }] }),
+                S('s-smooth', { interpolation: 'smooth', live: [{ x: T0, y: 5 }, { x: T0 + 1000, y: 10 }, { x: T0 + 2000, y: 5 }] }),
+                S('s-def', { live: [{ x: T0, y: 2 }] })
+            ],
+            defaultInterpolation: 'step'
+        }, { width: 400, height: 200 });
+        const interps = await js(`(function () {
+            var w = ${series('lc-interp')};
+            return w.seriesList().map(function (s) { return s.variant; });
+        })()`);
+        assert.deepStrictEqual(interps, ['step', 'smooth', 'step']);
+    });
+
+    await ok('Line Chart: every series its own Y axis; on each side in series order from the chart outwards; hidden axes; the gap', async () => {
+        const three = (order) => ({
+            series: order.map((k) => ({
+                temp: S('temp', { axis: 'left', min: 0, max: 100, unit: '°C', color: '#ef4444', live: [{ x: T0, y: 50 }, { x: T0 + 1000, y: 80 }] }),
+                curr: S('curr', { axis: 'left', min: 0, max: 50, unit: 'A', color: '#3b82f6', live: [{ x: T0, y: 25 }, { x: T0 + 1000, y: 40 }] }),
+                press: S('press', { axis: 'right', min: 0, max: 10, unit: 'bar', color: '#10b981', live: [{ x: T0, y: 5 }, { x: T0 + 1000, y: 8 }] }),
+                hid: S('hid', { axis: 'off', min: 0, max: 4, live: [{ x: T0, y: 2 }, { x: T0 + 1000, y: 3 }] })
+            })[k])
+        });
+        const info = (name) => js(`(function () {
+            var w = ${series(name)}; w.draw();
+            var sc = w._scale, L = sc.layout, by = function (id) { return w.seriesList().filter(function (s) { return s.id === id; })[0]._key; }, ids = ["temp", "curr", "press", "hid"].filter(function (id) { return w.seriesList().some(function (s) { return s.id === id; }); });
+            return { left: L.left.map(function (c) { return c.s.id; }), right: L.right.map(function (c) { return c.s.id; }),
+                widths: L.left.map(function (c) { return c.w; }), plotX: sc.m.plotX, gap: sc.m.axisGap,
+                mid: ids.map(function (id) { return Math.round(sc.toY({ temp: 50, curr: 25, press: 5, hid: 2 }[id], by(id))); }),
+                r: ids.map(function (id) { var r = sc.yr[by(id)]; return [r.lo, r.hi]; }) };
+        })()`);
+        await mount('lc-axes', 'line-chart', three(['temp', 'curr', 'press', 'hid']), { width: 600, height: 300 });
+        const a = await info('lc-axes');
+        assert.deepStrictEqual([a.left, a.right], [['temp', 'curr'], ['press']], 'a column per series; hidden: none');
+        assert.deepStrictEqual(a.r, [[0, 100], [0, 50], [0, 10], [0, 4]], 'each its own scale (a hidden axis too)');
+        assert.ok(a.mid.every((y) => y === a.mid[0]), 'each value at its own scale\'s middle: ' + a.mid);
+        assert.strictEqual(a.plotX, a.widths[0] + a.gap + a.widths[1] + 4, 'the columns side by side, measured from their labels');
+        // the series order is the order from the chart outwards
+        await mount('lc-axes2', 'line-chart', three(['curr', 'press', 'temp']), { width: 600, height: 300 });
+        assert.deepStrictEqual((await info('lc-axes2')).left, ['curr', 'temp']);
+        // the gap between the columns
+        await mount('lc-axes3', 'line-chart', Object.assign(three(['temp', 'curr']), { axisGap: 18 }), { width: 600, height: 300 });
+        assert.strictEqual((await info('lc-axes3')).plotX - a.plotX, 10, 'axisGap 18 instead of 8');
+
+        // separators / thousands per series
+        const formatted = await js(`(function () { var w = ${series('lc-axes')}; var s = Object.assign({}, w.seriesList()[0], { separators: "comma", thousands: true, decimals: "1" }); return w.fmtValue(s, 1234.5); })()`);
+        assert.strictEqual(formatted, '1.234,5 °C');
+    });
+
+    await ok('Line Chart: the series\' axis settings are one Axis section (Range, Numbers, Spine inside it); no chart-level axes; no scale / group', async () => {
+        const r = await js(`(async function () {
+            var f = NEXA.getComponent("${P}line-chart").nexa.props.series.item.fields;
+            var t = NexaTest.inspector("${P}line-chart", {});
+            await new Promise(function (r) { setTimeout(r, 150); });
+            await t.field("series#0.min");
+            var rows = NexaTest.rows(t.box).map(function (x) { return x.id; });
+            var labels = NexaTest.rows(t.box).map(function (x) { return x.label; });
+            t.destroy();
+            return { sec: [f.axis.section, f.unit.section, f.min.section, f.notation.section, f.axisLine.section], gone: ["axisScale", "axisGroup", "interpolation"].filter(function (k) { return k in f; }),
+                rows: rows.filter(function (id) { return /^series#0\\/Axis/.test(id); }), axesGroup: labels.indexOf("Axes") !== -1 };
+        })()`);
+        assert.deepStrictEqual(r.sec, ['Axis', 'Axis', 'Axis/Range', 'Axis/Numbers', 'Axis/Spine']);
+        assert.deepStrictEqual(r.gone, []);
+        assert.deepStrictEqual(r.rows, ['series#0/Axis', 'series#0/Axis/Range', 'series#0/Axis/Numbers', 'series#0/Axis/Spine'], 'the tree: Axis › Range / Numbers / Spine');
+        assert.strictEqual(r.axesGroup, false);
+    });
+
+    await ok('Line Chart: a threshold follows the scale of the series it names; that series (only) fires On Threshold Crossed', async () => {
+        await mount('lc-thr', 'line-chart', {
+            series: [S('a', { min: 0, max: 100, live: [{ x: T0, y: 1 }, { x: T0 + 1000, y: 2 }] }), S('b', { axis: 'right', min: 0, max: 10, live: [{ x: T0, y: 1 }, { x: T0 + 1000, y: 2 }] })],
+            thresholds: [{ value: 5, series: 'b', label: 'B high' }, { value: 50, label: 'A high' }]
+        }, { width: 500, height: 260 });
+        const ys = await js(`(function () { var w = ${series('lc-thr')}; w.draw(); var sc = w._scale, l = w.seriesList(); return [w._thresholdOf(w.p.thresholds[0]).id, w._thresholdOf(w.p.thresholds[1]).id, Math.round(sc.toY(5, l[1]._key)), Math.round(sc.toY(50, l[0]._key))]; })()`);
+        assert.deepStrictEqual(ys.slice(0, 2), ['b', 'a'], 'named, else the first series');
+        assert.strictEqual(ys[2], ys[3], '5 on the scale of B = 50 on the scale of A: both mid-height');
+        await js(`NexaTest.invoke("lc-thr", "appendPoints", { x: ${T0 + 2000}, y: 7 }, { list: "series", id: "b" })`);
+        await js(`NexaTest.invoke("lc-thr", "appendPoints", { x: ${T0 + 2000}, y: 7 }, { list: "series", id: "a" })`);
+        const ev = await js(`NexaTest.item("lc-thr").events.filter(function (e) { return e[0] === "thresholdCross"; }).map(function (e) { return e[2].id + ":" + e[1].threshold; })`);
+        assert.deepStrictEqual(ev, ['b:5'], 'b crossed 5 on its scale; a (7 < 50) did not');
+    });
+
+    await ok('Line Chart: v3 charts (chart-level axis settings, a scale / group, a threshold by side) become v4', async () => {
+        const p = await js(`JSON.stringify(NEXA.getComponent("${P}line-chart").migrateProps({ __v: 3, leftTitle: "Temp", leftMin: 0, rightSoftMax: 9, leftNotation: "compact", separators: "comma",
+            series: [{ id: "s1", axis: "left", axisScale: "independent", axisGroup: "g", notation: "axis" }, { id: "s2", axis: "right", notation: "engineering" }, { id: "s3", axis: "none" }],
+            thresholds: [{ value: 1, axis: "right" }, { value: 2, axis: "left" }] }))`);
+        const m = JSON.parse(p);
+        const [s1, s2, s3] = m.series;
+        assert.deepStrictEqual([s1.axisTitle, s1.min, s1.notation, s1.separators, 'axisScale' in s1, 'axisGroup' in s1], ['Temp', 0, 'compact', 'comma', false, false]);
+        assert.deepStrictEqual([s2.softMax, s2.notation, s3.axis], [9, 'si', 'off']);
+        assert.deepStrictEqual(m.thresholds.map((t) => t.series), ['s2', ''], 'the first series on its side');
+        assert.deepStrictEqual(Object.keys(m).filter((k) => /^(left|right)/.test(k) || k === 'separators'), []);
+    });
+
+    await ok('Line Chart: in a zoomed canvas (the editor) it draws at its layout size, the pointer in layout px', async () => {
+        const props = { series: [S('a', { axisTitle: 'temp', live: [{ x: T0, y: 1 }, { x: T0 + 60000, y: 9 }] }), S('b', { axisTitle: 'hum', live: [{ x: T0, y: 30 }, { x: T0 + 60000, y: 25 }] })], ruler: 'navigator' };
+        await mount('lc-z1', 'line-chart', props, { width: 600, height: 300 });
+        await mount('lc-z2', 'line-chart', props, { width: 600, height: 300 });
+        const r = await js(`(async function () {
+            var slot = NexaTest.item("lc-z2").el; slot.style.transform = "scale(0.5)"; slot.style.transformOrigin = "0 0";
+            await new Promise(function (r) { setTimeout(r, 100); });
+            var a = NexaTest.wc("lc-z1"), b = NexaTest.wc("lc-z2"); a.draw(); b.draw();
+            var rect = b.renderRoot.querySelector(".plot").getBoundingClientRect();
+            var L = b._local({ clientX: rect.left + 100, clientY: rect.top + 50 });
+            return { m1: a._scale.m, m2: b._scale.m, w: b.canvas.width / b.renderRoot.querySelector(".plot").clientWidth, dpr: b._lastDpr, px: L.px, py: L.py };
+        })()`);
+        assert.deepStrictEqual([r.m2.plotX, r.m2.plotW, r.m2.plotH], [r.m1.plotX, r.m1.plotW, r.m1.plotH], 'the same plot as unzoomed');
+        assert.ok(Math.abs(r.w - r.dpr) < 0.02, 'the backing store follows the zoom (sharp, not stretched)');
+        assert.deepStrictEqual([Math.round(r.px), Math.round(r.py)], [200, 100], 'a client px at 50 % is 2 layout px');
     });
 
     await ok('the inspector: every plain prop takes a binding (Static | Binding); colours and sizes take theme tokens (◆), a token shows as a chip', async () => {

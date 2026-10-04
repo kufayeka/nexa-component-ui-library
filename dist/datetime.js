@@ -112,6 +112,8 @@ function formatDateTemplate(date, format, isUtc) {
     const h = isUtc ? date.getUTCHours() : date.getHours();
     const mi = isUtc ? date.getUTCMinutes() : date.getMinutes();
     const s = isUtc ? date.getUTCSeconds() : date.getSeconds();
+    const ms = isUtc ? date.getUTCMilliseconds() : date.getMilliseconds();
+    const pad3 = (n) => String(n).padStart(3, "0");
 
     const h12 = h % 12 || 12;
     const ampmUpper = h >= 12 ? "PM" : "AM";
@@ -145,6 +147,7 @@ function formatDateTemplate(date, format, isUtc) {
         "m": String(mi),
         "ss": pad2(s),
         "s": String(s),
+        "SSS": pad3(ms),
         "A": ampmUpper,
         "a": ampmLower,
         "Z": tzOffset
@@ -245,6 +248,7 @@ const DATETIME_CSS = css`
         background: var(--bg-subtle); color: var(--fg); font: inherit; font-size: 13px; outline: none; padding: 0;
     }
     .time-input:focus { border-color: var(--ring); box-shadow: inset 0 0 0 1px var(--ring); }
+    .time-input.ms { width: 44px; }
     .time-sep { font-weight: 600; color: var(--fg-muted); }
 
     /* Popover footer actions */
@@ -287,10 +291,14 @@ export const dateTime = defineUI({
         showHours: { type: "boolean", default: true, group: "Granularity", label: "Hours (HH)" },
         showMinutes: { type: "boolean", default: true, group: "Granularity", label: "Minutes (mm)" },
         showSeconds: { type: "boolean", default: false, group: "Granularity", label: "Seconds (ss)" },
+        showMs: {
+            type: "boolean", default: false, group: "Granularity", label: "Milliseconds (SSS)",
+            help: "Down to the exact millisecond — for filtering historian data recorded at that resolution. Shown only once Seconds is on."
+        },
 
         format: {
             type: "string", default: "YYYY-MM-DD HH:mm:ss", group: "Format", label: "Display format template",
-            help: "Tokens: YYYY, YY, MMMM, MMM, MM, M, DD, D, HH, H, hh, h, mm, m, ss, s, A (AM/PM), Z (offset)"
+            help: "Tokens: YYYY, YY, MMMM, MMM, MM, M, DD, D, HH, H, hh, h, mm, m, ss, s, SSS (milliseconds), A (AM/PM), Z (offset)"
         },
         customRegex: {
             type: "string", default: "", group: "Format", label: "Parse regex (optional)",
@@ -382,19 +390,24 @@ export const dateTime = defineUI({
 
         get activeUnits() {
             const p = this.p;
+            let u;
             switch (p.unitPreset) {
-                case "date-only": return { y: true, mo: true, d: true, h: false, mi: false, s: false };
-                case "time-only": return { y: false, mo: false, d: false, h: true, mi: true, s: true };
-                case "year-month": return { y: true, mo: true, d: false, h: false, mi: false, s: false };
-                case "datetime-seconds": return { y: true, mo: true, d: true, h: true, mi: true, s: true };
+                case "date-only": u = { y: true, mo: true, d: true, h: false, mi: false, s: false }; break;
+                case "time-only": u = { y: false, mo: false, d: false, h: true, mi: true, s: true }; break;
+                case "year-month": u = { y: true, mo: true, d: false, h: false, mi: false, s: false }; break;
+                case "datetime-seconds": u = { y: true, mo: true, d: true, h: true, mi: true, s: true }; break;
                 case "custom":
-                    return {
+                    u = {
                         y: p.showYear !== false, mo: p.showMonth !== false, d: p.showDay !== false,
                         h: p.showHours !== false, mi: p.showMinutes !== false, s: !!p.showSeconds
                     };
+                    break;
                 default: // datetime
-                    return { y: true, mo: true, d: true, h: true, mi: true, s: !!p.showSeconds };
+                    u = { y: true, mo: true, d: true, h: true, mi: true, s: !!p.showSeconds };
             }
+            // milliseconds: a separate switch, meaningful only once seconds are shown
+            u.ms = u.s && !!p.showMs;
+            return u;
         }
 
         get currentDate() {
@@ -497,9 +510,9 @@ export const dateTime = defineUI({
             const cur = this.currentDate || new Date();
             let d;
             if (this.isUtc) {
-                d = new Date(Date.UTC(this._navYear, this._navMonth, dayNumber, cur.getUTCHours(), cur.getUTCMinutes(), cur.getUTCSeconds()));
+                d = new Date(Date.UTC(this._navYear, this._navMonth, dayNumber, cur.getUTCHours(), cur.getUTCMinutes(), cur.getUTCSeconds(), cur.getUTCMilliseconds()));
             } else {
-                d = new Date(this._navYear, this._navMonth, dayNumber, cur.getHours(), cur.getMinutes(), cur.getSeconds());
+                d = new Date(this._navYear, this._navMonth, dayNumber, cur.getHours(), cur.getMinutes(), cur.getSeconds(), cur.getMilliseconds());
             }
             this._commitDate(d);
             const u = this.activeUnits;
@@ -514,18 +527,20 @@ export const dateTime = defineUI({
             let d;
             if (this.isUtc) {
                 let y = cur.getUTCFullYear(), mo = cur.getUTCMonth(), day = cur.getUTCDate();
-                let h = cur.getUTCHours(), mi = cur.getUTCMinutes(), s = cur.getUTCSeconds();
+                let h = cur.getUTCHours(), mi = cur.getUTCMinutes(), s = cur.getUTCSeconds(), ms = cur.getUTCMilliseconds();
                 if (part === "h") h = Math.min(23, n);
                 if (part === "m") mi = Math.min(59, n);
                 if (part === "s") s = Math.min(59, n);
-                d = new Date(Date.UTC(y, mo, day, h, mi, s));
+                if (part === "ms") ms = Math.min(999, n);
+                d = new Date(Date.UTC(y, mo, day, h, mi, s, ms));
             } else {
                 let y = cur.getFullYear(), mo = cur.getMonth(), day = cur.getDate();
-                let h = cur.getHours(), mi = cur.getMinutes(), s = cur.getSeconds();
+                let h = cur.getHours(), mi = cur.getMinutes(), s = cur.getSeconds(), ms = cur.getMilliseconds();
                 if (part === "h") h = Math.min(23, n);
                 if (part === "m") mi = Math.min(59, n);
                 if (part === "s") s = Math.min(59, n);
-                d = new Date(y, mo, day, h, mi, s);
+                if (part === "ms") ms = Math.min(999, n);
+                d = new Date(y, mo, day, h, mi, s, ms);
             }
             this._commitDate(d);
         }
@@ -594,6 +609,7 @@ export const dateTime = defineUI({
             const curH = isUtc ? cur.getUTCHours() : cur.getHours();
             const curM = isUtc ? cur.getUTCMinutes() : cur.getMinutes();
             const curS = isUtc ? cur.getUTCSeconds() : cur.getSeconds();
+            const curMs = isUtc ? cur.getUTCMilliseconds() : cur.getMilliseconds();
 
             return html`<div class="popover" part="popover" @click="${(e) => e.stopPropagation()}">
                 ${hasDate ? html`
@@ -631,6 +647,11 @@ export const dateTime = defineUI({
                             ${u.s ? html`
                                 <input class="time-input" type="number" min="0" max="59" .value="${pad2(curS)}"
                                     @change="${(e) => this._updateTime("s", e.target.value)}" title="Seconds (00-59)" />
+                            ` : nothing}
+                            ${u.ms ? html`<span class="time-sep">.</span>` : nothing}
+                            ${u.ms ? html`
+                                <input class="time-input ms" type="number" min="0" max="999" .value="${String(curMs).padStart(3, "0")}"
+                                    @change="${(e) => this._updateTime("ms", e.target.value)}" title="Milliseconds (000-999)" />
                             ` : nothing}
                         </div>
                     </div>
@@ -969,6 +990,7 @@ const DATERANGE_CSS = css`
         background: var(--bg-subtle); color: var(--fg); font: inherit; font-size: 12px; outline: none; padding: 0;
     }
     .time-input:focus { border-color: var(--ring); box-shadow: inset 0 0 0 1px var(--ring); }
+    .time-input.ms { width: 44px; }
     .time-sep { font-weight: 600; color: var(--fg-muted); }
 
     /* Popover footer actions */
@@ -995,10 +1017,19 @@ export const dateRange = defineUI({
     icon: "fa fa-calendar",
     size: { w: 320, h: 40 },
     help: "Date Range Picker with dual calendar selection, quick presets (Today, Last 7d, 30d, Month, YTD), custom formatting, and UTC / Local timezone support.",
+    version: 2,
+    // v1: enableTime (boolean) -> timeGranularity ("off" | "minutes" | "seconds" | "milliseconds")
+    migrate(p, from) {
+        if (from < 2 && p.timeGranularity === undefined) {
+            p.timeGranularity = p.enableTime ? "minutes" : "off";
+            delete p.enableTime;
+        }
+        return p;
+    },
     properties: Object.assign({}, FIELD_PROPS, {
         format: {
-            type: "string", default: "YYYY-MM-DD", group: "Format", label: "Display format template",
-            help: "Tokens: YYYY, YY, MMMM, MMM, MM, M, DD, D, HH, H, hh, h, mm, m, ss, s, A (AM/PM), Z (offset)"
+            type: "string", default: "", group: "Format", label: "Display format template",
+            help: "Empty: follows Time selection (YYYY-MM-DD, + HH:mm, + ss, + .SSS). Tokens: YYYY, YY, MMMM, MMM, MM, M, DD, D, HH, H, hh, h, mm, m, ss, s, SSS (milliseconds), A (AM/PM), Z (offset)"
         },
         separator: {
             type: "string", default: "→", group: "Display", label: "Range separator"
@@ -1023,8 +1054,15 @@ export const dateRange = defineUI({
                 { value: "vertical", label: "Stacked" }
             ]
         },
-        enableTime: {
-            type: "boolean", default: false, group: "Granularity", label: "Enable time selection (HH:mm)"
+        timeGranularity: {
+            type: "enum", default: "off", group: "Granularity", label: "Time selection", style: "combobox",
+            options: [
+                { value: "off", label: "Off (date only)" },
+                { value: "minutes", label: "Hours & minutes (HH:mm)" },
+                { value: "seconds", label: "+ Seconds (HH:mm:ss)" },
+                { value: "milliseconds", label: "+ Milliseconds (HH:mm:ss.SSS)" }
+            ],
+            help: "How finely a boundary can be set. The unedited start / end of a day is always its first / last instant (…T00:00:00.000 / …T23:59:59.999), exact to the millisecond, whatever the granularity — this only limits what you can type. Historian data recorded at millisecond resolution needs Milliseconds to pick an exact cut-off."
         },
         timezoneMode: {
             type: "enum", default: "utc", group: "Timezone / UTC", label: "Timezone handling", style: "segmented",
@@ -1116,6 +1154,13 @@ export const dateRange = defineUI({
             return (this.p.timezoneMode || "utc") === "utc";
         }
 
+        // "off" | "minutes" | "seconds" | "milliseconds"; a save from before the granularity choice
+        // (enableTime: true, no migrate yet run) reads as "minutes", its old meaning
+        get timeGranularity() {
+            if (this.p.timeGranularity) return this.p.timeGranularity;
+            return this.p.enableTime ? "minutes" : "off";
+        }
+
         get startDate() {
             const st = this.status && this.status("start");
             const bound = st && st.bound;
@@ -1187,6 +1232,15 @@ export const dateRange = defineUI({
             this.requestUpdate();
         }
 
+        // the display format a granularity implies, when `format` is left empty
+        _defaultFormat() {
+            const g = this.timeGranularity;
+            if (g === "milliseconds") return "YYYY-MM-DD HH:mm:ss.SSS";
+            if (g === "seconds") return "YYYY-MM-DD HH:mm:ss";
+            if (g === "minutes") return "YYYY-MM-DD HH:mm";
+            return "YYYY-MM-DD";
+        }
+
         _formatOutput(date) {
             if (!date || isNaN(date.getTime())) return null;
             const p = this.p;
@@ -1223,7 +1277,7 @@ export const dateRange = defineUI({
                 this.out.write("range", outRange).catch(() => { });
             }
 
-            const fmt = this.p.format || (this.p.enableTime ? "YYYY-MM-DD HH:mm" : "YYYY-MM-DD");
+            const fmt = this.p.format || this._defaultFormat();
             const startStr = startD ? formatDateTemplate(startD, fmt, this.isUtc) : "";
             const endStr = endD ? formatDateTemplate(endD, fmt, this.isUtc) : "";
             const text = startStr && endStr ? `${startStr} ${this.p.separator || "→"} ${endStr}` : (startStr || endStr);
@@ -1271,31 +1325,42 @@ export const dateRange = defineUI({
             this.requestUpdate();
         }
 
+        // the day containing `date`: its first instant (00:00:00.000) and its last (23:59:59.999)
+        _dayBounds(date) {
+            const isUtc = this.isUtc;
+            const y = isUtc ? date.getUTCFullYear() : date.getFullYear();
+            const mo = isUtc ? date.getUTCMonth() : date.getMonth();
+            const d = isUtc ? date.getUTCDate() : date.getDate();
+            return isUtc
+                ? { start: new Date(Date.UTC(y, mo, d, 0, 0, 0, 0)), end: new Date(Date.UTC(y, mo, d, 23, 59, 59, 999)) }
+                : { start: new Date(y, mo, d, 0, 0, 0, 0), end: new Date(y, mo, d, 23, 59, 59, 999) };
+        }
+
         _pickDay(y, mo, day) {
-            let d;
-            if (this.isUtc) {
-                d = new Date(Date.UTC(y, mo, day, 0, 0, 0));
-            } else {
-                d = new Date(y, mo, day, 0, 0, 0);
-            }
+            const clicked = this.isUtc ? new Date(Date.UTC(y, mo, day)) : new Date(y, mo, day);
 
             if (!this._pickingEnd || !this._tempStart) {
-                this._tempStart = d;
+                this._tempStart = this._dayBounds(clicked).start;
                 this._tempEnd = null;
                 this._pickingEnd = true;
                 this._hoverDate = null;
                 this.requestUpdate();
             } else {
-                if (d.getTime() < this._tempStart.getTime()) {
-                    this._tempEnd = this._tempStart;
-                    this._tempStart = d;
+                // the clicked day may be before or after the first pick: the earlier day is the
+                // start (00:00:00.000), the later one the end (23:59:59.999) — a day-only range
+                // always spans whole days, exact to the millisecond, however it was clicked
+                const prevBounds = this._dayBounds(this._tempStart);
+                if (clicked.getTime() < prevBounds.start.getTime()) {
+                    this._tempEnd = prevBounds.end;
+                    this._tempStart = this._dayBounds(clicked).start;
                 } else {
-                    this._tempEnd = d;
+                    this._tempStart = prevBounds.start;
+                    this._tempEnd = this._dayBounds(clicked).end;
                 }
                 this._pickingEnd = false;
                 this._hoverDate = null;
                 this._commitRange(this._tempStart, this._tempEnd);
-                if (!this.p.enableTime) {
+                if (this.timeGranularity === "off") {
                     this.closePopover();
                 }
             }
@@ -1320,16 +1385,20 @@ export const dateRange = defineUI({
             let d;
             if (this.isUtc) {
                 let y = cur.getUTCFullYear(), mo = cur.getUTCMonth(), day = cur.getUTCDate();
-                let h = cur.getUTCHours(), mi = cur.getUTCMinutes(), s = cur.getUTCSeconds();
+                let h = cur.getUTCHours(), mi = cur.getUTCMinutes(), s = cur.getUTCSeconds(), ms = cur.getUTCMilliseconds();
                 if (unit === "h") h = Math.min(23, n);
                 if (unit === "m") mi = Math.min(59, n);
-                d = new Date(Date.UTC(y, mo, day, h, mi, s));
+                if (unit === "s") s = Math.min(59, n);
+                if (unit === "ms") ms = Math.min(999, n);
+                d = new Date(Date.UTC(y, mo, day, h, mi, s, ms));
             } else {
                 let y = cur.getFullYear(), mo = cur.getMonth(), day = cur.getDate();
-                let h = cur.getHours(), mi = cur.getMinutes(), s = cur.getSeconds();
+                let h = cur.getHours(), mi = cur.getMinutes(), s = cur.getSeconds(), ms = cur.getMilliseconds();
                 if (unit === "h") h = Math.min(23, n);
                 if (unit === "m") mi = Math.min(59, n);
-                d = new Date(y, mo, day, h, mi, s);
+                if (unit === "s") s = Math.min(59, n);
+                if (unit === "ms") ms = Math.min(999, n);
+                d = new Date(y, mo, day, h, mi, s, ms);
             }
             if (isStart) {
                 this._tempStart = d;
@@ -1446,10 +1515,15 @@ export const dateRange = defineUI({
 
             const startH = startD ? (isUtc ? startD.getUTCHours() : startD.getHours()) : 0;
             const startM = startD ? (isUtc ? startD.getUTCMinutes() : startD.getMinutes()) : 0;
+            const startS = startD ? (isUtc ? startD.getUTCSeconds() : startD.getSeconds()) : 0;
+            const startMs = startD ? (isUtc ? startD.getUTCMilliseconds() : startD.getMilliseconds()) : 0;
             const endH = endD ? (isUtc ? endD.getUTCHours() : endD.getHours()) : 23;
             const endM = endD ? (isUtc ? endD.getUTCMinutes() : endD.getMinutes()) : 59;
+            const endS = endD ? (isUtc ? endD.getUTCSeconds() : endD.getSeconds()) : 59;
+            const endMs = endD ? (isUtc ? endD.getUTCMilliseconds() : endD.getMilliseconds()) : 999;
+            const gran = this.timeGranularity, withS = gran === "seconds" || gran === "milliseconds", withMs = gran === "milliseconds";
 
-            const fmt = p.format || (p.enableTime ? "YYYY-MM-DD HH:mm" : "YYYY-MM-DD");
+            const fmt = p.format || this._defaultFormat();
             let summary = "Select date range";
             if (startD && endD) {
                 const diffMs = Math.abs(endD.getTime() - startD.getTime());
@@ -1501,7 +1575,7 @@ export const dateRange = defineUI({
                         </div>
                     </div>
 
-                    ${p.enableTime ? html`
+                    ${gran !== "off" ? html`
                         <div class="time-strip">
                             <div class="time-group">
                                 <span class="time-label">Start:</span>
@@ -1510,6 +1584,12 @@ export const dateRange = defineUI({
                                 <span class="time-sep">:</span>
                                 <input class="time-input" type="number" min="0" max="59" .value="${pad2(startM)}"
                                     @change="${(e) => this._updateTime("start", "m", e.target.value)}" title="Start Minute" />
+                                ${withS ? html`<span class="time-sep">:</span>
+                                <input class="time-input" type="number" min="0" max="59" .value="${pad2(startS)}"
+                                    @change="${(e) => this._updateTime("start", "s", e.target.value)}" title="Start Second" />` : nothing}
+                                ${withMs ? html`<span class="time-sep">.</span>
+                                <input class="time-input ms" type="number" min="0" max="999" .value="${String(startMs).padStart(3, "0")}"
+                                    @change="${(e) => this._updateTime("start", "ms", e.target.value)}" title="Start Millisecond" />` : nothing}
                             </div>
                             <div class="time-group">
                                 <span class="time-label">End:</span>
@@ -1518,6 +1598,12 @@ export const dateRange = defineUI({
                                 <span class="time-sep">:</span>
                                 <input class="time-input" type="number" min="0" max="59" .value="${pad2(endM)}"
                                     @change="${(e) => this._updateTime("end", "m", e.target.value)}" title="End Minute" />
+                                ${withS ? html`<span class="time-sep">:</span>
+                                <input class="time-input" type="number" min="0" max="59" .value="${pad2(endS)}"
+                                    @change="${(e) => this._updateTime("end", "s", e.target.value)}" title="End Second" />` : nothing}
+                                ${withMs ? html`<span class="time-sep">.</span>
+                                <input class="time-input ms" type="number" min="0" max="999" .value="${String(endMs).padStart(3, "0")}"
+                                    @change="${(e) => this._updateTime("end", "ms", e.target.value)}" title="End Millisecond" />` : nothing}
                             </div>
                         </div>
                     ` : nothing}
@@ -1537,7 +1623,7 @@ export const dateRange = defineUI({
             const p = this.p;
             const startD = this.startDate;
             const endD = this.endDate;
-            const fmt = p.format || (p.enableTime ? "YYYY-MM-DD HH:mm" : "YYYY-MM-DD");
+            const fmt = p.format || this._defaultFormat();
             const startStr = startD ? formatDateTemplate(startD, fmt, this.isUtc) : "";
             const endStr = endD ? formatDateTemplate(endD, fmt, this.isUtc) : "";
 

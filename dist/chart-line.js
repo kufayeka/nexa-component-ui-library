@@ -60,6 +60,7 @@ const LINE_CHART_CSS = css`
     /* the time ruler / navigator: it says it can be dragged */
     .plot.hover-ruler { cursor: grab; }
     .plot.hover-edge { cursor: ew-resize; }
+    .plot.hover-ann { cursor: pointer !important; }
     .plot.dragging { cursor: grabbing !important; }
     .plot.scrubbing { cursor: grabbing !important; }
     .plot.selecting { cursor: col-resize !important; }
@@ -88,6 +89,73 @@ const LINE_CHART_CSS = css`
     }
 
     .btn-chip:hover { background: rgba(50, 56, 65, 0.98); color: #fff; }
+
+    .menu-wrap {
+        position: relative;
+        display: inline-flex;
+    }
+
+    .btn-menu {
+        background: rgba(30, 34, 40, 0.88);
+        color: #94a3b8;
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        border-radius: 4px;
+        width: 22px;
+        height: 22px;
+        padding: 0;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        transition: background 0.15s, color 0.15s, border-color 0.15s;
+    }
+
+    .btn-menu:hover, .btn-menu.open {
+        background: rgba(50, 56, 65, 0.98);
+        color: #fff;
+        border-color: rgba(255, 255, 255, 0.35);
+    }
+
+    .menu-dropdown {
+        position: absolute;
+        top: calc(100% + 4px);
+        right: 0;
+        min-width: 140px;
+        background: #1e2228;
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        border-radius: 4px;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+        padding: 4px 0;
+        z-index: 25;
+        display: flex;
+        flex-direction: column;
+    }
+
+    .menu-item {
+        background: none;
+        border: none;
+        padding: 6px 12px;
+        color: #cbd5e1;
+        font-size: 11px;
+        font-family: var(--nexa-fonts-mono, monospace);
+        text-align: left;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        white-space: nowrap;
+        transition: background 0.1s, color 0.1s;
+    }
+
+    .menu-item:hover {
+        background: rgba(59, 130, 246, 0.18);
+        color: #fff;
+    }
+
+    .menu-icon {
+        font-size: 12px;
+        opacity: 0.85;
+    }
 
     .legend {
         flex: 0 0 auto;
@@ -732,10 +800,10 @@ const opt = (list) => list.map((x) => (Array.isArray(x) ? { value: x[0], label: 
 const NOTATIONS = [["standard", "As it is (1,234.5)"], ["compact", "Short (1.2K 3.4M 5B)"], ["si", "Engineering (1.5 MW, 2 ms)"], ["scientific", "Scientific (1.23e6)"]];
 const DECIMALS = [["auto", "Automatic"], "0", "1", "2", "3", "4"];
 const SPANS = [["", "No limit"], ["100ms", "100 ms"], ["1s", "1 second"], ["10s", "10 seconds"], ["1m", "1 minute"], ["10m", "10 minutes"], ["1h", "1 hour"],
-    ["6h", "6 hours"], ["24h", "24 hours"], ["7d", "7 days"], ["30d", "30 days"], ["1y", "1 year"]];
+["6h", "6 hours"], ["24h", "24 hours"], ["7d", "7 days"], ["30d", "30 days"], ["1y", "1 year"]];
 const WINDOWS = [["auto", "Everything it holds"], ["30s", "Last 30 seconds"], ["1m", "Last 1 minute"], ["5m", "Last 5 minutes"], ["15m", "Last 15 minutes"],
-    ["30m", "Last 30 minutes"], ["1h", "Last 1 hour"], ["3h", "Last 3 hours"], ["6h", "Last 6 hours"], ["12h", "Last 12 hours"], ["24h", "Last 24 hours"],
-    ["7d", "Last 7 days"], ["14d", "Last 14 days"], ["1M", "Last month (30 days)"], ["3M", "Last 3 months"], ["6M", "Last 6 months"], ["1y", "Last year"]];
+["30m", "Last 30 minutes"], ["1h", "Last 1 hour"], ["3h", "Last 3 hours"], ["6h", "Last 6 hours"], ["12h", "Last 12 hours"], ["24h", "Last 24 hours"],
+["7d", "Last 7 days"], ["14d", "Last 14 days"], ["1M", "Last month (30 days)"], ["3M", "Last 3 months"], ["6M", "Last 6 months"], ["1y", "Last year"]];
 
 // "10s" / "5m" / "100ms" -> ms (0: none)
 function spanMs(v) {
@@ -749,29 +817,46 @@ function spanMs(v) {
 
 const SERIES_FIELDS = {
     name: { type: "string", label: "Name", default: "Series" },
-    id: { type: "string", label: "Id", default: "", bindable: false,
-        help: "Fixed (renaming the series keeps it): its Update node and events find the series by it." },
+    id: {
+        type: "string", label: "Id", default: "", bindable: false,
+        help: "Fixed (renaming the series keeps it): its Update node and events find the series by it."
+    },
     visible: { type: "boolean", label: "Visible", default: true },
     legend: { type: "boolean", label: "In the legend", default: true },
 
-    live: { type: "tag", access: "read", section: "Data", label: "Live value",
-        help: "A tag or a variable: every new value is one more point (its time = now). A {x, y} or a list of them is added as it is. Points from Logic: this series' Update node (Append / Replace)." },
+    live: {
+        type: "tag", access: "read", section: "Data", label: "Live value",
+        help: "A tag or a variable: every new value is one more point (its time = now). A {x, y} or a list of them is added as it is. Points from Logic: this series' Update node (Append / Replace)."
+    },
     xField: { type: "string", section: "Data", label: "Time field (x)", default: "x", bindable: false, help: "In the points a message brings: [{x, y}, …]." },
     yField: { type: "string", section: "Data", label: "Value field (y)", default: "y", bindable: false },
-    maxPoints: { type: "number", section: "Data", label: "Points kept", default: 10000, min: 50, max: 2000000, step: 500,
-        help: "A ring: past it, the oldest go. 16 bytes a point (1 000 000 = 16 MB)." },
-    gapAfter: { type: "number", section: "Data", label: "Break the line after (ms without data)", default: 0, min: 0, step: 1000,
-        help: "0 = always connected. A longer silence draws a gap: a sensor offline is not a straight line." },
-    staleAfter: { type: "number", section: "Data", label: "Stale after (ms without data)", default: 0, min: 0, step: 1000,
-        help: "0 = never. No new point for this long: the series fires On Stale (and On Resume when data comes back)." },
-    timeShift: { type: "enum", section: "Data", label: "Time shift", default: "",
+    maxPoints: {
+        type: "number", section: "Data", label: "Points kept", default: 10000, min: 50, max: 2000000, step: 500,
+        help: "A ring: past it, the oldest go. 16 bytes a point (1 000 000 = 16 MB)."
+    },
+    gapAfter: {
+        type: "number", section: "Data", label: "Break the line after (ms without data)", default: 0, min: 0, step: 1000,
+        help: "0 = always connected. A longer silence draws a gap: a sensor offline is not a straight line."
+    },
+    staleAfter: {
+        type: "number", section: "Data", label: "Stale after (ms without data)", default: 0, min: 0, step: 1000,
+        help: "0 = never. No new point for this long: the series fires On Stale (and On Resume when data comes back)."
+    },
+    timeShift: {
+        type: "enum", section: "Data", label: "Time shift", default: "",
         options: opt([["", "None"], ["1h", "+1 hour"], ["1d", "+1 day (yesterday over today)"], ["7d", "+1 week"], ["30d", "+30 days"]]),
-        help: "Draws the series later by this much: yesterday's curve over today's, to compare." },
+        help: "Draws the series later by this much: yesterday's curve over today's, to compare."
+    },
 
-    variant: { type: "enum", section: "Line", label: "Variant", default: "line",
-        options: opt([["line", "Line"], ["step", "Step"], ["smooth", "Smooth"], ["bars", "Bars"], ["points", "Points only"]]) },
-    step: { type: "enum", section: "Line", label: "Step at", default: "after", options: opt([["after", "After the point"], ["before", "Before the point"], ["center", "Half way"]]),
-        visibleWhen: (s) => s.variant === "step" },
+    variant: {
+        type: "enum", section: "Line", label: "Line style", default: "",
+        options: opt([["", "The chart's default line style"], ["line", "Line"], ["step", "Step (Digital)"], ["smooth", "Smooth (Curved)"], ["bars", "Bars"], ["points", "Points only"]]),
+        help: "How points are joined. 'Step' is ideal for digital signals (ON/OFF) and state transitions."
+    },
+    step: {
+        type: "enum", section: "Line", label: "Step at", default: "after", options: opt([["after", "After the point (Standard)"], ["before", "Before the point"], ["center", "Half way"]]),
+        visibleWhen: (s, p) => (s.variant || s.interpolation || (p && p.defaultInterpolation)) === "step"
+    },
     color: { type: "color", section: "Line", label: "Colour", default: "", help: "Empty: the next colour of the palette." },
     width: { type: "number", section: "Line", label: "Width", default: 2, min: 0.5, max: 10, step: 0.5, unit: "px" },
     dash: { type: "enum", section: "Line", label: "Dash", default: "solid", options: opt([["solid", "Solid"], ["dashed", "Dashed"], ["dotted", "Dotted"]]) },
@@ -784,18 +869,53 @@ const SERIES_FIELDS = {
     pointShape: { type: "enum", section: "Points", label: "Shape", default: "circle", options: opt([["circle", "Circle"], ["square", "Square"], ["diamond", "Diamond"]]) },
     pointRadius: { type: "number", section: "Points", label: "Size", default: 3, min: 1, max: 12, unit: "px" },
 
-    axis: { type: "enum", section: "Axis & numbers", label: "Y axis", default: "left", options: opt([["left", "Left"], ["right", "Right"]]) },
-    unit: { type: "string", section: "Axis & numbers", label: "Unit (°C, kW, %)", default: "" },
-    notation: { type: "enum", section: "Axis & numbers", label: "Number notation", default: "axis", options: opt([["axis", "Like its axis"]].concat(NOTATIONS)) },
-    decimals: { type: "enum", section: "Axis & numbers", label: "Decimals", default: "axis", options: opt([["axis", "Like its axis"]].concat(DECIMALS)) },
+    // ---- its own Y axis (every series has one; Hidden: not drawn, its scale is still its own) ----
+    axis: {
+        type: "enum", section: "Axis", label: "Position", default: "left",
+        options: opt([["left", "Left"], ["right", "Right"], ["off", "Hidden (no axis drawn)"]]),
+        help: "Every series has its own Y axis and scale. Several on one side stand side by side: the first series in the list is closest to the chart."
+    },
+    axisTitle: { type: "string", section: "Axis", label: "Title", default: "", help: "Above the axis. Empty: its unit." },
+    axisTitleColor: { type: "color", section: "Axis", label: "Title colour", default: "", help: "Empty: the series' colour (a single axis: the text colour)." },
+    unit: { type: "string", section: "Axis", label: "Unit (°C, kW, %)", default: "", help: "In the tooltip and the legend, and above the axis when it has no title." },
+
+    softMin: { type: "number", section: "Axis/Range", label: "Soft min (grows with the data)", default: "" },
+    softMax: { type: "number", section: "Axis/Range", label: "Soft max (grows with the data)", default: "" },
+    min: { type: "number", section: "Axis/Range", label: "Hard min (fixed, clips)", default: "" },
+    max: { type: "number", section: "Axis/Range", label: "Hard max (fixed, clips)", default: "" },
+    zeroCenter: {
+        type: "boolean", section: "Axis/Range", label: "Zero in the middle (− and +)", default: false,
+        help: "The axis is symmetric around 0 (a deviation, a flow in and out), with a line at 0. Hard min / max still win."
+    },
+
+    notation: { type: "enum", section: "Axis/Numbers", label: "Notation", default: "standard", options: opt(NOTATIONS) },
+    decimals: { type: "enum", section: "Axis/Numbers", label: "Decimals", default: "auto", options: opt(DECIMALS) },
+    separators: {
+        type: "enum", section: "Axis/Numbers", label: "Separators", default: "locale",
+        options: opt([["locale", "The page's language"], ["dot", "1,234.5"], ["comma", "1.234,5"]])
+    },
+    thousands: { type: "boolean", section: "Axis/Numbers", label: "Thousands separator", default: true },
+
+    axisLine: { type: "boolean", section: "Axis/Spine", label: "Show the spine and ticks", default: true },
+    axisLineColor: {
+        type: "color", section: "Axis/Spine", label: "Colour", default: "",
+        help: "Empty: the series' colour (a single axis: the grid colour).", visibleWhen: (s) => s.axisLine !== false
+    },
+    axisLineWidth: { type: "number", section: "Axis/Spine", label: "Width", default: 1, min: 0.5, max: 6, step: 0.5, unit: "px", visibleWhen: (s) => s.axisLine !== false },
+    axisLineDash: {
+        type: "enum", section: "Axis/Spine", label: "Style", default: "solid",
+        options: opt([["solid", "Solid"], ["dashed", "Dashed"], ["dotted", "Dotted"]]), visibleWhen: (s) => s.axisLine !== false
+    },
 
     tooltip: { type: "boolean", section: "Tooltip", label: "In the tooltip", default: true },
     tooltipMode: { type: "enum", section: "Tooltip", label: "Text", default: "simple", options: opt([["simple", "Simple"], ["expression", "Expression"]]) },
     tooltipLabel: { type: "string", section: "Tooltip", label: "Label", default: "", help: "Empty: the name.", visibleWhen: (s) => s.tooltipMode !== "expression" },
     prefix: { type: "string", section: "Tooltip", label: "Before the value", default: "", visibleWhen: (s) => s.tooltipMode !== "expression" },
     suffix: { type: "string", section: "Tooltip", label: "After the value", default: "", help: "The unit follows it.", visibleWhen: (s) => s.tooltipMode !== "expression" },
-    expression: { type: "string", section: "Tooltip", label: "Expression", default: "{name}: fmt({value}) \" \" {unit}", visibleWhen: (s) => s.tooltipMode === "expression",
-        help: "{value} {name} {unit} {time} {delta} (from the point before) {min} {max} {avg} (shown); [series]{s2} = another series at that time. fmt(x, \"compact\" | \"si\", decimals, unit), round(x, 2). Example: {name} \": \" fmt({value}) \" (Δ \" fixed({delta}, 1) \")\"" }
+    expression: {
+        type: "string", section: "Tooltip", label: "Expression", bindable: false, default: "{name}: fmt({value}) \" \" {unit}", visibleWhen: (s) => s.tooltipMode === "expression",
+        help: "{value} {name} {unit} {time} {delta} (from the point before) {min} {max} {avg} (shown); [series]{s2} = another series at that time. fmt(x, \"compact\" | \"si\", decimals, unit), round(x, 2). Example: {name} \": \" fmt({value}) \" (Δ \" fixed({delta}, 1) \")\""
+    }
 };
 
 function seriesDefaults() {
@@ -807,32 +927,41 @@ function seriesDefaults() {
 
 const THRESHOLD_FIELDS = {
     value: { type: "number", label: "Value", default: 0 },
+    kind: {
+        type: "enum", label: "Kind", default: "line",
+        options: opt([["line", "Line only (a setpoint)"], ["upper", "Upper limit (at or above it: past it)"], ["lower", "Lower limit (at or below it: past it)"]]),
+        help: "A limit colours the values past it in an Excel export (its colour)."
+    },
     label: { type: "string", label: "Label", default: "" },
-    axis: { type: "enum", label: "Axis", default: "left", options: opt([["left", "Left"], ["right", "Right"]]) },
+    series: {
+        type: "enum", label: "On the scale of", default: "",
+        options: (p) => [{ value: "", label: "The first series" }].concat((Array.isArray(p && p.series) ? p.series : [])
+            .filter((x) => x && x.id).map((x) => ({ value: x.id, label: (x.name || x.id) + " (" + x.id + ")" }))),
+        help: "The series whose Y axis the line follows; that series fires On Threshold Crossed."
+    },
     color: { type: "color", label: "Colour", default: "#ef4444" },
     dash: { type: "enum", label: "Dash", default: "dashed", options: opt([["solid", "Solid"], ["dashed", "Dashed"], ["dotted", "Dotted"]]) }
 };
 
 const DASHES = { solid: [], dashed: [6, 4], dotted: [2, 3] };
 
+function notationOf(n) {
+    return n === "engineering" ? "si" : n === "compact" || n === "si" || n === "scientific" ? n : "standard";
+}
+
+// an annotation's time: ms, a numeric text, or a date text ("2026-10-04 08:00"); epoch seconds -> ms
+function timeOf(v) {
+    let t = typeof v === "number" ? v : typeof v === "string" && /^\s*\d+(\.\d+)?\s*$/.test(v) ? Number(v) : v ? new Date(v).getTime() : NaN;
+    // epoch seconds (2001…5138): to ms; a smaller number is ms already
+    if (Number.isFinite(t) && t >= 1e9 && t < 1e11) t *= 1000;
+    return t;
+}
+
 function numOr(v, d) {
     const n = typeof v === "number" ? v : v === "" || v === null || v === undefined ? NaN : Number(v);
     return Number.isFinite(n) ? n : d;
 }
 
-// axis props: one set per side (left / right)
-function axisProps(side, label) {
-    const g = "Axes", sec = label;
-    return {
-        [side + "Title"]: { type: "string", group: g, section: sec, label: "Title", default: "", help: side === "right" ? "The right axis shows when a series uses it." : "" },
-        [side + "Notation"]: { type: "enum", group: g, section: sec, label: "Number notation", default: "standard", options: opt(NOTATIONS) },
-        [side + "Decimals"]: { type: "enum", group: g, section: sec, label: "Decimals", default: "auto", options: opt(DECIMALS) },
-        [side + "SoftMin"]: { type: "number", group: g, section: sec, label: "Soft min (grows with the data)", default: "" },
-        [side + "SoftMax"]: { type: "number", group: g, section: sec, label: "Soft max (grows with the data)", default: "" },
-        [side + "Min"]: { type: "number", group: g, section: sec, label: "Hard min (clips)", default: "" },
-        [side + "Max"]: { type: "number", group: g, section: sec, label: "Hard max (clips)", default: "" }
-    };
-}
 
 // ---- a time, the way the chart's Time axis says ----------------------------------------------
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -891,24 +1020,68 @@ function zipStore(files) {
 }
 const xmlEsc = (s) => String(s).replace(/[<>&"]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" })[c]);
 function colName(i) { let s = ""; i++; while (i > 0) { const m = (i - 1) % 26; s = String.fromCharCode(65 + m) + s; i = Math.floor((i - 1) / 26); } return s; }
-function xlsxBlob(header, rows, utc) {
-    // time cells: Excel serial days, with a date-time format (style 1)
+// a colour as Excel's ARGB, lightened (a cell's fill: its text stays readable)
+function fillArgb(color, mix) {
+    let hex = String(color || "").trim();
+    const m = /^rgba?\(([^)]+)\)/.exec(hex);
+    let r, g, b;
+    if (m) { [r, g, b] = m[1].split(",").map((x) => parseInt(x, 10)); }
+    else {
+        hex = hex.replace("#", "");
+        if (hex.length === 3) hex = hex.split("").map((ch) => ch + ch).join("");
+        const n = parseInt(hex.slice(0, 6), 16);
+        if (!/^[0-9a-f]{6}/i.test(hex) || isNaN(n)) { r = 239; g = 68; b = 68; } else { r = (n >> 16) & 255; g = (n >> 8) & 255; b = n & 255; }
+    }
+    const t = (v) => Math.round(v + (255 - v) * mix).toString(16).padStart(2, "0");
+    return ("FF" + t(r) + t(g) + t(b)).toUpperCase();
+}
+
+/**
+ * A real .xlsx (a stored zip). rows: [time ms, …values]; opts.fills: a colour (or null) per cell,
+ * opts.textCols: the columns holding text, opts.info: [[label, value]] for an Info sheet.
+ */
+function xlsxBlob(header, rows, utc, opts) {
+    opts = opts || {};
+    const textCols = new Set(opts.textCols || []);
+    // time cells: Excel serial days, a date-time format to the millisecond (style 1)
     const toSerial = (ts) => { const d = new Date(ts); const off = utc ? 0 : d.getTimezoneOffset() * 60000; return (ts - off) / 86400000 + 25569; };
-    let sheet = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><cols><col min="1" max="1" width="24" customWidth="1"/></cols><sheetData>';
-    sheet += '<row r="1">' + header.map((h, i) => `<c r="${colName(i)}1" t="inlineStr"><is><t>${xmlEsc(h)}</t></is></c>`).join("") + "</row>";
+    // styles: 0 plain, 1 date-time, 2 bold (the header), 3… a fill per colour
+    const colors = [], colorAt = {};
+    const styleOf = (color) => { if (!color) return 0; if (!(color in colorAt)) { colorAt[color] = colors.length; colors.push(color); } return 3 + colorAt[color]; };
+    const str = (ref, text, st) => `<c r="${ref}" t="inlineStr"${st ? ` s="${st}"` : ""}><is><t xml:space="preserve">${xmlEsc(text)}</t></is></c>`;
+    let sheet = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><cols><col min="1" max="1" width="26" customWidth="1"/>'
+        + (header.length > 1 ? `<col min="2" max="${header.length}" width="16" customWidth="1"/>` : "") + '</cols><sheetData>';
+    sheet += '<row r="1">' + header.map((h, c) => str(colName(c) + "1", h, 2)).join("") + "</row>";
     rows.forEach((r, ri) => {
-        const n = ri + 2;
-        sheet += `<row r="${n}"><c r="A${n}" s="1"><v>${toSerial(r[0])}</v></c>` + r.slice(1).map((v, i) => (v === null || v === undefined ? "" : `<c r="${colName(i + 1)}${n}"><v>${v}</v></c>`)).join("") + "</row>";
+        const n = ri + 2, f = opts.fills && opts.fills[ri];
+        sheet += `<row r="${n}"><c r="A${n}" s="1"><v>${toSerial(r[0])}</v></c>` + r.slice(1).map((v, i) => {
+            const c = i + 1, ref = colName(c) + n;
+            if (v === null || v === undefined || v === "") return "";
+            if (textCols.has(c)) return str(ref, v, 0);
+            const st = styleOf(f && f[c]);
+            return `<c r="${ref}"${st ? ` s="${st}"` : ""}><v>${v}</v></c>`;
+        }).join("") + "</row>";
     });
     sheet += "</sheetData></worksheet>";
+    const info = opts.info || [];
+    const infoSheet = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><cols><col min="1" max="1" width="14" customWidth="1"/><col min="2" max="2" width="70" customWidth="1"/></cols><sheetData>'
+        + info.map((kv, i) => `<row r="${i + 1}">${str("A" + (i + 1), kv[0], 2)}${str("B" + (i + 1), kv[1], 0)}</row>`).join("") + "</sheetData></worksheet>";
+    const fills = colors.map((c) => `<fill><patternFill patternType="solid"><fgColor rgb="${fillArgb(c, 0.55)}"/><bgColor indexed="64"/></patternFill></fill>`).join("");
+    const xfs = colors.map((c, k) => `<xf numFmtId="0" fontId="0" fillId="${2 + k}" borderId="0" xfId="0" applyFill="1"/>`).join("");
+    const styles = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><numFmts count="1"><numFmt numFmtId="164" formatCode="yyyy-mm-dd hh:mm:ss.000"/></numFmts>'
+        + '<fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts>'
+        + `<fills count="${2 + colors.length}"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>${fills}</fills>`
+        + '<borders count="1"><border/></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
+        + `<cellXfs count="${3 + colors.length}"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>${xfs}</cellXfs></styleSheet>`;
+    const withInfo = info.length > 0;
     return zipStore([
-        { name: "[Content_Types].xml", text: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>' },
+        { name: "[Content_Types].xml", text: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>' + (withInfo ? '<Override PartName="/xl/worksheets/sheet2.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>' : "") + '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>' },
         { name: "_rels/.rels", text: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>' },
-        { name: "xl/workbook.xml", text: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Data" sheetId="1" r:id="rId1"/></sheets></workbook>' },
-        { name: "xl/_rels/workbook.xml.rels", text: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>' },
-        { name: "xl/styles.xml", text: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><numFmts count="1"><numFmt numFmtId="164" formatCode="yyyy-mm-dd hh:mm:ss.000"/></numFmts><fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border/></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/></cellXfs></styleSheet>' },
+        { name: "xl/workbook.xml", text: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Data" sheetId="1" r:id="rId1"/>' + (withInfo ? '<sheet name="Info" sheetId="2" r:id="rId3"/>' : "") + '</sheets></workbook>' },
+        { name: "xl/_rels/workbook.xml.rels", text: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>' + (withInfo ? '<Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/>' : "") + '</Relationships>' },
+        { name: "xl/styles.xml", text: styles },
         { name: "xl/worksheets/sheet1.xml", text: sheet }
-    ]);
+    ].concat(withInfo ? [{ name: "xl/worksheets/sheet2.xml", text: infoSheet }] : []));
 }
 
 export const lineChart = defineUI({
@@ -918,7 +1091,7 @@ export const lineChart = defineUI({
     icon: "fa fa-line-chart",
     size: { w: 600, h: 320 },
     help: "Time-series chart. The chart has one Update node (its own props); every series has its own Update node, message and events. Every point kept, drawn at pixel accuracy.",
-    version: 3,
+    version: 4,
 
     migrate(p, from) {
         const has = (v) => v !== undefined && v !== null && v !== "";
@@ -957,10 +1130,54 @@ export const lineChart = defineUI({
             });
             if (p.tooltipMode === "shared" || p.tooltipMode === "nearest" || p.tooltipMode === "off") { p.tooltipShows = p.tooltipMode; delete p.tooltipMode; }
         }
+        // v3: the chart's left / right axis settings -> each series on that side; scale / group gone
+        // (every series has its own axis); a threshold's side -> the first series on that side
+        if (from < 4) {
+            const list = Array.isArray(p.series) ? p.series : [];
+            const sideOf = (x) => (x && x.axis === "right" ? "right" : x && (x.axis === "off" || x.axis === "none") ? "off" : "left");
+            const firstOn = {};
+            list.forEach((x) => {
+                if (!x || typeof x !== "object") return;
+                const side = sideOf(x);
+                if (side === "off") x.axis = "off";
+                if (!firstOn[side]) firstOn[side] = x;
+                const sd = side === "off" ? null : side;
+                if (sd) {
+                    if (has(p[sd + "SoftMin"]) && !has(x.softMin)) x.softMin = p[sd + "SoftMin"];
+                    if (has(p[sd + "SoftMax"]) && !has(x.softMax)) x.softMax = p[sd + "SoftMax"];
+                    if (has(p[sd + "Min"]) && !has(x.min)) x.min = p[sd + "Min"];
+                    if (has(p[sd + "Max"]) && !has(x.max)) x.max = p[sd + "Max"];
+                    if ((!x.notation || x.notation === "axis") && has(p[sd + "Notation"])) x.notation = p[sd + "Notation"];
+                    if ((!x.decimals || x.decimals === "axis") && has(p[sd + "Decimals"])) x.decimals = p[sd + "Decimals"];
+                }
+                if (x.notation) x.notation = notationOf(x.notation);
+                if (x.decimals === "axis") x.decimals = "auto";
+                if (has(p.separators) && !has(x.separators)) x.separators = p.separators;
+                if (typeof p.thousands === "boolean" && typeof x.thousands !== "boolean") x.thousands = p.thousands;
+                if (!has(x.variant) && has(x.interpolation)) x.variant = x.interpolation;
+                delete x.interpolation;
+                delete x.axisScale;
+                delete x.axisGroup;
+            });
+            ["left", "right"].forEach((side) => {
+                const first = firstOn[side];
+                if (first && has(p[side + "Title"]) && !has(first.axisTitle)) first.axisTitle = p[side + "Title"];
+                ["Title", "Notation", "Decimals", "SoftMin", "SoftMax", "Min", "Max"].forEach((k) => { delete p[side + k]; });
+            });
+            delete p.separators;
+            delete p.thousands;
+            (Array.isArray(p.thresholds) ? p.thresholds : []).forEach((t) => {
+                if (!t || typeof t !== "object" || t.series !== undefined) return;
+                const on = firstOn[t.axis === "right" ? "right" : "left"];
+                t.series = on && on !== list[0] && on.id ? on.id : "";
+                delete t.axis;
+            });
+            if (Array.isArray(p.annotations)) p.annotations = p.annotations.filter((a) => a && typeof a === "object");
+        }
         return p;
     },
 
-    groups: ["Series", "Data", "Time axis", "Axes", "Tooltip", "Legend", "Thresholds", "Zoom & pan", "Export", "Style", "Behaviour"],
+    groups: ["Series", "Data", "Time axis", "Tooltip", "Legend", "Thresholds", "Annotations", "Zoom & pan", "Export", "Style", "Behaviour"],
 
     properties: {
         series: {
@@ -979,65 +1196,150 @@ export const lineChart = defineUI({
                     return Object.assign(seriesDefaults(), { id: "s" + n, name: "Series " + n });
                 },
                 actions: {
-                    appendPoints: { label: "Append points", help: "Adds points to this series (any order: a late point goes in its place).",
-                        example: "{ \"x\": 1727852400000, \"y\": 21.5 }  or  [{x, y}, …]  or  21.5 (time = now)" },
-                    replacePoints: { label: "Replace points", help: "Replaces everything the series holds: a query result, a batch's history.",
-                        example: "[{ \"x\": 1727852400000, \"y\": 21.5 }, …]" },
+                    appendPoints: {
+                        label: "Append points", help: "Adds points to this series (any order: a late point goes in its place).",
+                        example: "{ \"x\": 1727852400000, \"y\": 21.5 }  or  [{x, y}, …]  or  21.5 (time = now)"
+                    },
+                    replacePoints: {
+                        label: "Replace points", help: "Replaces everything the series holds: a query result, a batch's history.",
+                        example: "[{ \"x\": 1727852400000, \"y\": 21.5 }, …]"
+                    },
                     clear: { label: "Clear", help: "Empties this series." },
                     show: { label: "Show", help: "Shows this series (as its legend entry would)." },
                     hide: { label: "Hide", help: "Hides this series; its data is kept." }
                 },
                 events: {
                     pointClick: { label: "On Point Click", payload: { x: "number", y: "number" }, help: "A click on one of its points: the time and the value." },
-                    thresholdCross: { label: "On Threshold Crossed", payload: { direction: "string", value: "number", threshold: "number", label: "string" },
-                        help: "A new value crossed a threshold of its axis: direction \"up\" / \"down\". An alarm without a script." },
+                    thresholdCross: {
+                        label: "On Threshold Crossed", payload: { direction: "string", value: "number", threshold: "number", label: "string" },
+                        help: "A new value crossed a threshold of its axis: direction \"up\" / \"down\". An alarm without a script."
+                    },
                     stale: { label: "On Stale", payload: { since: "number" }, help: "No new point for longer than its Stale after: a sensor that went quiet." },
                     resume: { label: "On Resume", payload: { gap: "number" }, help: "Data again after On Stale: how long it was quiet (ms)." }
                 }
             }
         },
 
-        timeWindow: { type: "enum", default: "auto", options: opt(WINDOWS), group: "Data", label: "Time range",
-            help: "A live window that follows the newest point. Zoom / pan pauses it; Live (or a double click) follows again." },
+        timeWindow: {
+            type: "enum", default: "auto", options: opt(WINDOWS), group: "Data", label: "Time range",
+            help: "A live window that follows the newest point. Zoom / pan pauses it; Live (or a double click) follows again."
+        },
 
-        ruler: { type: "enum", group: "Time axis", label: "Time ruler", default: "tworow",
-            options: opt([["tworow", "Two rows: time and date (drag it)"], ["navigator", "Navigator: the whole history, a window to drag"], ["comb", "Comb (drag it)"], ["axis", "Labels only"], ["none", "None"]]),
-            help: "Every ruler but Labels only can be dragged to move in time; the wheel zooms." },
+        ruler: {
+            type: "enum", group: "Time axis", label: "Time ruler", default: "tworow",
+            options: opt([["tworow", "Band (drag it)"], ["navigator", "Navigator: the whole history, a window to drag"], ["comb", "Comb (drag it)"], ["axis", "Labels only"], ["none", "None"]]),
+            help: "The style of ruler. Show time and Show date checkboxes control whether time and/or date are displayed."
+        },
+        showTime: {
+            type: "boolean", group: "Time axis", label: "Show time", default: true,
+            help: "Shows time labels on the time axis."
+        },
+        showDate: {
+            type: "boolean", group: "Time axis", label: "Show date", default: true,
+            help: "Shows date labels on the time axis."
+        },
+        dateFormat: {
+            type: "enum", group: "Time axis", label: "Date format", default: "default",
+            options: opt([["default", "Day D Mon Y (Sat 03 Oct 2026)"], ["iso", "YYYY-MM-DD (2026-10-03)"], ["dmy", "DD/MM/YYYY (03/10/2026)"], ["mdy", "MM/DD/YYYY (10/03/2026)"]]),
+            visibleWhen: (p) => p.showDate !== false
+        },
+        tickDensity: {
+            type: "enum", group: "Time axis", label: "Tick spacing", default: "normal",
+            options: opt([["loose", "Loose (Longgar)"], ["normal", "Normal (Sedang)"], ["dense", "Dense (Rapat)"]]),
+            help: "Controls how many time labels appear across the ruler."
+        },
+        rulerHeight: {
+            type: "number", group: "Time axis", label: "Ruler height", default: 0,
+            min: 0, max: 50, step: 1, unit: "%",
+            help: "0 = auto (~12 % of chart height). Can be set up to 50 %."
+        },
         timeFormat: { type: "enum", group: "Time axis", label: "Time format", default: "24h", options: opt([["24h", "24 hours (14:05)"], ["12h", "12 hours (2:05 PM)"], ["relative", "Relative to the newest (−5m)"]]) },
         timeZone: { type: "enum", group: "Time axis", label: "Time zone", default: "local", options: opt([["local", "The viewer's (local)"], ["utc", "UTC"]]) },
 
-        ...axisProps("left", "Left"),
-        ...axisProps("right", "Right"),
-        separators: { type: "enum", group: "Axes", section: "Numbers", label: "Separators", default: "locale",
-            options: opt([["locale", "The page's language"], ["dot", "1,234.5"], ["comma", "1.234,5"]]) },
-        thousands: { type: "boolean", group: "Axes", section: "Numbers", label: "Thousands separator", default: true },
-
-        tooltipShows: { type: "enum", group: "Tooltip", label: "Shows", default: "shared",
-            options: opt([["shared", "Every series at that time"], ["nearest", "The nearest series"], ["off", "Nothing"]]) },
-        matchWithin: { type: "number", group: "Tooltip", label: "A series' point counts within (ms)", default: 0, min: 0, step: 100,
-            help: "0 = automatic (each series' own spacing: a slow series still shows next to a fast one)." },
+        tooltipShows: {
+            type: "enum", group: "Tooltip", label: "Shows", default: "shared",
+            options: opt([["shared", "Together: every series with a point at that time"], ["nearest", "Alone: only the series under the cursor"], ["off", "Nothing"]]),
+            help: "Together: one tooltip lists every series that has a point at the cursor's time, whatever its axis. Alone: only the line nearest to the cursor."
+        },
+        matchWithin: {
+            type: "number", group: "Tooltip", label: "Together when their times are within (ms)", default: 0, min: 0, step: 100,
+            help: "How far from the cursor's time a series' point may be to join the tooltip. 0 = automatic (each series' own spacing: a slow series still shows next to a fast one).",
+            visibleWhen: (p) => p.tooltipShows !== "nearest" && p.tooltipShows !== "off"
+        },
 
         legend: { type: "enum", group: "Legend", label: "Legend", default: "bottom", options: opt([["bottom", "Below"], ["top", "Above"], ["none", "None"]]) },
-        legendValue: { type: "enum", group: "Legend", label: "Value in the legend", default: "last",
-            options: opt([["none", "None"], ["last", "Last"], ["min", "Min (shown)"], ["max", "Max (shown)"], ["avg", "Average (shown)"]]) },
+        legendValue: {
+            type: "enum", group: "Legend", label: "Value in the legend", default: "last",
+            options: opt([["none", "None"], ["last", "Last"], ["min", "Min (shown)"], ["max", "Max (shown)"], ["avg", "Average (shown)"]])
+        },
 
-        thresholds: { type: "list", group: "Thresholds", label: "Thresholds", noun: "threshold", default: [],
-            help: "Horizontal lines: a limit, a setpoint. A series crossing one fires its On Threshold Crossed.", item: { fields: THRESHOLD_FIELDS, noun: "threshold" } },
+        thresholds: {
+            type: "list", group: "Thresholds", label: "Thresholds", noun: "threshold", default: [],
+            help: "Horizontal lines: a limit, a setpoint. A series crossing one fires its On Threshold Crossed.", item: { fields: THRESHOLD_FIELDS, noun: "threshold" }
+        },
 
         minSpan: { type: "enum", group: "Zoom & pan", label: "Zoom in to at most", default: "", options: opt(SPANS), help: "The shortest time the chart can show." },
         maxSpan: { type: "enum", group: "Zoom & pan", label: "Zoom out to at most", default: "", options: opt(SPANS), help: "The longest time the chart can show." },
-        panLimit: { type: "enum", group: "Zoom & pan", label: "Move in time", default: "data",
-            options: opt([["data", "Only where there is data"], ["window", "Only within the last…"], ["free", "Anywhere"]]) },
+        panLimit: {
+            type: "enum", group: "Zoom & pan", label: "Move in time", default: "data",
+            options: opt([["data", "Only where there is data"], ["window", "Only within the last…"], ["free", "Anywhere"]])
+        },
         panWindow: { type: "enum", group: "Zoom & pan", label: "The last", default: "24h", options: opt(WINDOWS.slice(1)), visibleWhen: (p) => p.panLimit === "window" },
-        futureMargin: { type: "enum", group: "Zoom & pan", label: "Room after the newest point", default: "0",
-            options: opt([["0", "None"], ["0.02", "2 %"], ["0.05", "5 %"], ["0.1", "10 %"]]), help: "Live: the newest point is not glued to the right edge." },
+        futureMargin: {
+            type: "enum", group: "Zoom & pan", label: "Room after the newest point", default: "0",
+            options: opt([["0", "None"], ["0.02", "2 %"], ["0.05", "5 %"], ["0.1", "10 %"]]), help: "Live: the newest point is not glued to the right edge."
+        },
         enableZoomPan: { type: "boolean", default: true, group: "Zoom & pan", label: "Zoom (wheel) and pan (drag)" },
 
-        exportButton: { type: "boolean", group: "Export", label: "Export button on the chart", default: false, help: "The viewer downloads what the chart holds (CSV or Excel)." },
-        exportRange: { type: "enum", group: "Export", label: "The button exports", default: "visible", options: opt([["visible", "The time shown"], ["all", "Everything it holds"]]) },
+        exportButton: { type: "boolean", group: "Export", label: "Export menu on the chart (⋮)", default: true, help: "A menu in the top-right corner: the formats below." },
+        exportCsv: { type: "boolean", group: "Export", label: "Menu: CSV", default: true, visibleWhen: (p) => p.exportButton !== false },
+        exportXlsx: { type: "boolean", group: "Export", label: "Menu: Excel", default: true, visibleWhen: (p) => p.exportButton !== false },
+        exportPng: { type: "boolean", group: "Export", label: "Menu: PNG", default: true, visibleWhen: (p) => p.exportButton !== false },
+        exportRange: {
+            type: "enum", group: "Export", label: "What it exports", default: "visible",
+            options: opt([["visible", "What is shown (zoom / pan applied)"], ["all", "Everything it holds"]]),
+            help: "Hidden series (legend, Hide) are never exported. Logic's Export action can say otherwise: { range: \"all\" }."
+        },
+        exportAnnotations: {
+            type: "boolean", group: "Export", label: "Annotations", default: true,
+            help: "CSV / Excel: an Annotation column, its own row at its exact time. PNG: drawn."
+        },
+        exportThresholds: {
+            type: "boolean", group: "Export", label: "Thresholds", default: true,
+            help: "Excel: a value past an upper / lower limit gets the limit's colour (an Info sheet lists them). PNG: drawn."
+        },
+        exportTitle: { type: "string", group: "Export", label: "Title", default: "", help: "Above the PNG and in the Excel Info sheet; {title} in the file name. Empty: the chart's name." },
+        exportFilename: {
+            type: "string", group: "Export", label: "File name expression", default: "", bindable: false,
+            help: "Expression or template for the download file name. Variables: {title}, {date}, {time}, {year}, {month}, {day}, {format}, {range}. Default: chart-YYYYMMDD-HHmm"
+        },
 
         colorPalette: paletteProp("primary"),
-        showGrid: { type: "boolean", default: true, group: "Style", label: "Grid" }
+        showGrid: { type: "boolean", default: true, group: "Style", label: "Grid" },
+        axisGap: {
+            type: "number", group: "Style", label: "Axis gap", default: 8, min: 0, max: 60, step: 1, unit: "px",
+            help: "Spacing between adjacent Y-axis columns when multiple axes are shown."
+        },
+        defaultInterpolation: {
+            type: "enum", group: "Style", label: "Default line style", default: "line",
+            options: opt([["line", "Line"], ["step", "Step (Digital)"], ["smooth", "Smooth (Curved)"]]),
+            help: "Default line style for series that do not specify their own variant."
+        },
+
+        annotations: {
+            type: "list", group: "Annotations", label: "Annotations", noun: "annotation", default: [],
+            item: {
+                noun: "annotation",
+                fields: {
+                    label: { type: "string", label: "Label", default: "Event" },
+                    time: { type: "string", label: "Time", default: "", help: "A date and time (2026-10-04 08:00), or ms since 1970." },
+                    color: { type: "color", label: "Colour", default: "#f59e0b" },
+                    description: { type: "string", label: "Description", default: "", help: "In the tooltip, and On Annotation Click." }
+                }
+            },
+            help: "Event markers (vertical lines with badges) on specific timestamps. From Logic: Add / Set / Clear annotations."
+        },
+        showAnnotations: { type: "boolean", default: true, group: "Annotations", label: "Show annotations", help: "Shows event marker annotations across the chart." }
     },
 
     parts: {
@@ -1046,23 +1348,52 @@ export const lineChart = defineUI({
     },
 
     events: {
-        rangeChange: { label: "On Range Change", payload: { from: "number", to: "number", live: "boolean", cause: "string" },
-            help: "The time shown changed (zoom, pan, ruler, navigator, Live): from / to (ms), live, cause. Load what is needed for it." },
+        rangeChange: {
+            label: "On Range Change", payload: { from: "number", to: "number", live: "boolean", cause: "string" },
+            help: "The time shown changed (zoom, pan, ruler, navigator, Live): from / to (ms), live, cause. Load what is needed for it."
+        },
         liveChange: { label: "On Live / Paused", payload: { live: "boolean" }, help: "The viewer stopped following the newest data (zoom / pan), or follows it again." },
         hover: { label: "On Hover", payload: { time: "number", values: "object" }, help: "The time under the cursor and each series' value there: share a crosshair with other charts through a variable." },
         hoverEnd: { label: "On Hover End", help: "The cursor left the chart." },
         click: { label: "On Click", payload: { time: "number", values: "object" }, help: "A click in the chart (not a drag): its time and the values there." },
+        annotationClick: {
+            label: "On Annotation Click", payload: { id: "string", time: "number", label: "string", color: "string", description: "string" },
+            help: "The viewer clicked an annotation badge or vertical marker line."
+        },
         rangeSelect: { label: "On Range Select", payload: { from: "number", to: "number" }, help: "Shift + drag selected a time range: statistics, export, zoom other charts." },
         seriesToggle: { label: "On Series Toggle", payload: { series: "string", visible: "boolean" }, help: "The viewer showed / hid a series in the legend." }
     },
 
     actions: {
         followLive: { label: "Follow live", help: "Shows the newest data again (as Live / a double click)." },
-        setRange: { label: "Show a time range", params: { from: "number", to: "number" }, help: "Pauses live and shows that time.",
-            example: "{ \"from\": 1727852400000, \"to\": 1727856000000 }" },
+        setRange: {
+            label: "Show a time range", params: { from: "number", to: "number" }, help: "Pauses live and shows that time.",
+            example: "{ \"from\": 1727852400000, \"to\": 1727856000000 }"
+        },
         clearAll: { label: "Clear every series" },
-        exportData: { label: "Export (download)", params: { format: "string", range: "string" }, help: "Downloads a file on the viewer's screen: CSV or Excel, the time shown or everything.",
-            example: "{ \"format\": \"xlsx\", \"range\": \"visible\" }  (format: csv | xlsx, range: visible | all)" }
+        addAnnotation: {
+            label: "Add annotation",
+            params: { time: "number", label: "string", color: "string" },
+            help: "Adds an annotation { time, label, color } to the chart.",
+            example: '{ "time": 1727852400000, "label": "Batch #104 Started", "color": "#10b981" }'
+        },
+        setAnnotations: {
+            label: "Set annotations",
+            help: "Replaces annotations with a new array [{ time, label, color }].",
+            example: '[{ "time": 1727852400000, "label": "Pump Trip", "color": "#ef4444" }]'
+        },
+        clearAnnotations: {
+            label: "Clear annotations", help: "Removes all annotations from the chart."
+        },
+        exportData: {
+            label: "Export (download)", params: { format: "string", range: "string", annotations: "boolean", thresholds: "boolean" },
+            help: "Downloads a file on the viewer's screen. Each option left out: the Properties' Export settings. Hidden series are never exported.",
+            example: "{ \"format\": \"xlsx\", \"range\": \"visible\", \"annotations\": true, \"thresholds\": true }  (format: csv | xlsx | png, range: visible | all)"
+        },
+        exportPNG: {
+            label: "Export PNG", params: { range: "string" }, help: "Downloads the chart as an image (2× sharp, a title, the time span, the legend).",
+            example: "{ \"range\": \"all\" }  (visible | all)"
+        }
     },
 
     view: class extends UIElement {
@@ -1079,6 +1410,9 @@ export const lineChart = defineUI({
         _navDecimator = new M4Decimator(1024);
         _series = new Map();      // key -> { buf, lastLive, dx, dy, n, demo, lastAt, stale }
         _hidden = new Set();
+        _dynamicAnnotations = [];
+        _annotationHits = [];
+        _hoverAnnotation = null;
 
         viewRange = null;         // null = live
         drag = null;              // { kind: "pan" | "ruler" | "nav" | "navL" | "navR" | "select", x0, min0, max0, moved }
@@ -1087,6 +1421,8 @@ export const lineChart = defineUI({
         _lastHoverEmit = 0;
         _lastRangeEmit = 0;
         _wasLive = true;
+        _menuOpen = false;
+        _docPointerDown = null;
 
         get ringBuffer() { const l = this.seriesList(); return l.length ? this._state(l[0]).buf : new TimeSeriesRingBuffer(50); }
 
@@ -1105,6 +1441,16 @@ export const lineChart = defineUI({
             this.setupResizeObserver();
             this.setupIntersectionObserver();
             this.prepareData();
+            this._docPointerDown = (e) => {
+                if (this._menuOpen) {
+                    const menuWrap = this.renderRoot?.querySelector(".menu-wrap");
+                    if (!menuWrap || !e.composedPath().includes(menuWrap)) {
+                        this._menuOpen = false;
+                        this.requestUpdate();
+                    }
+                }
+            };
+            window.addEventListener("pointerdown", this._docPointerDown);
             requestAnimationFrame(() => { if (this.resizeCanvas()) this.draw(); });
         }
 
@@ -1115,6 +1461,10 @@ export const lineChart = defineUI({
         }
 
         disconnectedCallback() {
+            if (this._docPointerDown) {
+                window.removeEventListener("pointerdown", this._docPointerDown);
+                this._docPointerDown = null;
+            }
             if (this.resizeObserver) { this.resizeObserver.disconnect(); this.resizeObserver = null; }
             if (this.intersectionObserver) { this.intersectionObserver.disconnect(); this.intersectionObserver = null; }
             super.disconnectedCallback();
@@ -1139,16 +1489,25 @@ export const lineChart = defineUI({
         }
 
         // ---- series ----------------------------------------------------------------------------
+        // the series with their defaults (cached while the props are the same)
         seriesList() {
             const raw = Array.isArray(this.p && this.p.series) ? this.p.series : [];
+            const defInterp = (this.p && this.p.defaultInterpolation) || "line";
+            const c = this._sl;
+            if (c && c.raw === raw && c.defInterp === defInterp) return c.list;
             const d = seriesDefaults();
-            return raw.map((s, i) => {
+            const list = raw.map((s, i) => {
                 const o = Object.assign({}, d, s && typeof s === "object" ? s : {});
+                o.variant = o.variant || o.interpolation || defInterp;
+                o.notation = notationOf(o.notation);
                 o._i = i;
                 o._key = String(o.id || "#" + i);
                 o._shift = spanMs(o.timeShift);
+                o._side = o.axis === "right" ? "right" : o.axis === "off" || o.axis === "none" ? "off" : "left";
                 return o;
             });
+            this._sl = { raw, defInterp, list };
+            return list;
         }
 
         _state(s) {
@@ -1215,10 +1574,16 @@ export const lineChart = defineUI({
             return added;
         }
 
+        // the series a threshold follows: its id, or the first series
+        _thresholdOf(t) {
+            const list = this.seriesList();
+            return t && t.series ? list.find((x) => x.id === t.series) || null : list[0] || null;
+        }
+
         _crossings(s, from, to) {
-            const axis = s.axis === "right" ? "right" : "left";
             for (const t of Array.isArray(this.p.thresholds) ? this.p.thresholds : []) {
-                if (!t || (t.axis === "right" ? "right" : "left") !== axis) continue;
+                const on = this._thresholdOf(t);
+                if (!on || on._key !== s._key) continue;
                 const v = numOr(t.value, NaN);
                 if (!Number.isFinite(v)) continue;
                 if (from < v && to >= v) this.emit("thresholdCross", { direction: "up", value: to, threshold: v, label: t.label || "" }, this._target(s));
@@ -1317,54 +1682,316 @@ export const lineChart = defineUI({
         // kept for v1 / v2 flows: the chart's Update node appending to a series named in params
         clearPoints() { this.clearAll(); }
 
-        /** Download what it holds: { format: "csv" | "xlsx", range: "visible" | "all" } -> rows written. */
+        _getExportFileName(format, range = "visible") {
+            const utc = this.p.timeZone === "utc";
+            const q = parts(Date.now(), utc);
+            const dateStr = q.y + "-" + pad2(q.mo + 1) + "-" + pad2(q.d);
+            const timeStr = pad2(q.h) + "-" + pad2(q.mi) + "-" + pad2(q.s);
+            const title = String(this._exportTitle() || this.p.exportName || "chart").replace(/[/\\?%*:|"<>]/g, "_");
+            // the raw text: its {date} / {title}… are the chart's tokens, never variables of the page
+            const expr = this._rawText("exportFilename").trim();
+
+            if (expr) {
+                const vars = {
+                    title,
+                    name: title,
+                    date: dateStr,
+                    time: timeStr,
+                    year: q.y,
+                    month: pad2(q.mo + 1),
+                    day: pad2(q.d),
+                    hour: pad2(q.h),
+                    minute: pad2(q.mi),
+                    second: pad2(q.s),
+                    format,
+                    range
+                };
+                let val = null;
+                try {
+                    val = evaluateExpression(expr, (src, ref) => {
+                        const key = ref || src;
+                        return key in vars ? vars[key] : (ref in vars ? vars[ref] : (src in vars ? vars[src] : ""));
+                    });
+                } catch (_) {}
+                if (val !== null && val !== undefined && String(val).trim()) {
+                    let res = String(val).trim().replace(/[/\\?%*:|"<>]/g, "_");
+                    if (!res.toLowerCase().endsWith("." + format)) res += "." + format;
+                    return res;
+                }
+                let replaced = expr;
+                for (const [k, v] of Object.entries(vars)) {
+                    replaced = replaced.split("{" + k + "}").join(String(v));
+                }
+                replaced = replaced.replace(/[/\\?%*:|"<>]/g, "_").trim();
+                if (replaced) {
+                    if (!replaced.toLowerCase().endsWith("." + format)) replaced += "." + format;
+                    return replaced;
+                }
+            }
+
+            return (this.p.exportName || "chart") + "-" + q.y + pad2(q.mo + 1) + pad2(q.d) + "-" + pad2(q.h) + pad2(q.mi) + "." + format;
+        }
+
+        // a prop's text as saved (not resolved: its {tokens} are the chart's own, not page variables)
+        _rawText(key) {
+            const r = this.raw && this.raw[key];
+            return typeof r === "string" ? r : (typeof this.p[key] === "string" ? this.p[key] : "");
+        }
+
+        _exportTitle() { return String(this.p.exportTitle || this.p.title || this.p.name || ""); }
+
+        // the export's options: Logic's params, else the Properties
+        _exportOpts(params) {
+            const P = params && typeof params === "object" ? params : {};
+            const pick = (k, prop) => (P[k] !== undefined ? P[k] : this.p[prop]);
+            return {
+                format: P.format === "xlsx" || P.format === "png" ? P.format : P.format === "csv" ? "csv" : "csv",
+                range: (pick("range", "exportRange") || "visible") === "all" ? "all" : "visible",
+                annotations: pick("annotations", "exportAnnotations") !== false,
+                thresholds: pick("thresholds", "exportThresholds") !== false
+            };
+        }
+
+        // the time span an export covers: the time shown, or everything the shown series hold
+        _exportSpan(range) {
+            const list = this._visible();
+            const fb = this._bounds(list);
+            if (range === "visible" && this._scale) return { list, from: this._scale.vMinX, to: this._scale.vMaxX };
+            return { list, from: fb ? fb.minX : 0, to: fb ? fb.maxX : 0 };
+        }
+
+        // the threshold a value is past (upper / lower limits of its series; the most extreme one)
+        _pastLimit(s, v) {
+            let best = null;
+            for (const t of Array.isArray(this.p.thresholds) ? this.p.thresholds : []) {
+                if (!t || (t.kind !== "upper" && t.kind !== "lower")) continue;
+                const on = this._thresholdOf(t), tv = numOr(t.value, NaN);
+                if (!on || on._key !== s._key || !Number.isFinite(tv)) continue;
+                if (t.kind === "upper" && v >= tv && (!best || best.kind !== "upper" || tv > numOr(best.value, -Infinity))) best = t;
+                if (t.kind === "lower" && v <= tv && (!best || (best.kind === "lower" && tv < numOr(best.value, Infinity)))) best = t;
+            }
+            return best;
+        }
+
+        _download(blob, name) {
+            if (this.isEditor) return;
+            const a = document.createElement("a");
+            a.href = URL.createObjectURL(blob);
+            a.download = name;
+            this.renderRoot.appendChild(a);
+            a.click();
+            a.remove();
+            setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+        }
+
+        /**
+         * Download: { format: "csv" | "xlsx" | "png", range: "visible" | "all", annotations, thresholds }
+         * (each optional: the Properties' Export settings). The shown series only. CSV / Excel: a
+         * row per time, a column per series, an Annotation column; Excel: values past a limit in its
+         * colour, an Info sheet. -> rows written (PNG: a Promise of { name, blob }).
+         */
         exportData(params) {
-            const format = params && params.format === "xlsx" ? "xlsx" : "csv";
-            const visible = !(params && params.range === "all");
-            const list = this.seriesList().filter((s) => this._state(s).buf.count > 0);
-            const sc = this._scale;
-            const from = visible && sc ? sc.vMinX : -Infinity, to = visible && sc ? sc.vMaxX : Infinity;
-            // one row per time, a column per series (a series without a point at that time: empty)
-            const times = new Map();
+            const o = this._exportOpts(params);
+            if (o.format === "png") return this.exportPNG(params);
+            // an Annotation column when the chart has annotations at all (the same columns every time)
+            if (o.annotations && !this._allAnnotations().length) o.annotations = false;
+            const { list, from, to } = this._exportSpan(o.range);
+            const utc = this.p.timeZone === "utc";
+            const stamp = (ts) => { const q = parts(ts, utc); return q.y + "-" + pad2(q.mo + 1) + "-" + pad2(q.d) + " " + pad2(q.h) + ":" + pad2(q.mi) + ":" + pad2(q.s) + "." + String(q.ms).padStart(3, "0"); };
+            // a row per time: [time, …a value per series (null: no point then), annotation]
+            const times = new Map(), n = list.length;
+            const rowAt = (x) => { let r = times.get(x); if (!r) { r = new Array(n + 1).fill(null); times.set(x, r); } return r; };
             list.forEach((s, c) => {
                 const buf = this._state(s).buf;
                 for (let i = 0; i < buf.count; i++) {
                     const x = buf.getX(i) + s._shift;
-                    if (x < from || x > to) continue;
-                    let row = times.get(x);
-                    if (!row) { row = new Array(list.length).fill(null); times.set(x, row); }
-                    row[c] = buf.getY(i);
+                    if (x >= from && x <= to) rowAt(x)[c] = buf.getY(i);
                 }
             });
+            if (o.annotations) {
+                for (const a of this._allAnnotations()) {
+                    if (a.time < from || a.time > to) continue;
+                    const r = rowAt(a.time), text = a.label + (a.description ? " · " + a.description : "");
+                    r[n] = r[n] ? r[n] + " | " + text : text;
+                }
+            }
             const xs = Array.from(times.keys()).sort((a, b) => a - b);
-            const rows = xs.map((x) => [x].concat(times.get(x)));
-            const header = ["Time"].concat(list.map((s) => (s.name || s.id) + (s.unit ? " (" + s.unit + ")" : "")));
-            const utc = this.p.timeZone === "utc";
-            const stamp = (ts) => { const q = parts(ts, utc); return q.y + "-" + pad2(q.mo + 1) + "-" + pad2(q.d) + " " + pad2(q.h) + ":" + pad2(q.mi) + ":" + pad2(q.s) + "." + String(q.ms).padStart(3, "0"); };
+            const rows = xs.map((x) => [x].concat(times.get(x).slice(0, n), o.annotations ? [times.get(x)[n]] : []));
+            const header = ["Time"].concat(list.map((s) => (s.name || s.id) + (s.unit ? " (" + s.unit + ")" : "")), o.annotations ? ["Annotation"] : []);
             let blob;
-            if (format === "xlsx") blob = xlsxBlob(header, rows, utc);
-            else {
+            if (o.format === "xlsx") {
+                // a value past a limit: the limit's colour
+                const fills = o.thresholds ? rows.map((r) => r.map((v, c) => (c >= 1 && c <= n && v !== null ? ((this._pastLimit(list[c - 1], v) || {}).color || null) : null))) : null;
+                const lims = (Array.isArray(this.p.thresholds) ? this.p.thresholds : []).filter((t) => t && (t.kind === "upper" || t.kind === "lower"));
+                const zone = utc ? "UTC" : ((() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch (e) { return "local"; } })());
+                const info = [["Chart", this._exportTitle() || "Line chart"], ["From", stamp(from)], ["To", stamp(to)], ["Range", o.range === "all" ? "Everything it holds" : "What was shown"],
+                    ["Time zone", zone], ["Exported", stamp(Date.now())]]
+                    .concat(list.map((s) => ["Series", (s.name || s.id) + (s.unit ? " (" + s.unit + ")" : "") + " — Id " + s.id]))
+                    .concat(o.thresholds ? lims.map((t) => { const on = this._thresholdOf(t); return ["Threshold", (t.label ? t.label + ": " : "") + (t.kind === "upper" ? "≥ " : "≤ ") + t.value + (on ? " on " + (on.name || on.id) : "") + " (" + (t.color || "#ef4444") + ")"]; }) : []);
+                blob = xlsxBlob(header, rows, utc, { fills, info, textCols: o.annotations ? [n + 1] : [] });
+            } else {
                 // a comma as the decimal separator: ";" between the columns (as Excel there expects)
-                const comma = formatValue(1.5, { separators: this.p.separators || "locale", thousands: false }).indexOf(",") !== -1;
+                const comma = formatValue(1.5, { separators: (list[0] && list[0].separators) || "locale", thousands: false }).indexOf(",") !== -1;
                 const sep = comma ? ";" : ",";
+                const q = (t) => '"' + String(t).replace(/"/g, '""') + '"';
                 const cell = (v) => (v === null ? "" : comma ? String(v).replace(".", ",") : String(v));
-                const lines = [header.map((h) => '"' + String(h).replace(/"/g, '""') + '"').join(sep)];
-                rows.forEach((r) => lines.push([stamp(r[0])].concat(r.slice(1).map(cell)).join(sep)));
-                blob = new Blob(["﻿" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
+                const lines = [header.map(q).join(sep)];
+                rows.forEach((r) => lines.push([stamp(r[0])].concat(r.slice(1, n + 1).map(cell), o.annotations ? [r[n + 1] ? q(r[n + 1]) : ""] : []).join(sep)));
+                blob = new Blob(["\ufeff" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
             }
-            const q = parts(Date.now(), utc);
-            const name = (this.p.exportName || "chart") + "-" + q.y + pad2(q.mo + 1) + pad2(q.d) + "-" + pad2(q.h) + pad2(q.mi) + "." + format;
-            if (!this.isEditor) {
-                const a = document.createElement("a");
-                a.href = URL.createObjectURL(blob);
-                a.download = name;
-                this.renderRoot.appendChild(a);
-                a.click();
-                a.remove();
-                setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-            }
+            const name = this._getExportFileName(o.format, o.range);
+            this._download(blob, name);
             this._lastExport = { name, rows: rows.length, columns: header.length, blob };
+            this.scheduleDraw();
             return rows.length;
+        }
+
+        /**
+         * The chart as an image, 2× sharp: a title and the time span above, the legend below. "visible":
+         * what is shown; "all": everything the shown series hold. Hidden series are left out.
+         */
+        exportPNG(params) {
+            const o = this._exportOpts(Object.assign({}, params || {}, { format: "png" }));
+            const { w, h } = this._layoutSize();
+            if (!(w > 0 && h > 0) || !this._visible().length) return Promise.resolve(null);
+            const S = 2, c = this._colors();
+            const span = this._exportSpan(o.range);
+            const range = o.range === "all" ? { vMinX: span.from, vMaxX: span.to > span.from ? span.to : span.from + 10 } : null;
+            // the chart, drawn again off the screen
+            const chart = document.createElement("canvas");
+            chart.width = w * S;
+            chart.height = h * S;
+            const cctx = chart.getContext("2d");
+            if (!cctx) return Promise.resolve(null);
+            cctx.setTransform(S, 0, 0, S, 0, 0);
+            const drawn = this.draw({ ctx: cctx, width: w, height: h, range, noAnnotations: !o.annotations, noThresholds: !o.thresholds });
+            this.scheduleDraw();
+            if (!drawn) return Promise.resolve(null);
+            // the legend: a swatch, the name, the value it shows
+            const mode = this.p.legendValue || "last";
+            const legend = this.p.legend === "none" ? [] : span.list.filter((s) => s.legend !== false).map((s) => {
+                const buf = this._state(s).buf;
+                let y = NaN;
+                if (mode === "last" && buf.count) y = buf.getY(buf.count - 1);
+                else if (mode !== "none") y = this._statsOf(s)[mode];
+                return { color: this.colorOf(s), text: (s.name || s.id) + (mode !== "none" && Number.isFinite(y) ? "  " + this.fmtValue(s, y) : "") };
+            });
+            const meas = document.createElement("canvas").getContext("2d");
+            meas.font = "11px " + c.mono;
+            const lines = [[]];
+            let lineW = 0;
+            for (const it of legend) {
+                const iw = 20 + meas.measureText(it.text).width + 16;
+                if (lineW + iw > w - 24 && lines[lines.length - 1].length) { lines.push([]); lineW = 0; }
+                lines[lines.length - 1].push(it);
+                lineW += iw;
+            }
+            const title = this._exportTitle();
+            const headH = title ? 40 : 24, legH = legend.length ? lines.length * 18 + 8 : 0;
+            const out = document.createElement("canvas");
+            out.width = w * S;
+            out.height = (headH + h + legH) * S;
+            const ctx = out.getContext("2d");
+            ctx.setTransform(S, 0, 0, S, 0, 0);
+            ctx.fillStyle = getComputedStyle(this).getPropertyValue("--panel").trim() || "#181b1f";
+            ctx.fillRect(0, 0, w, headH + h + legH);
+            ctx.textBaseline = "top";
+            ctx.textAlign = "left";
+            if (title) {
+                ctx.font = "600 14px " + (getComputedStyle(this).getPropertyValue("--nexa-fonts-body") || "sans-serif");
+                ctx.fillStyle = c.strong;
+                ctx.fillText(title, 12, 8);
+            }
+            ctx.font = "10.5px " + c.mono;
+            ctx.fillStyle = c.text;
+            ctx.fillText(this.fmtTime(drawn.vMinX) + "  →  " + this.fmtTime(drawn.vMaxX), 12, title ? 26 : 7);
+            ctx.drawImage(chart, 0, headH, w, h);
+            ctx.font = "11px " + c.mono;
+            lines.forEach((line, li) => {
+                let x = 12;
+                const y = headH + h + 4 + li * 18;
+                for (const it of line) {
+                    ctx.fillStyle = it.color;
+                    ctx.fillRect(x, y + 6, 14, 3);
+                    ctx.fillStyle = c.strong;
+                    ctx.fillText(it.text, x + 20, y + 1);
+                    x += 20 + ctx.measureText(it.text).width + 16;
+                }
+            });
+            return new Promise((resolve) => {
+                out.toBlob((blob) => {
+                    if (!blob) { resolve(null); return; }
+                    const name = this._getExportFileName("png", o.range);
+                    this._download(blob, name);
+                    this._lastExport = { name, blob, width: out.width, height: out.height };
+                    resolve(this._lastExport);
+                }, "image/png");
+            });
+        }
+
+        // ---- annotations -----------------------------------------------------------------------
+        _allAnnotations() {
+            if (this.p.showAnnotations === false) return [];
+            const staticList = Array.isArray(this.p.annotations) ? this.p.annotations : [];
+            const res = [];
+            for (const item of staticList) {
+                if (!item) continue;
+                const time = timeOf(item.time);
+                if (!Number.isFinite(time)) continue;
+                res.push({
+                    id: item.id || ("ann-s-" + time + "-" + (item.label || "")),
+                    time,
+                    label: String(item.label || "Event"),
+                    color: item.color || "#f59e0b",
+                    description: item.description ? String(item.description) : ""
+                });
+            }
+            return res.concat(this._dynamicAnnotations);
+        }
+
+        addAnnotation(params) {
+            if (!params) return;
+            const items = Array.isArray(params) ? params : [params];
+            for (const item of items) {
+                if (!item || typeof item !== "object") continue;
+                const time = item.time === undefined || item.time === null || item.time === "" ? Date.now() : timeOf(item.time);
+                if (!Number.isFinite(time)) continue;
+                this._dynamicAnnotations.push({
+                    id: item.id || ("ann-" + Date.now() + "-" + Math.random().toString(36).slice(2, 6)),
+                    time,
+                    label: String(item.label || "Event"),
+                    color: item.color || "#f59e0b",
+                    description: item.description ? String(item.description) : ""
+                });
+            }
+            this.draw();
+            this.requestUpdate();
+        }
+
+        setAnnotations(params) {
+            this._dynamicAnnotations = [];
+            const list = Array.isArray(params) ? params : (params && Array.isArray(params.annotations) ? params.annotations : (params && Array.isArray(params.list) ? params.list : (params ? [params] : [])));
+            for (const item of list) {
+                if (!item || typeof item !== "object") continue;
+                const time = item.time === undefined || item.time === null || item.time === "" ? Date.now() : timeOf(item.time);
+                if (!Number.isFinite(time)) continue;
+                this._dynamicAnnotations.push({
+                    id: item.id || ("ann-" + Date.now() + "-" + Math.random().toString(36).slice(2, 6)),
+                    time,
+                    label: String(item.label || "Event"),
+                    color: item.color || "#f59e0b",
+                    description: item.description ? String(item.description) : ""
+                });
+            }
+            this.draw();
+            this.requestUpdate();
+        }
+
+        clearAnnotations() {
+            this._dynamicAnnotations = [];
+            this._hoverAnnotation = null;
+            this.draw();
+            this.requestUpdate();
         }
 
         // ---- canvas ----------------------------------------------------------------------------
@@ -1404,15 +2031,25 @@ export const lineChart = defineUI({
             }
         }
 
+        // The plot's size in layout px (clientWidth / clientHeight), never getBoundingClientRect: the
+        // editor zooms its canvas with a CSS transform, so the measured box is scaled (at 50 % the
+        // chart was drawn at half its size and stretched back: big text, a squashed plot). The
+        // zoom only sharpens the backing store.
+        _layoutSize() {
+            const box = this._plotEl() || this;
+            return { box, w: box.clientWidth, h: box.clientHeight };
+        }
+
         resizeCanvas() {
             if (!this.canvas) return false;
-            const box = this._plotEl() || this;
-            const rect = box.getBoundingClientRect();
-            const w = Math.floor(rect.width), h = Math.floor(rect.height);
+            const { box, w, h } = this._layoutSize();
             if (w <= 0 || h <= 0) return false;   // tabs / hidden containers: never collapse the canvas
+            const rect = box.getBoundingClientRect();
+            const zoom = rect.width > 0 ? Math.max(0.25, Math.min(4, rect.width / w)) : 1;
             const rawDpr = window.devicePixelRatio || 1;
-            const dpr = w >= 1200 ? Math.min(rawDpr, 1.0) : (w >= 800 ? Math.min(rawDpr, 1.25) : Math.min(rawDpr, 1.5));
-            const pixelW = Math.floor(w * dpr), pixelH = Math.floor(h * dpr);
+            const base = w >= 1200 ? Math.min(rawDpr, 1.0) : (w >= 800 ? Math.min(rawDpr, 1.25) : Math.min(rawDpr, 1.5));
+            const dpr = Math.round(base * zoom * 100) / 100;
+            const pixelW = Math.max(1, Math.floor(w * dpr)), pixelH = Math.max(1, Math.floor(h * dpr));
             if (this.canvas.style.width || this.canvas.style.height) { this.canvas.style.width = ""; this.canvas.style.height = ""; }
             if (this.canvas.width === pixelW && this.canvas.height === pixelH && this._lastDpr === dpr) return true;
             this._lastDpr = dpr;
@@ -1437,23 +2074,84 @@ export const lineChart = defineUI({
             return Number.isFinite(minX) ? { minX, maxX } : null;
         }
 
-        _rulerHeight() {
-            return ({ tworow: 36, navigator: 54, comb: 30, axis: 20, none: 0 })[this.p.ruler || "tworow"] ?? 36;
+        _rulerHeight(chartH) {
+            const kind = this.p.ruler || "tworow";
+            if (kind === "none") return 0;
+            const showDate = this.p.showDate !== false;
+            const showTime = this.p.showTime !== false;
+            const ch = chartH || this._layoutSize().h || 320;
+            const rhp = numOr(this.p.rulerHeight, 0);
+            const pct = rhp > 0 ? Math.min(50, Math.max(1, rhp)) : 0;
+
+            if (pct > 0) {
+                const targetH = Math.round((ch * pct) / 100);
+                if (kind === "axis") {
+                    if (!showDate && !showTime) return 0;
+                    const minH = (!showDate || !showTime) ? 18 : 28;
+                    return Math.max(minH, targetH);
+                }
+                if (kind === "navigator") {
+                    const minH = (!showDate && !showTime) ? 36 : (!showDate || !showTime) ? 48 : 60;
+                    return Math.max(minH, targetH);
+                }
+                // the band: ticks (10) + the rows + the grip (6)
+                const minH = (!showDate && !showTime) ? 14 : (!showDate || !showTime) ? 28 : 40;
+                return Math.max(minH, targetH);
+            }
+
+            if (kind === "tworow" || kind === "comb") {
+                if (!showDate && !showTime) return 14;
+                if (!showDate || !showTime) return 28;
+                return 40;
+            }
+            if (kind === "axis") {
+                if (!showDate && !showTime) return 0;
+                if (showDate && showTime) return 30;
+                return 20;
+            }
+            if (kind === "navigator") {
+                if (!showDate && !showTime) return 38;
+                if (!showDate || !showTime) return 54;
+                return 68;
+            }
+            return 38;
         }
 
-        getPlotMetrics(width, height) {
-            const right = this._usesRight();
-            const titled = !!(this.p.leftTitle || (right && this.p.rightTitle));
-            const rh = this._rulerHeight();
-            const padLeft = 56, padRight = right ? 56 : 16, padTop = titled ? 22 : 14, padBottom = rh ? 4 : 8;
-            const plotX = padLeft, plotY = padTop;
+        _timeStep(span, w) {
+            const density = this.p.tickDensity || "normal";
+            const div = density === "loose" ? 150 : density === "dense" ? 60 : 90;
+            const maxT = density === "loose" ? 5 : density === "dense" ? 12 : 8;
+            return getNiceTimeStep(span, Math.max(2, Math.min(maxT, Math.floor(w / div))));
+        }
+
+        _axisTitle(s) { return String(s.axisTitle || s.unit || ""); }
+
+        // the plot's top and height: the ruler below it, the axis titles above it
+        _vertical(height, titled) {
+            const rh = this._rulerHeight(height), rulerGap = rh ? 6 : 0;
+            const plotY = titled ? 24 : 14, padBottom = rh ? 6 : 8;
+            return { plotY, plotH: Math.max(1, height - plotY - padBottom - rh - rulerGap), rh, rulerGap };
+        }
+
+        /**
+         * layout = { left: [col], right: [col] }, a col per series axis ({ s, w, ticks, labels, title }),
+         * innermost first. Without one: the last drawn (the pointer uses what is on the screen).
+         */
+        getPlotMetrics(width, height, layout) {
+            const L = layout || (this._scale && this._scale.layout) || { left: [], right: [] };
+            const gap = Math.max(0, numOr(this.p && this.p.axisGap, 8));
+            const side = (cols) => (cols.length ? cols.reduce((a, c) => a + c.w, 0) + gap * (cols.length - 1) + 4 : 14);
+            const padLeft = side(L.left), padRight = side(L.right);
+            const v = this._vertical(height, L.left.concat(L.right).some((c) => c.title));
             const plotW = Math.max(1, width - padLeft - padRight);
-            const plotH = Math.max(1, height - padTop - padBottom - rh);
-            return { plotX, plotY, plotW, plotH, rulerX: padLeft, rulerY: plotY + plotH + (rh ? 4 : 0), rulerW: plotW, rulerH: rh };
+            return {
+                plotX: padLeft, plotY: v.plotY, plotW, plotH: v.plotH, padLeft, padRight, axisGap: gap,
+                rulerX: padLeft, rulerY: v.plotY + v.plotH + v.rulerGap, rulerW: plotW, rulerH: v.rh
+            };
         }
 
         _usesRight() {
-            return this.seriesList().some((s) => s.axis === "right" && s.visible !== false && !this._hidden.has(s._key));
+            return this.seriesList().some((s) => s._side === "right" && s.visible !== false && !this._hidden.has(s._key));
         }
 
         colorOf(s) {
@@ -1466,35 +2164,45 @@ export const lineChart = defineUI({
         }
 
         // ---- numbers & times -------------------------------------------------------------------
-        _axisSpec(axis) {
-            return { notation: this.p[axis + "Notation"] || "standard", decimals: this.p[axis + "Decimals"] || "auto",
-                thousands: this.p.thousands !== false, separators: this.p.separators || "locale" };
-        }
-
         _seriesSpec(s) {
-            const a = this._axisSpec(s.axis === "right" ? "right" : "left");
-            if (s.notation && s.notation !== "axis") a.notation = s.notation;
-            if (s.decimals && s.decimals !== "axis") a.decimals = s.decimals;
-            return a;
+            return {
+                notation: notationOf(s && s.notation), decimals: (s && s.decimals) || "auto",
+                separators: (s && s.separators) || "locale", thousands: !(s && s.thousands === false)
+            };
         }
 
         fmtValue(s, y) { return formatValue(y, this._seriesSpec(s), s.unit || ""); }
 
         _tf() { return { utc: this.p.timeZone === "utc", h12: this.p.timeFormat === "12h", rel: this.p.timeFormat === "relative" }; }
 
-        fmtTick(ts, step) {
+        // a tick's time; dateShown: the ruler has its date row, so no date here (it would be twice)
+        fmtTick(ts, step, dateShown) {
             const f = this._tf();
             if (f.rel && this._newest !== undefined) return relative(ts - this._newest);
             const p = parts(ts, f.utc);
             if (step < 1000) return pad2(p.s) + "." + String(p.ms).padStart(3, "0");
             if (step >= 86400000) return p.d + " " + MONTHS[p.mo];
-            // hours apart over several days: the day too ("3 Oct 19:00")
-            if (step >= 6 * 3600000) return p.d + " " + MONTHS[p.mo] + " " + clock(p, f.h12, false);
+            // hours apart over several days: the day too ("3 Oct 19:00"), unless a date row says it
+            if (step >= 6 * 3600000 && !dateShown) return p.d + " " + MONTHS[p.mo] + " " + clock(p, f.h12, false);
             return clock(p, f.h12, step < 60000);
+        }
+
+        // the date, shorter (when the full one does not fit a day's width)
+        fmtDateShort(ts) {
+            const p = parts(ts, this._tf().utc);
+            const fmt = this.p.dateFormat || "default";
+            if (fmt === "iso") return pad2(p.mo + 1) + "-" + pad2(p.d);
+            if (fmt === "dmy") return pad2(p.d) + "/" + pad2(p.mo + 1);
+            if (fmt === "mdy") return pad2(p.mo + 1) + "/" + pad2(p.d);
+            return pad2(p.d) + " " + MONTHS[p.mo];
         }
 
         fmtDate(ts) {
             const p = parts(ts, this._tf().utc);
+            const fmt = this.p.dateFormat || "default";
+            if (fmt === "iso") return p.y + "-" + pad2(p.mo + 1) + "-" + pad2(p.d);
+            if (fmt === "dmy") return pad2(p.d) + "/" + pad2(p.mo + 1) + "/" + p.y;
+            if (fmt === "mdy") return pad2(p.mo + 1) + "/" + pad2(p.d) + "/" + p.y;
             return DAYS[p.wd] + " " + pad2(p.d) + " " + MONTHS[p.mo] + " " + p.y;
         }
 
@@ -1560,56 +2268,111 @@ export const lineChart = defineUI({
             return t;
         }
 
-        _yRange(list, axis) {
+        // a series' Y range in the time shown (its points just outside too: the line runs to them),
+        // its soft limits (the range covers them), its hard limits (fixed)
+        _seriesRange(s, vMinX, vMaxX) {
+            const buf = this._state(s).buf, sh = s._shift;
             let lo = Infinity, hi = -Infinity;
-            for (const s of list) {
-                if ((s.axis === "right" ? "right" : "left") !== axis) continue;
-                const st = this._state(s);
-                for (let i = 0; i < st.n; i++) { const y = st.dy[i]; if (y < lo) lo = y; if (y > hi) hi = y; }
+            if (buf.count) {
+                const i0 = Math.max(0, lowerBoundRing(buf, vMinX - sh) - 1), i1 = Math.min(buf.count, upperBoundRing(buf, vMaxX - sh) + 1);
+                if (i1 > i0) {
+                    const o = this._mm || (this._mm = { min: 0, max: 0, minAt: 0, maxAt: 0 });
+                    buf.rangeMinMax(i0, i1, o);
+                    lo = o.min; hi = o.max;
+                }
             }
             if (!Number.isFinite(lo)) { lo = 0; hi = 1; }
-            // soft limits: the range covers them, and grows with the data
-            const sMin = numOr(this.p[axis + "SoftMin"], NaN), sMax = numOr(this.p[axis + "SoftMax"], NaN);
+            const sMin = numOr(s.softMin, NaN), sMax = numOr(s.softMax, NaN);
             if (Number.isFinite(sMin) && sMin < lo) lo = sMin;
             if (Number.isFinite(sMax) && sMax > hi) hi = sMax;
             if (lo === hi) { const pad = Math.abs(lo) * 0.1 || 1; lo -= pad; hi += pad; }
-            else if (!(Number.isFinite(sMin) && lo === sMin && Number.isFinite(sMax) && hi === sMax)) { const pad = (hi - lo) * 0.08; if (!(Number.isFinite(sMin) && lo === sMin)) lo -= pad; if (!(Number.isFinite(sMax) && hi === sMax)) hi += pad; }
-            // hard limits: fixed, the line clips
-            const hMin = numOr(this.p[axis + "Min"], NaN), hMax = numOr(this.p[axis + "Max"], NaN);
+            else {
+                const pad = (hi - lo) * 0.08;
+                if (!(Number.isFinite(sMin) && lo === sMin)) lo -= pad;
+                if (!(Number.isFinite(sMax) && hi === sMax)) hi += pad;
+            }
+            if (s.zeroCenter) { const mm = Math.max(Math.abs(lo), Math.abs(hi)) || 1; lo = -mm; hi = mm; }
+            const hMin = numOr(s.min, NaN), hMax = numOr(s.max, NaN);
             if (Number.isFinite(hMin)) lo = hMin;
             if (Number.isFinite(hMax)) hi = hMax;
             if (hi <= lo) hi = lo + 1;
             return { lo, hi };
         }
 
-        draw() {
+        _ticks(r, ph) {
+            const n = Math.max(3, Math.min(6, Math.floor(ph / 45)));
+            const step = niceNum((r.hi - r.lo) / n, false);
+            const values = [];
+            if (!(step > 0) || !Number.isFinite(step)) return values;
+            for (let v = Math.ceil(r.lo / step) * step, k = 0; v <= r.hi + step * 1e-9 && k < 60; v += step, k++) values.push(Math.abs(v) < step * 1e-9 ? 0 : v);
+            return values;
+        }
+
+        /**
+         * Draws the chart on its canvas; with a target ({ ctx, width, height, range?, noAnnotations?,
+         * noThresholds? }) into that one instead (an export): no hover, no selection, the screen's
+         * state left as it was. -> { vMinX, vMaxX } drawn (a target), or nothing.
+         */
+        draw(target) {
+            if (target) {
+                const keep = { scale: this._scale, full: this._full, newest: this._newest, hover: this.hover, sel: this._selection, hr: this._hoverRuler, drag: this.drag, ha: this._hoverAnnotation, hits: this._annotationHits };
+                this._exporting = target;
+                this.hover = null; this._selection = null; this._hoverRuler = false; this.drag = null; this._hoverAnnotation = null;
+                try {
+                    this._drawInto(target.ctx, target.width, target.height, target.range || null);
+                    return this._scale ? { vMinX: this._scale.vMinX, vMaxX: this._scale.vMaxX } : null;
+                } finally {
+                    this._exporting = null;
+                    this._scale = keep.scale; this._full = keep.full; this._newest = keep.newest; this.hover = keep.hover; this._selection = keep.sel;
+                    this._hoverRuler = keep.hr; this.drag = keep.drag; this._hoverAnnotation = keep.ha; this._annotationHits = keep.hits;
+                }
+            }
             if (!this.canvas || !this.ctx) return;
-            const box = this._plotEl() || this.canvas;
-            const rect = box.getBoundingClientRect();
-            const width = rect.width, height = rect.height;
+            const { w: width, h: height } = this._layoutSize();
             if (width <= 0 || height <= 0) return;
             if (!this.resizeCanvas()) return;
-            const ctx = this.ctx;
+            this._drawInto(this.ctx, width, height, null);
+        }
+
+        _drawInto(ctx, width, height, range) {
             ctx.clearRect(0, 0, width, height);
             const list = this._visible();
-            if (!list.length) { this._scale = null; this._updateLegend(null); return; }
+            if (!list.length) { this._scale = null; if (!this._exporting) this._updateLegend(null); return; }
             const fb = this._bounds(list);
             if (!fb) return;
             this._full = fb;
             this._newest = fb.maxX;
-            const { vMinX, vMaxX } = this.getEffectiveTimeRange(fb);
+            const { vMinX, vMaxX } = range || this.getEffectiveTimeRange(fb);
             if (!Number.isFinite(vMinX) || !Number.isFinite(vMaxX)) return;
-            const m = this.getPlotMetrics(width, height);
+
+            // every series its own scale; an axis per series not hidden, innermost = first in the list
+            const yr = {};
+            for (const s of list) yr[s._key] = this._seriesRange(s, vMinX, vMaxX);
+            const onSide = (side) => list.filter((s) => s._side === side);
+            const titled = list.some((s) => s._side !== "off" && this._axisTitle(s));
+            const plotH0 = this._vertical(height, titled).plotH;
+            const c = this._colors();
+            ctx.font = "10px " + c.mono;
+            const col = (s) => {
+                const ticks = this._ticks(yr[s._key], plotH0), spec = this._seriesSpec(s);
+                const labels = ticks.map((v) => formatValue(v, spec));
+                const title = this._axisTitle(s);
+                let w = 0;
+                for (const l of labels) w = Math.max(w, ctx.measureText(l).width);
+                if (title) w = Math.max(w, ctx.measureText(title).width - 2);
+                return { s, ticks, labels, title, w: Math.max(26, Math.ceil(w) + 10) };
+            };
+            const layout = { left: onSide("left").map(col), right: onSide("right").map(col) };
+            const m = this.getPlotMetrics(width, height, layout);
             const { plotX, plotY, plotW, plotH } = m;
 
             for (const s of list) this._decimate(this.decimator, s, vMinX, vMaxX, plotW);
-            const yr = { left: this._yRange(list, "left"), right: this._usesRight() ? this._yRange(list, "right") : null };
             const xSpan = Math.max(1, vMaxX - vMinX);
             const toX = (x) => plotX + ((x - vMinX) / xSpan) * plotW;
-            const toY = (y, axis) => { const r = yr[axis] || yr.left; return plotY + plotH - ((y - r.lo) / (r.hi - r.lo)) * plotH; };
-            this._scale = { vMinX, vMaxX, toX, toY, m, yr };
+            const toY = (y, key) => { const r = yr[key]; return r ? plotY + plotH - ((y - r.lo) / (r.hi - r.lo)) * plotH : plotY + plotH; };
+            this._scale = { vMinX, vMaxX, toX, toY, m, yr, layout };
 
-            this.drawAxesAndGrid(ctx, m, vMinX, vMaxX, yr);
+            this.drawAxesAndGrid(ctx, m, vMinX, vMaxX, yr, layout);
             ctx.save();
             ctx.beginPath();
             ctx.rect(plotX, plotY, plotW, plotH);
@@ -1620,11 +2383,13 @@ export const lineChart = defineUI({
                 ctx.fillRect(a, plotY, b - a, plotH);
             }
             for (const s of list) this._drawSeries(ctx, s, toX, toY, plotY, plotH);
-            this._drawThresholds(ctx, toY, plotX, plotW);
+            const ex = this._exporting;
+            if (!(ex && ex.noThresholds)) this._drawThresholds(ctx, toY, plotX, plotW);
+            if (!(ex && ex.noAnnotations)) this._drawAnnotations(ctx, toX, plotX, plotY, plotW, plotH, vMinX, vMaxX);
             this._drawHover(ctx, toX, toY, plotY, plotH);
             ctx.restore();
             this._drawRuler(ctx, m, vMinX, vMaxX, list);
-            this._updateLegend(list, vMinX, vMaxX);
+            if (!ex) this._updateLegend(list, vMinX, vMaxX);
         }
 
         _runs(st, gapAfter) {
@@ -1636,19 +2401,20 @@ export const lineChart = defineUI({
         }
 
         _tracePath(ctx, st, a, b, s, toX, toY) {
-            const axis = s.axis === "right" ? "right" : "left";
-            const X = (i) => toX(st.dx[i]), Y = (i) => toY(st.dy[i], axis);
+            const X = (i) => toX(st.dx[i]), Y = (i) => toY(st.dy[i], s._key);
+            const variant = s.variant;
             ctx.moveTo(X(a), Y(a));
-            if (s.variant === "step") {
+            if (variant === "step") {
+                const stepMode = s.step || "after";
                 for (let i = a + 1; i < b; i++) {
-                    if (s.step === "before") ctx.lineTo(X(i - 1), Y(i));
-                    else if (s.step === "center") { const mx = (X(i - 1) + X(i)) / 2; ctx.lineTo(mx, Y(i - 1)); ctx.lineTo(mx, Y(i)); }
+                    if (stepMode === "before") ctx.lineTo(X(i - 1), Y(i));
+                    else if (stepMode === "center") { const mx = (X(i - 1) + X(i)) / 2; ctx.lineTo(mx, Y(i - 1)); ctx.lineTo(mx, Y(i)); }
                     else ctx.lineTo(X(i), Y(i - 1));
                     ctx.lineTo(X(i), Y(i));
                 }
                 return;
             }
-            if (s.variant === "smooth" && b - a > 2) {
+            if (variant === "smooth" && b - a > 2) {
                 // monotone cubic (Fritsch–Carlson): smooth, never overshoots a peak
                 const n = b - a, xs = new Float64Array(n), ys = new Float64Array(n), d = new Float64Array(n), t = new Float64Array(n);
                 for (let k = 0; k < n; k++) { xs[k] = X(a + k); ys[k] = Y(a + k); }
@@ -1672,20 +2438,21 @@ export const lineChart = defineUI({
         _drawSeries(ctx, s, toX, toY, plotY, plotH) {
             const st = this._state(s);
             if (!st.n) return;
-            const color = this.colorOf(s), axis = s.axis === "right" ? "right" : "left", lw = numOr(s.width, 2);
+            const variant = s.variant;
+            const color = this.colorOf(s), axis = s._key, lw = numOr(s.width, 2);
             const runs = this._runs(st, numOr(s.gapAfter, 0)), base = plotY + plotH;
             ctx.save();
             ctx.globalAlpha = Math.max(0, Math.min(1, numOr(s.opacity, 1)));
-            if (s.variant === "bars") {
+            if (variant === "bars") {
                 const w = Math.max(1, Math.min(24, ((toX(st.dx[st.n - 1]) - toX(st.dx[0])) / Math.max(1, st.n)) * 0.7));
-                const r = this._scale.yr[axis] || this._scale.yr.left;
+                const r = this._scale.yr[axis];
                 const zero = toY(Math.max(r.lo, Math.min(r.hi, 0)), axis);
                 ctx.fillStyle = color;
                 for (let i = 0; i < st.n; i++) { const x = toX(st.dx[i]), y = toY(st.dy[i], axis); ctx.fillRect(x - w / 2, Math.min(y, zero), w, Math.max(1, Math.abs(zero - y))); }
                 ctx.restore();
                 return;
             }
-            if (s.fill && s.fill !== "none" && s.variant !== "points" && st.n > 1) {
+            if (s.fill && s.fill !== "none" && variant !== "points" && st.n > 1) {
                 const fo = Math.max(0, Math.min(1, numOr(s.fillOpacity, 0.25)));
                 let style;
                 if (s.fill === "gradient") {
@@ -1705,7 +2472,7 @@ export const lineChart = defineUI({
                     ctx.fill();
                 }
             }
-            if (s.variant !== "points") {
+            if (variant !== "points") {
                 ctx.strokeStyle = color;
                 ctx.lineWidth = lw;
                 ctx.lineJoin = "round";
@@ -1726,7 +2493,7 @@ export const lineChart = defineUI({
                 }
                 ctx.setLineDash([]);
             }
-            if (s.points || s.variant === "points") {
+            if (s.points || variant === "points") {
                 ctx.fillStyle = color;
                 const pr = numOr(s.pointRadius, 3);
                 for (let i = 0; i < st.n; i++) this._marker(ctx, s.pointShape, toX(st.dx[i]), toY(st.dy[i], axis), pr);
@@ -1751,10 +2518,10 @@ export const lineChart = defineUI({
             ctx.textAlign = "right";
             ctx.textBaseline = "bottom";
             for (const t of list) {
-                const v = numOr(t && t.value, NaN);
-                const axis = t && t.axis === "right" && this._scale.yr.right ? "right" : "left";
-                if (!Number.isFinite(v)) continue;
-                const y = Math.round(toY(v, axis)) + 0.5;
+                const v = numOr(t && t.value, NaN), on = this._thresholdOf(t);
+                // on the scale of its series (not drawn while that series is hidden)
+                if (!Number.isFinite(v) || !on || !this._scale.yr[on._key]) continue;
+                const y = Math.round(toY(v, on._key)) + 0.5;
                 ctx.strokeStyle = (t && t.color) || "#ef4444";
                 ctx.lineWidth = 1;
                 ctx.setLineDash(DASHES[t && t.dash] || DASHES.dashed);
@@ -1765,6 +2532,80 @@ export const lineChart = defineUI({
                 if (t && t.label) { ctx.fillStyle = (t && t.color) || "#ef4444"; ctx.fillText(String(t.label), plotX + plotW - 4, y - 2); }
             }
             ctx.setLineDash([]);
+            ctx.restore();
+        }
+
+        _drawAnnotations(ctx, toX, plotX, plotY, plotW, plotH, vMinX, vMaxX) {
+            const list = this._allAnnotations();
+            this._annotationHits = [];
+            if (!list.length) return;
+            const cs = getComputedStyle(this);
+            const mono = cs.getPropertyValue("--mono") || "monospace";
+
+            ctx.save();
+            ctx.font = "9.5px " + mono;
+
+            for (const ann of list) {
+                if (ann.time < vMinX || ann.time > vMaxX) continue;
+                const x = toX(ann.time);
+                if (x < plotX - 25 || x > plotX + plotW + 25) continue;
+
+                const color = ann.color || "#f59e0b";
+                const isHovered = this._hoverAnnotation && this._hoverAnnotation.id === ann.id;
+
+                // 1. Vertical marker line
+                ctx.strokeStyle = color;
+                ctx.lineWidth = isHovered ? 2 : 1.2;
+                ctx.setLineDash([4, 3]);
+                ctx.beginPath();
+                ctx.moveTo(Math.round(x) + 0.5, plotY + 18);
+                ctx.lineTo(Math.round(x) + 0.5, plotY + plotH);
+                ctx.stroke();
+                ctx.setLineDash([]);
+
+                // 2. Badge pill at top
+                const text = ann.label || "Event";
+                const tw = ctx.measureText(text).width;
+                const bw = Math.max(28, tw + 12);
+                const bh = 17;
+                const bx = Math.max(plotX + 2, Math.min(plotX + plotW - bw - 2, x - bw / 2));
+                const by = plotY + 2;
+
+                // Badge background & border
+                ctx.fillStyle = isHovered ? color : "rgba(30, 34, 40, 0.92)";
+                ctx.strokeStyle = color;
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                if (ctx.roundRect) ctx.roundRect(bx, by, bw, bh, 3);
+                else ctx.rect(bx, by, bw, bh);
+                ctx.fill();
+                ctx.stroke();
+
+                // Small triangular pointer down to line
+                ctx.fillStyle = color;
+                ctx.beginPath();
+                ctx.moveTo(x - 3, by + bh);
+                ctx.lineTo(x + 3, by + bh);
+                ctx.lineTo(x, by + bh + 3);
+                ctx.closePath();
+                ctx.fill();
+
+                // Text
+                ctx.fillStyle = isHovered ? "#fff" : color;
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
+                ctx.fillText(text, bx + bw / 2, by + bh / 2);
+
+                this._annotationHits.push({
+                    id: ann.id,
+                    time: ann.time,
+                    label: ann.label,
+                    color: ann.color,
+                    description: ann.description,
+                    box: { x: bx, y: by, w: bw, h: bh + 4, lineX: x }
+                });
+            }
+
             ctx.restore();
         }
 
@@ -1786,7 +2627,7 @@ export const lineChart = defineUI({
                 ctx.fillStyle = this.colorOf(hit.s);
                 ctx.strokeStyle = "#fff";
                 ctx.lineWidth = 2;
-                ctx.arc(toX(hit.x), toY(hit.y, hit.s.axis === "right" ? "right" : "left"), 4.5, 0, Math.PI * 2);
+                ctx.arc(toX(hit.x), toY(hit.y, hit.s._key), 4.5, 0, Math.PI * 2);
                 ctx.fill();
                 ctx.stroke();
             }
@@ -1805,74 +2646,183 @@ export const lineChart = defineUI({
             };
         }
 
-        drawAxesAndGrid(ctx, m, minX, maxX, yr) {
-            const { plotX: px, plotY: py, plotW: pw, plotH: ph } = m;
+        drawAxesAndGrid(ctx, m, minX, maxX, yr, layout) {
+            const { plotX: px, plotY: py, plotW: pw, plotH: ph, axisGap: gap } = m;
             const c = this._colors();
+            const many = layout.left.length + layout.right.length > 1;
+            const gridCol = layout.left[0] || layout.right[0] || null;
             ctx.save();
             ctx.font = "10px " + c.mono;
-            const yTicksCount = Math.max(3, Math.min(6, Math.floor(ph / 45)));
-            const axisTicks = (r, side) => {
-                const range = r.hi - r.lo, step = niceNum(range / yTicksCount, false), spec = this._axisSpec(side);
+            const drawCol = (col, edge, side) => {
+                const s = col.s, r = yr[s._key], range = r.hi - r.lo || 1;
+                const color = many ? this.colorOf(s) : c.text;
+                const showLine = s.axisLine !== false;
+                const lineColor = s.axisLineColor || (many ? color : c.grid);
+                const lineWidth = numOr(s.axisLineWidth, 1) > 0 ? numOr(s.axisLineWidth, 1) : 1;
+                const sx = Math.round(edge) + 0.5;
+                if (showLine) {
+                    ctx.save();
+                    ctx.strokeStyle = lineColor;
+                    ctx.lineWidth = lineWidth;
+                    ctx.setLineDash(s.axisLineDash === "dashed" ? [4, 4] : s.axisLineDash === "dotted" ? [2, 2] : []);
+                    ctx.beginPath();
+                    ctx.moveTo(sx, py);
+                    ctx.lineTo(sx, py + ph);
+                    ctx.stroke();
+                    ctx.restore();
+                }
                 ctx.textAlign = side === "left" ? "right" : "left";
                 ctx.textBaseline = "middle";
-                for (let v = Math.ceil(r.lo / step) * step; v <= r.hi + step * 1e-9; v += step) {
-                    const sy = py + ph - ((v - r.lo) / range) * ph;
-                    if (sy < py - 0.5 || sy > py + ph + 0.5) continue;
-                    if (side === "left" && this.p.showGrid) {
+                const labelX = side === "left" ? edge - 6 : edge + 6;
+                // zero in the middle: a line at 0 across the plot
+                if (s.zeroCenter && r.lo < 0 && r.hi > 0) {
+                    const zy = Math.round(py + ph - ((0 - r.lo) / range) * ph) + 0.5;
+                    ctx.save();
+                    ctx.strokeStyle = many ? this.colorOf(s) : c.text;
+                    ctx.globalAlpha = 0.6;
+                    ctx.beginPath();
+                    ctx.moveTo(px, zy);
+                    ctx.lineTo(px + pw, zy);
+                    ctx.stroke();
+                    ctx.restore();
+                }
+                col.ticks.forEach((v, i) => {
+                    const ty = py + ph - ((v - r.lo) / range) * ph;
+                    if (ty < py - 0.5 || ty > py + ph + 0.5) return;
+                    if (col === gridCol && this.p.showGrid) {
                         ctx.beginPath();
                         ctx.strokeStyle = c.grid;
                         ctx.lineWidth = 1;
-                        ctx.moveTo(px, sy);
-                        ctx.lineTo(px + pw, sy);
+                        ctx.moveTo(px, Math.round(ty) + 0.5);
+                        ctx.lineTo(px + pw, Math.round(ty) + 0.5);
                         ctx.stroke();
                     }
-                    ctx.fillStyle = c.text;
-                    ctx.fillText(formatValue(Math.abs(v) < step * 1e-9 ? 0 : v, spec), side === "left" ? px - 6 : px + pw + 6, sy);
+                    if (showLine) {
+                        ctx.beginPath();
+                        ctx.strokeStyle = lineColor;
+                        ctx.lineWidth = Math.min(lineWidth, 2);
+                        ctx.moveTo(sx, ty);
+                        ctx.lineTo(sx + (side === "left" ? -4 : 4), ty);
+                        ctx.stroke();
+                    }
+                    ctx.fillStyle = color;
+                    ctx.fillText(col.labels[i], labelX, ty);
+                });
+                if (col.title) {
+                    ctx.textBaseline = "bottom";
+                    ctx.fillStyle = s.axisTitleColor || color;
+                    ctx.fillText(col.title, labelX, py - 6);
                 }
             };
-            axisTicks(yr.left, "left");
-            if (yr.right) axisTicks(yr.right, "right");
-            ctx.textBaseline = "top";
-            ctx.fillStyle = c.text;
-            if (this.p.leftTitle) { ctx.textAlign = "left"; ctx.fillText(String(this.p.leftTitle), 4, 3); }
-            if (yr.right && this.p.rightTitle) { ctx.textAlign = "right"; ctx.fillText(String(this.p.rightTitle), px + pw + 52, 3); }
+            // left: from the chart outwards; right: the same, to the right
+            let edge = px;
+            for (const col of layout.left) { drawCol(col, edge, "left"); edge -= col.w + gap; }
+            edge = px + pw;
+            for (const col of layout.right) { drawCol(col, edge, "right"); edge += col.w + gap; }
+
             // vertical grid at the ruler's major ticks
             if (this.p.showGrid) {
-                const span = Math.max(1, maxX - minX), step = getNiceTimeStep(span, Math.max(2, Math.min(8, Math.floor(pw / 90))));
+                const span = Math.max(1, maxX - minX), step = this._timeStep(span, pw);
                 ctx.beginPath();
                 ctx.strokeStyle = c.grid;
                 ctx.lineWidth = 1;
-                for (let t = Math.ceil(minX / step) * step; t <= maxX; t += step) { const sx = Math.round(px + ((t - minX) / span) * pw) + 0.5; ctx.moveTo(sx, py); ctx.lineTo(sx, py + ph); }
+                for (let t = Math.ceil(minX / step) * step; t <= maxX; t += step) {
+                    const sx = Math.round(px + ((t - minX) / span) * pw) + 0.5;
+                    ctx.moveTo(sx, py);
+                    ctx.lineTo(sx, py + ph);
+                }
                 ctx.stroke();
             }
             ctx.restore();
         }
 
         // ---- the time ruler (every variant but "axis" / "none" can be dragged) ------------------
+        // a row of times at the ticks (a label at an edge stays inside the ruler)
+        _timeRow(ctx, toX, minX, maxX, step, x, w, ty, dateShown, inset) {
+            const pad = inset || 2;
+            ctx.textBaseline = "top";
+            for (let t = Math.ceil(minX / step) * step, k = 0; t <= maxX && k < 200; t += step, k++) {
+                const label = this.fmtTick(t, step, dateShown), tx = toX(t), tw = ctx.measureText(label).width;
+                if (tx - tw / 2 < x + pad) { ctx.textAlign = "left"; ctx.fillText(label, x + pad, ty); }
+                else if (tx + tw / 2 > x + w - pad) { ctx.textAlign = "right"; ctx.fillText(label, x + w - pad, ty); }
+                else { ctx.textAlign = "center"; ctx.fillText(label, tx, ty); }
+            }
+        }
+
+        // a row of dates: once per day, in the middle of the day's part of the ruler (shorter, or
+        // none, when it does not fit); lineFrom / lineTo: a line where a day starts
+        _dateRow(ctx, toX, minX, maxX, x, w, ty, lineFrom, lineTo, lineColor) {
+            const utc = this._tf().utc;
+            const dayStart = (t) => { const q = parts(t, utc); return utc ? Date.UTC(q.y, q.mo, q.d) : new Date(q.y, q.mo, q.d).getTime(); };
+            ctx.textBaseline = "top";
+            ctx.textAlign = "center";
+            let d0 = dayStart(minX), guard = 0;
+            while (d0 <= maxX && guard++ < 400) {
+                const q = parts(d0 + 43200000, utc);
+                const d1 = utc ? Date.UTC(q.y, q.mo, q.d + 1) : new Date(q.y, q.mo, q.d + 1).getTime();
+                const a = Math.max(x, toX(d0)), b = Math.min(x + w, toX(d1)), room = b - a - 8;
+                let label = this.fmtDate(d0 + 1000);
+                if (ctx.measureText(label).width > room) label = this.fmtDateShort(d0 + 1000);
+                if (ctx.measureText(label).width <= room) ctx.fillText(label, (a + b) / 2, ty);
+                if (d0 > minX && lineTo > lineFrom) {
+                    const lx = Math.round(toX(d0)) + 0.5;
+                    ctx.save();
+                    ctx.strokeStyle = lineColor;
+                    ctx.beginPath();
+                    ctx.moveTo(lx, lineFrom);
+                    ctx.lineTo(lx, lineTo);
+                    ctx.stroke();
+                    ctx.restore();
+                }
+                d0 = d1;
+            }
+        }
+
+        // a hint over the ruler, on its own dark plate (it never mixes with the labels under it)
+        _hint(ctx, text, right, top, c) {
+            ctx.font = "9.5px " + c.mono;
+            const tw = ctx.measureText(text).width;
+            ctx.fillStyle = "rgba(0, 0, 0, 0.66)";
+            ctx.fillRect(right - tw - 8, top, tw + 8, 13);
+            ctx.fillStyle = "#fff";
+            ctx.textAlign = "right";
+            ctx.textBaseline = "top";
+            ctx.fillText(text, right - 4, top + 2);
+        }
+
         _drawRuler(ctx, m, minX, maxX, list) {
             const kind = this.p.ruler || "tworow";
             if (kind === "none") return;
             const c = this._colors();
             const { rulerX: x, rulerY: y, rulerW: w, rulerH: h } = m;
+            if (!h) return;
             const span = Math.max(1, maxX - minX);
-            const step = getNiceTimeStep(span, Math.max(2, Math.min(8, Math.floor(w / 90))));
+            const step = this._timeStep(span, w);
             const toX = (t) => x + ((t - minX) / span) * w;
             const hot = this._hoverRuler || (this.drag && this.drag.kind !== "pan" && this.drag.kind !== "select");
+            const showDate = this.p.showDate !== false;
+            // ticks a day (or more) apart: the date row already names them
+            const showTime = this.p.showTime !== false && !(showDate && step >= 86400000);
+            const both = showTime && showDate;
             ctx.save();
-            ctx.font = "10px " + c.mono;
-            ctx.textBaseline = "top";
-            ctx.textAlign = "center";
+
+            if (kind === "navigator") { this._drawNavigator(ctx, m, minX, maxX, list, c); ctx.restore(); return; }
 
             if (kind === "axis") {
+                // labels only: the rows centred in the ruler
+                const rowsH = both ? 24 : 11, top = y + Math.max(2, Math.round((h - rowsH) / 2));
+                ctx.font = "10px " + c.mono;
                 ctx.fillStyle = c.text;
-                for (let t = Math.ceil(minX / step) * step; t <= maxX; t += step) ctx.fillText(this.fmtTick(t, step), toX(t), y + 4);
+                if (showTime) this._timeRow(ctx, toX, minX, maxX, step, x, w, top, showDate);
+                if (showDate) {
+                    ctx.font = "600 9.5px " + c.mono;
+                    this._dateRow(ctx, toX, minX, maxX, x, w, showTime ? top + 13 : top, y, y + h, c.grid);
+                }
                 ctx.restore();
                 return;
             }
 
-            if (kind === "navigator") { this._drawNavigator(ctx, m, minX, maxX, list, c); ctx.restore(); return; }
-
-            // comb / two rows: a band that says "drag me"
+            // comb / band: a band that says "drag me"; ticks on top, then the time row, the date row
             ctx.fillStyle = hot ? this.hexToRgba(c.accent, 0.14) : c.band;
             ctx.fillRect(x, y, w, h);
             ctx.strokeStyle = hot ? c.accent : c.grid;
@@ -1881,47 +2831,38 @@ export const lineChart = defineUI({
             const minor = step <= 20 ? step / 2 : step / 5;
             ctx.beginPath();
             ctx.strokeStyle = c.grid;
-            for (let t = Math.ceil(minX / minor) * minor; t <= maxX; t += minor) { const sx = Math.round(toX(t)) + 0.5; ctx.moveTo(sx, y); ctx.lineTo(sx, y + 4); }
+            for (let t = Math.ceil(minX / minor) * minor, k = 0; t <= maxX && k < 1000; t += minor, k++) { const sx = Math.round(toX(t)) + 0.5; ctx.moveTo(sx, y); ctx.lineTo(sx, y + 4); }
             ctx.stroke();
             ctx.beginPath();
             ctx.strokeStyle = c.text;
-            for (let t = Math.ceil(minX / step) * step; t <= maxX; t += step) { const sx = Math.round(toX(t)) + 0.5; ctx.moveTo(sx, y); ctx.lineTo(sx, y + 8); }
+            for (let t = Math.ceil(minX / step) * step, k = 0; t <= maxX && k < 200; t += step, k++) { const sx = Math.round(toX(t)) + 0.5; ctx.moveTo(sx, y); ctx.lineTo(sx, y + 8); }
             ctx.stroke();
-            ctx.fillStyle = c.strong;
-            for (let t = Math.ceil(minX / step) * step; t <= maxX; t += step) ctx.fillText(this.fmtTick(t, step), toX(t), y + 9);
 
-            if (kind === "tworow") {
-                // the second row: the date, one label per day shown, a line where a day starts
-                const dayY = y + 21, utc = this._tf().utc;
-                ctx.fillStyle = c.text;
+            // the rows start under the ticks (y + 10) and sit in the middle of what is left
+            const rowsH = both ? 24 : (showTime || showDate) ? 11 : 0;
+            const top = y + 10 + Math.max(0, Math.floor((h - 10 - 6 - rowsH) / 2));
+            if (showTime) {
+                ctx.font = "10px " + c.mono;
+                ctx.fillStyle = c.strong;
+                this._timeRow(ctx, toX, minX, maxX, step, x, w, top, showDate, 12);
+            }
+            if (showDate) {
                 ctx.font = "600 9.5px " + c.mono;
-                const dayStart = (t) => { const p = parts(t, utc); return utc ? Date.UTC(p.y, p.mo, p.d) : new Date(p.y, p.mo, p.d).getTime(); };
-                let d0 = dayStart(minX);
-                let guard = 0;
-                while (d0 <= maxX && guard++ < 400) {
-                    const p = parts(d0 + 43200000, utc);
-                    const d1 = utc ? Date.UTC(p.y, p.mo, p.d + 1) : new Date(p.y, p.mo, p.d + 1).getTime();
-                    const a = Math.max(x, toX(d0)), b = Math.min(x + w, toX(d1));
-                    if (b - a > 40) ctx.fillText(this.fmtDate(d0 + 1000), (a + b) / 2, dayY);
-                    if (d0 > minX) { ctx.beginPath(); ctx.strokeStyle = c.text; ctx.moveTo(Math.round(toX(d0)) + 0.5, y + 18); ctx.lineTo(Math.round(toX(d0)) + 0.5, y + h); ctx.stroke(); }
-                    d0 = d1;
-                }
+                ctx.fillStyle = c.text;
+                const dy = showTime ? top + 13 : top;
+                this._dateRow(ctx, toX, minX, maxX, x, w, dy, showTime ? top + 12 : y, y + h, c.text);
             }
-            // the drag affordance: a grip in the middle, arrows at both ends
-            const cx = x + w / 2, gy = kind === "tworow" ? y + h - 7 : y + h - 6;
+            // the drag affordance: a grip at the bottom middle, arrows at both ends
+            const cx = x + w / 2, gy = y + h - 3;
             ctx.fillStyle = hot ? c.accent : c.text;
-            for (let k = -2; k <= 2; k++) { ctx.beginPath(); ctx.arc(cx + k * 5, gy, 1.3, 0, Math.PI * 2); ctx.fill(); }
+            for (let k = -2; k <= 2; k++) { ctx.beginPath(); ctx.arc(cx + k * 5, gy, 1.2, 0, Math.PI * 2); ctx.fill(); }
             ctx.font = "11px " + c.mono;
+            ctx.textBaseline = "middle";
             ctx.textAlign = "left";
-            ctx.fillText("‹", x + 4, y + h / 2 - 6);
+            ctx.fillText("‹", x + 3, y + h / 2);
             ctx.textAlign = "right";
-            ctx.fillText("›", x + w - 4, y + h / 2 - 6);
-            if (hot) {
-                ctx.font = "9.5px " + c.mono;
-                ctx.textAlign = "right";
-                ctx.fillStyle = c.accent;
-                ctx.fillText("drag ⇆ to move · wheel to zoom", x + w - 14, kind === "tworow" ? y + 21 : y + 9);
-            }
+            ctx.fillText("›", x + w - 3, y + h / 2);
+            if (hot) this._hint(ctx, "drag ⇆ to move · wheel to zoom", x + w - 12, y + 1, c);
             ctx.restore();
         }
 
@@ -1929,11 +2870,15 @@ export const lineChart = defineUI({
         _navGeom(m) {
             const full = this._full;
             if (!full || !this._scale) return null;
-            const { rulerX: x, rulerY: y, rulerW: w } = m;
+            const { rulerX: x, rulerY: y, rulerW: w, rulerH } = m;
             const span = Math.max(1, full.maxX - full.minX);
             const toX = (t) => x + ((t - full.minX) / span) * w;
             const a = Math.max(x, toX(this._scale.vMinX)), b = Math.min(x + w, toX(this._scale.vMaxX));
-            return { x, y, w, h: 38, a, b: Math.max(b, a + 6), span, full, toX };
+            const showTime = this.p.showTime !== false;
+            const showDate = this.p.showDate !== false;
+            const labelH = (showTime && showDate) ? 27 : (showTime || showDate) ? 15 : 0;
+            const h = Math.max(24, (rulerH || 54) - labelH);
+            return { x, y, w, h, a, b: Math.max(b, a + 6), span, full, toX };
         }
 
         _drawNavigator(ctx, m, minX, maxX, list, c) {
@@ -1968,7 +2913,8 @@ export const lineChart = defineUI({
             for (const hx of [g.a, g.b]) {
                 ctx.fillStyle = c.accent;
                 ctx.beginPath();
-                ctx.roundRect ? ctx.roundRect(hx - 4, y + h / 2 - 10, 8, 20, 3) : ctx.rect(hx - 4, y + h / 2 - 10, 8, 20);
+                const handleH = Math.min(22, Math.max(16, Math.round(h * 0.5)));
+                ctx.roundRect ? ctx.roundRect(hx - 4, y + h / 2 - handleH / 2, 8, handleH, 3) : ctx.rect(hx - 4, y + h / 2 - handleH / 2, 8, handleH);
                 ctx.fill();
                 ctx.strokeStyle = "#fff";
                 ctx.lineWidth = 1;
@@ -1977,23 +2923,23 @@ export const lineChart = defineUI({
                 ctx.moveTo(hx + 1.5, y + h / 2 - 5); ctx.lineTo(hx + 1.5, y + h / 2 + 5);
                 ctx.stroke();
             }
-            // the whole history's times under it
-            const step = getNiceTimeStep(g.span, Math.max(2, Math.min(8, Math.floor(w / 110))));
-            ctx.fillStyle = c.text;
-            ctx.font = "9.5px " + c.mono;
-            ctx.textAlign = "center";
-            ctx.textBaseline = "top";
-            for (let t = Math.ceil(g.full.minX / step) * step; t <= g.full.maxX; t += step) ctx.fillText(this.fmtTick(t, step), g.toX(t), y + h + 2);
-            if (this._hoverRuler) {
-                const hint = "drag the window ⇆ · its edges resize";
-                ctx.font = "9.5px " + c.mono;
-                const tw = ctx.measureText(hint).width;
-                ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
-                ctx.fillRect(x + w - tw - 12, y + 2, tw + 8, 13);
-                ctx.textAlign = "right";
-                ctx.fillStyle = "#fff";
-                ctx.fillText(hint, x + w - 8, y + 4);
+            // the whole history's times and dates under it
+            const showDate = this.p.showDate !== false;
+            if (this.p.showTime !== false || showDate) {
+                const step = this._timeStep(g.span, w), top = y + h + 2;
+                const showTime = this.p.showTime !== false && !(showDate && step >= 86400000);
+                if (showTime) {
+                    ctx.font = "9.5px " + c.mono;
+                    ctx.fillStyle = c.text;
+                    this._timeRow(ctx, g.toX, g.full.minX, g.full.maxX, step, x, w, top, showDate);
+                }
+                if (showDate) {
+                    ctx.font = "600 9.5px " + c.mono;
+                    ctx.fillStyle = c.text;
+                    this._dateRow(ctx, g.toX, g.full.minX, g.full.maxX, x, w, showTime ? top + 12 : top, 0, 0, c.grid);
+                }
             }
+            if (this._hoverRuler) this._hint(ctx, "drag the window ⇆ · its edges resize", x + w - 4, y + 2, c);
         }
 
         hexToRgba(hexOrRgb, alpha) {
@@ -2062,7 +3008,7 @@ export const lineChart = defineUI({
                     within = Math.max(span * 0.01, (span / n) * 0.75);
                 }
                 if (Math.abs(x - t) > within) continue;
-                hits.push({ s, x: x + s._shift, y, idx, d: Math.hypot(sc.toX(x + s._shift) - px, sc.toY(y, s.axis === "right" ? "right" : "left") - py) });
+                hits.push({ s, x: x + s._shift, y, idx, d: Math.hypot(sc.toX(x + s._shift) - px, sc.toY(y, s._key) - py) });
             }
             if (nearest && hits.length) { hits.sort((a, b) => a.d - b.d); return [hits[0]]; }
             return hits;
@@ -2071,11 +3017,13 @@ export const lineChart = defineUI({
         // a series' tooltip text: simple (label: before value after unit) or its expression
         tooltipText(hit, hits) {
             const s = hit.s;
-            if (s.tooltipMode === "expression" && s.expression) {
+            const rawS = this.raw && Array.isArray(this.raw.series) ? this.raw.series[s._i] : null;
+            const expression = rawS && typeof rawS.expression === "string" ? rawS.expression : s.expression;
+            if (s.tooltipMode === "expression" && expression) {
                 const buf = this._state(s).buf, stats = this._statsOf(s);
                 const prev = hit.idx > 0 ? buf.getY(hit.idx - 1) : NaN;
                 const vars = { value: hit.y, name: s.name || s.id, unit: s.unit || "", time: hit.x, delta: Number.isFinite(prev) ? hit.y - prev : null, min: stats.min, max: stats.max, avg: stats.avg };
-                const v = evaluateExpression(s.expression, (src, ref) => {
+                const v = evaluateExpression(expression, (src, ref) => {
                     if (src === "series") { const o = hits.find((h) => h.s.id === ref || h.s.name === ref); return o ? o.y : null; }
                     return Object.prototype.hasOwnProperty.call(vars, ref) ? vars[ref] : null;
                 }, { format: this._seriesSpec(s) });
@@ -2089,6 +3037,32 @@ export const lineChart = defineUI({
         _showTooltip(px, py, rectW) {
             const tip = this.renderRoot.querySelector(".tooltip");
             if (!tip) return;
+            if (!px && !py && !rectW) {
+                tip.style.display = "none";
+                return;
+            }
+            if (this._hoverAnnotation) {
+                const ann = this._hoverAnnotation;
+                tip.querySelector(".tooltip-time").textContent = this.fmtDate(ann.time) + " " + this.fmtTime(ann.time);
+                const body = tip.querySelector(".tooltip-rows");
+                while (body.children.length > 1) body.removeChild(body.lastChild);
+                let row = body.children[0];
+                if (!row) {
+                    row = document.createElement("div");
+                    row.className = "tooltip-row";
+                    row.appendChild(document.createElement("span")).className = "tooltip-dot";
+                    row.appendChild(document.createElement("span")).className = "tooltip-text";
+                    body.appendChild(row);
+                }
+                row.children[0].style.background = ann.color || "#f59e0b";
+                row.children[1].textContent = ann.label + (ann.description ? " · " + ann.description : "");
+                const flip = px > rectW - 200;
+                tip.style.display = "block";
+                tip.style.left = `${Math.round(flip ? px - 12 : px + 12)}px`;
+                tip.style.top = `${Math.round(py)}px`;
+                tip.style.transform = flip ? "translate(-100%, -50%)" : "translate(0, -50%)";
+                return;
+            }
             const h = this.hover;
             const rows = h ? h.hits.filter((x) => x.s.tooltip !== false || this.p.tooltipShows === "nearest") : [];
             if (!rows.length || this.p.tooltipShows === "off") { tip.style.display = "none"; return; }
@@ -2116,11 +3090,12 @@ export const lineChart = defineUI({
 
         // ---- pointer ---------------------------------------------------------------------------
         _local(e) {
-            const box = this._plotEl();
-            if (!box) return null;
+            const { box, w, h } = this._layoutSize();
+            if (!box || w <= 0 || h <= 0) return null;
             const rect = box.getBoundingClientRect();
-            const m = this.getPlotMetrics(rect.width, rect.height);
-            return { box, rect, m, px: e.clientX - rect.left, py: e.clientY - rect.top };
+            const sx = rect.width > 0 ? w / rect.width : 1, sy = rect.height > 0 ? h / rect.height : 1;
+            const m = this._scale && this._scale.m ? this._scale.m : this.getPlotMetrics(w, h);
+            return { box, rect: { width: w, height: h }, m, sx, px: (e.clientX - rect.left) * sx, py: (e.clientY - rect.top) * sy };
         }
 
         _zone(L) {
@@ -2140,6 +3115,8 @@ export const lineChart = defineUI({
 
         onPointerDown(e) {
             if (e.button !== 0 || !this.canvas) return;
+            // the corner's buttons (Live, the export menu) are not a click / drag on the chart
+            if (e.composedPath().some((n) => n.classList && (n.classList.contains("corner") || n.classList.contains("menu-dropdown")))) return;
             const L = this._local(e);
             if (!L) return;
             const zone = this._zone(L);
@@ -2147,7 +3124,7 @@ export const lineChart = defineUI({
             const fb = this._bounds(this._visible());
             if (!fb || !this._scale) return;
             const { vMinX, vMaxX } = this._scale;
-            const base = { x0: e.clientX, min0: vMinX, max0: vMaxX, moved: false, down: { px: L.px, py: L.py } };
+            const base = { x0: e.clientX, sx: L.sx, min0: vMinX, max0: vMaxX, moved: false, down: { px: L.px, py: L.py } };
             if (zone === "navJump") {
                 // a click beside the window: the window jumps there
                 const g = this._navGeom(L.m), t = g.full.minX + ((L.px - g.x) / g.w) * g.span, half = (vMaxX - vMinX) / 2;
@@ -2170,7 +3147,7 @@ export const lineChart = defineUI({
             const { m, px, py, box } = L;
             const d = this.drag;
             if (d) {
-                const dx = e.clientX - d.x0;
+                const dx = (e.clientX - d.x0) * (d.sx || 1);
                 if (Math.abs(dx) > 3) d.moved = true;
                 if (!d.moved || d.kind === "click") return;
                 const fb = this._bounds(this._visible());
@@ -2197,6 +3174,29 @@ export const lineChart = defineUI({
                 return;
             }
 
+            // Check annotation hits
+            let hitAnn = null;
+            if (this._annotationHits && this._annotationHits.length) {
+                for (const h of this._annotationHits) {
+                    const b = h.box;
+                    if ((px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h) ||
+                        (Math.abs(px - b.lineX) <= 6 && py >= m.plotY && py <= m.plotY + m.plotH)) {
+                        hitAnn = h;
+                        break;
+                    }
+                }
+            }
+            if (hitAnn !== this._hoverAnnotation) {
+                this._hoverAnnotation = hitAnn;
+                this.draw();
+            }
+            box.classList.toggle("hover-ann", !!hitAnn);
+            if (hitAnn) {
+                if (this.hover) { this.hover = null; this.draw(); this.emit("hoverEnd", {}); }
+                this._showTooltip(px, py, L.rect.width);
+                return;
+            }
+
             const zone = this._zone(L);
             const onRuler = zone === "ruler" || zone === "nav" || zone === "navL" || zone === "navR" || zone === "navJump";
             if (onRuler !== !!this._hoverRuler) { this._hoverRuler = onRuler; this.draw(); }
@@ -2210,7 +3210,9 @@ export const lineChart = defineUI({
             const sc = this._scale;
             const time = sc.vMinX + ((px - m.plotX) / m.plotW) * (sc.vMaxX - sc.vMinX);
             const hits = this._hits(px, py, time);
-            this.hover = { time: hits.length ? hits[0].x : time, px, py, hits };
+            let at = time, best = Infinity;
+            for (const h of hits) if (Math.abs(h.x - time) < best) { best = Math.abs(h.x - time); at = h.x; }
+            this.hover = { time: at, px, py, hits };
             this.draw();
             this._showTooltip(px, py, L.rect.width);
             const now = Date.now();
@@ -2245,6 +3247,10 @@ export const lineChart = defineUI({
             if ((d.kind === "pan" || d.kind === "click") && L && this._scale) {
                 // a click (no drag): the chart's On Click; on a point, that series' On Point Click
                 this._selection = null;
+                if (this._hoverAnnotation) {
+                    const ann = this._hoverAnnotation;
+                    this.emit("annotationClick", { id: ann.id, time: ann.time, label: ann.label, color: ann.color, description: ann.description });
+                }
                 const sc = this._scale, m = L.m;
                 const time = sc.vMinX + ((L.px - m.plotX) / m.plotW) * (sc.vMaxX - sc.vMinX);
                 const hits = this._hits(L.px, L.py, time);
@@ -2280,11 +3286,12 @@ export const lineChart = defineUI({
         }
 
         onPointerLeave() {
+            this._hoverAnnotation = null;
             if (this.hover) { this.hover = null; this.draw(); this.emit("hoverEnd", {}); }
             this._showTooltip(0, 0, 0);
             if (this._hoverRuler) { this._hoverRuler = false; this.draw(); }
             const box = this._plotEl();
-            if (box) box.classList.remove("hover-ruler", "hover-edge");
+            if (box) box.classList.remove("hover-ruler", "hover-edge", "hover-ann");
         }
 
         render() {
@@ -2313,14 +3320,31 @@ export const lineChart = defineUI({
                         @pointerleave=${() => this.onPointerLeave()}
                         @dblclick=${() => this.followLive()}>
                         <canvas></canvas>
-                        <div class="corner" style="right:${this._usesRight() ? 60 : 20}px">
+                        <div class="corner" style="right:${this._scale && this._scale.m ? this._scale.m.padRight + 6 : (this._usesRight() ? 60 : 20)}px">
                             ${this.viewRange ? html`
                                 <button class="btn-chip btn-reset-zoom" @click=${() => this.followLive()} title="Follow the newest data again (or double click the chart)">
-                                    <span class="live-dot"></span> Live
+                                    <span class="live-dot"></span> Reset Zoom
                                 </button>` : ""}
-                            ${this.p.exportButton ? html`
-                                <button class="btn-chip" title="Download what the chart shows" @click=${() => this.exportData({ format: "csv", range: this.p.exportRange || "visible" })}>⤓ CSV</button>
-                                <button class="btn-chip" title="Download what the chart shows" @click=${() => this.exportData({ format: "xlsx", range: this.p.exportRange || "visible" })}>⤓ Excel</button>` : ""}
+                            ${this.p.exportButton !== false && (this.p.exportCsv !== false || this.p.exportXlsx !== false || this.p.exportPng !== false) ? html`
+                                <div class="menu-wrap">
+                                    <button type="button" class="btn-menu ${this._menuOpen ? "open" : ""}"
+                                        title="Download"
+                                        @click=${(e) => { e.stopPropagation(); this._menuOpen = !this._menuOpen; this.requestUpdate(); }}>
+                                        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+                                            <circle cx="8" cy="3" r="1.5"/>
+                                            <circle cx="8" cy="8" r="1.5"/>
+                                            <circle cx="8" cy="13" r="1.5"/>
+                                        </svg>
+                                    </button>
+                                    ${this._menuOpen ? html`
+                                        <div class="menu-dropdown">
+                                            ${[["csv", "exportCsv", "⤓", "Download CSV"], ["xlsx", "exportXlsx", "⤓", "Download Excel"], ["png", "exportPng", "📷", "Download PNG"]]
+                                                .filter((x) => this.p[x[1]] !== false).map((x) => html`
+                                                <button type="button" class="menu-item" @click=${(e) => { e.stopPropagation(); this._menuOpen = false; this.requestUpdate(); this.exportData({ format: x[0] }); }}>
+                                                    <span class="menu-icon">${x[2]}</span> ${x[3]}
+                                                </button>`)}
+                                        </div>` : ""}
+                                </div>` : ""}
                         </div>
                         <div class="tooltip"><div class="tooltip-time"></div><div class="tooltip-rows"></div></div>
                         ${!hasData ? html`

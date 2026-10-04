@@ -121,11 +121,15 @@ Modeled after the official IBM Carbon Design System Pagination specifications an
 A time-series chart driven by Logic.
 
 **In Logic** (the Events tab), a chart is:
-- **One "Update chart" node.** It covers the chart's own props (time range, time axis, axes, tooltip, legend, thresholds, zoom & pan, export) and its actions:
+- **One "Update chart" node.** It covers the chart's own props (time range, time axis, axes, tooltip, legend, thresholds, annotations, zoom & pan, export) and its actions:
   - **Follow live**;
   - **Show a time range** (`{from, to}`);
   - **Clear every series**;
-  - **Export** (`{format: "csv" | "xlsx", range: "visible" | "all"}`): downloads on the viewer's screen.
+  - **Add annotation** (`addAnnotation({ time, label, color })`);
+  - **Set annotations** (`setAnnotations([{ time, label, color }])`);
+  - **Clear annotations** (`clearAnnotations`);
+  - **Export** (`{format: "csv" | "xlsx", range: "visible" | "all"}`): downloads on the viewer's screen;
+  - **Export PNG** (`exportPNG`): downloads the chart image.
 - **Per series, its own Update node** for that series' props and its actions:
   - **Append points** (`{x, y}`, `[{x, y}, …]`, or a number: time = now);
   - **Replace points**;
@@ -137,6 +141,7 @@ A time-series chart driven by Logic.
   - **On Live / Paused**;
   - **On Hover** / **On Hover End** {time, values}: a crosshair shared with other charts;
   - **On Click**;
+  - **On Annotation Click** {id, time, label, color, description}: drill down or trigger workflows from event marker pins;
   - **On Range Select** (Shift + drag);
   - **On Series Toggle**.
 - **Series events:**
@@ -147,15 +152,22 @@ A time-series chart driven by Logic.
 **A series:**
 - **Live value**: a tag or a variable; every new value is a point.
 - **Data settings:** points kept, break the line after N ms, stale after N ms, and a **time shift** (yesterday over today).
-- **Look:** variant (line / step / smooth / bars / points), colour, width, dash, opacity, fill, points.
-- **Axis:** left / right, unit, number format.
+- **Look:** variant / interpolation (line / step / smooth / bars / points), step mode (after / before / center), colour, width, dash, opacity, fill, points.
+- **Its own Y axis:** position (left / right / hidden), title, unit; Range (soft / hard min / max, **zero in the middle** for − and +); Numbers; Spine (line, ticks).
 - **Tooltip:** simple (label, text before / after the value) or an **expression**:
   - `{value} {delta} {min} {max} {avg} {name} {unit} {time}`;
   - `[series]{s2}`: another series at that time, e.g. `round({value} / [series]{flow} * 100, 1) "%"`;
   - `fmt(x, "compact" | "si")`.
 - **Id:** fixed (`s1`, `s2`…), the id its nodes use.
 
-**Numbers:** per axis (a series can override):
+**One Y axis per series:**
+- Every series has its own axis and scale. Several on one side stand side by side; **the first series in the list is closest to the chart**.
+- With more than one axis, each axis' labels (and its title) take its series' colour; a single axis stays neutral.
+- Column widths come from the widest label; `axisGap` (Style) is the space between columns.
+- The Inspector: a series' **Axis** section, with **Range**, **Numbers** and **Spine** inside it.
+- Each series has its own Update node in Logic: its axis, range and style can change at runtime.
+
+**Numbers:** per series (its Axis › Numbers):
 - as it is · short (1.2K 3.4M 5B) · engineering (k M G: 1 500 kW shows as **1.5 MW**, 0.002 s as **2 ms**) · scientific;
 - decimals, the thousands separator, `1,234.5` or `1.234,5` (or the page's language).
 
@@ -164,14 +176,35 @@ A time-series chart driven by Logic.
   - **two rows** (time + date; the default, and it shows it can be dragged);
   - **navigator** (the whole history small, a window to drag and resize with the mouse or a touch screen);
   - comb, labels only, or none;
+- **show time** and **show date** checkboxes (toggle time and/or date independently);
+- **date format**: Day D Mon Y (`Sat 03 Oct 2026`), ISO (`2026-10-03`), `DD/MM/YYYY`, or `MM/DD/YYYY`;
+- **tick spacing**: Loose (spacious), Normal (balanced), or Dense;
+- **ruler height**: percentage of chart height (auto ~12 %, customizable up to 50 %);
 - 24 h / 12 h / relative to the newest point; local time or UTC.
+
+**Annotations & Event Markers:**
+- Event marker flags with down-pointing pins and vertical dashed lines at key timestamps (e.g. "Shift 1", "Trip", "Batch End");
+- Configurable statically via `annotations` prop list or dynamically via actions (`addAnnotation({ time, label, color })`, `setAnnotations([{ time, label, color }])`, `clearAnnotations`);
+- Hovering an annotation shows its details in the tooltip and changes cursor to pointer; clicking emits **On Annotation Click**.
+
+**Interpolation Modes:**
+- `line`: Direct linear segment between points;
+- `step`: Digital square staircase wave (ideal for discrete signals, machine ON/OFF, alarms, recipe stages) with configurable transition point: `after` (standard), `before`, or `center`;
+- `smooth`: Monotone cubic spline curve through points;
+- Can be set per series (`variant` / `interpolation`) or chart-wide as default (`defaultInterpolation`).
 
 **Zoom & pan:** zoom in / out to at most N, move only where there is data (or within the last N, or anywhere), room after the newest point. Y axes have **soft** min / max (they grow with the data) and **hard** min / max (fixed).
 
 **Also:**
 - legend: click hides a series, Alt+click shows it alone; it shows the last / min / max / average value;
-- thresholds;
-- an export button (CSV / Excel);
+- thresholds: a line, an **upper limit** or a **lower limit** (a limit colours the values past it in Excel), on the scale of the series it names;
+- **export** (the ⋮ menu, or Logic's Export action `{ format: "csv" | "xlsx" | "png", range: "visible" | "all", annotations, thresholds }`; each option left out comes from the Properties' Export group):
+  - *what is shown* (zoom / pan applied) or *everything it holds*; hidden series are never exported;
+  - CSV / Excel: a row per time (to the millisecond), a column per series, an **Annotation** column (each annotation its own row at its exact time);
+  - Excel: a value past an **upper / lower limit** gets the limit's colour; an **Info** sheet (title, from / to, time zone, series, limits);
+  - PNG: 2× sharp, a title and the time span above, the legend below;
+  - which formats the menu offers (CSV / Excel / PNG) is set in the Properties;
+- customizable download file name expression / template (`{title}`, `{date}`, `{time}`, `{format}`, `{range}`);
 - every point kept (Float64), drawn at pixel accuracy (M4 + an LOD pyramid), 1 M points a series in a few ms;
 - the canvas shows sample waves for series without data;
 - v1 / v2 charts are migrated.
