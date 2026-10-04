@@ -28,6 +28,7 @@ This is a Nexa component plugin (`@kufayeka/nexa-component-ui-library`). Every c
 - Tags, bindings or writes changed: `nexa-component-ui-library/test/tags-e2e.test.js` is green.
 - Something visible changed: an e2e with screenshots you looked at.
 - README updated (what each component does, its props, inputs, outputs, events).
+- Memory updated with every progress update: an entry at the top of the workspace's `.agents/memory/history.md` (date, what, why, commits), plus a decision file for a new user decision.
 - A bug fix comes with a test that failed before the fix.
 
 ## This plugin
