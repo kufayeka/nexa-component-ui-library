@@ -432,6 +432,7 @@ export class ChartElement extends UIElement {
             if (typeof IntersectionObserver === "function") {
                 this.intersectionObserver = new IntersectionObserver((entries) => {
                     for (const entry of entries) {
+                        this._inView = entry.isIntersecting;
                         if (entry.isIntersecting && entry.boundingClientRect.width > 0 && entry.boundingClientRect.height > 0 && this.resizeCanvas()) this.draw();
                     }
                 });

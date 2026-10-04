@@ -27,6 +27,31 @@ export class TimeChartElement extends ChartElement {
     _annotationHits = [];
     _hoverAnnotation = null;
 
+    // "now" of a live chart: frozen between data and refresh ticks, so a hover, a zoom or a resize
+    // redraws the same picture (it never moves under the pointer)
+    _clock = 0;
+    _lastTick = 0;
+    _now() { return this._clock || (this._clock = Date.now()); }
+    _tickClock() { this._clock = Date.now(); }
+
+    // the Refresh prop: "data" (redraw when data comes in) or an interval (min 100 ms); ticks only
+    // while live, on screen and not hovered / dragged, on a page (not the editor)
+    refreshMs() {
+        const v = this.p.refresh;
+        if (!v || v === "data") return 0;
+        return Math.max(100, spanMs(v) || 0);
+    }
+    _startRefresh() { this.every(100, () => this._refreshTick()); }
+    _refreshTick() {
+        const ms = this.refreshMs();
+        if (!ms || this.isEditor || this.viewRange || this.drag || this.hover || this._inView === false || document.hidden) return;
+        const now = Date.now();
+        if (now - this._lastTick < ms) return;
+        this._lastTick = now;
+        this._tickClock();
+        this.draw();
+    }
+
     _fullBounds() { return null; }
     _hasData() { return false; }
     _plotHover() {}
@@ -38,6 +63,7 @@ export class TimeChartElement extends ChartElement {
     // ---- the chart's actions (its Update node) ---------------------------------------------
     followLive() {
         this.viewRange = null;
+        this._tickClock();
         this._selection = null;
         this.draw();
         this.requestUpdate();

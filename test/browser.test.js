@@ -1156,6 +1156,24 @@ withHarness({
         assert.ok(r.png > 0, 'a PNG');
     });
 
+    await ok('State Timeline: "now" stands still between data (a hover never moves it); Refresh Every 250 ms moves it, paused while hovered', async () => {
+        await mount('st-h', 'state-timeline', Object.assign({ rows: [{ id: 'm1', name: 'Filler' }] }, ST), { width: 600, height: 200 });
+        const r = await js(`(async function () {
+            var w = ${stw('st-h')}, sleep = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
+            w.appendChange({ time: Date.now() - 3000, state: 1 }, { list: "rows", id: "m1" });
+            w.draw(); var a = w._scale.vMaxX;
+            await sleep(400);
+            w.hover = { time: a - 1000, px: 100, py: 50, seg: null }; w.draw(); var b = w._scale.vMaxX; w.hover = null;
+            await sleep(400); w.draw(); var c = w._scale.vMaxX;
+            w.scrollIntoView({ block: "center" }); await sleep(150);
+            w.p.refresh = "250ms"; await sleep(700); var d = w._scale.vMaxX;
+            w.hover = { time: d - 1000, px: 100, py: 50, seg: null }; await sleep(600); var e = w._scale.vMaxX; w.hover = null;
+            w.appendChange({ time: Date.now(), state: 0 }, { list: "rows", id: "m1" }); w.draw(); var f = w._scale.vMaxX;
+            return { still: a === b && b === c, ticked: d > c, paused: e === d, data: f > e, ms: w.refreshMs() };
+        })()`);
+        assert.deepStrictEqual(r, { still: true, ticked: true, paused: true, data: true, ms: 250 });
+    });
+
     await ok('State Timeline: the editor shows sample states; in a zoomed canvas it draws at its layout size', async () => {
         await mount('st-f', 'state-timeline', Object.assign({ rows: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }] }, ST), { width: 600, height: 220, design: true });
         const demo = await js(`(function () { var w = ${stw('st-f')}; return w.rowList().map(function (r) { return w._row(r).demo && w._row(r).ch.length > 0; }); })()`);

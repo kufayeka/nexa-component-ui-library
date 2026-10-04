@@ -20,7 +20,7 @@ import { chartCommon, opt, numOr, SERIES_PALETTE } from "./core.js";
 import { timeOf, parts, pad2, clock } from "./time.js";
 import { xlsxBlob } from "./export.js";
 import { TimeChartElement } from "./time-chart.js";
-import { timeProps, zoomProps, annotationProps, exportProps, timeEvents, timeActions } from "./props.js";
+import { timeProps, refreshProps, zoomProps, annotationProps, exportProps, timeEvents, timeActions } from "./props.js";
 
 const UNKNOWN = ["#9ca3af", "#a8a29e", "#94a3b8", "#a1a1aa"];
 
@@ -142,6 +142,7 @@ export const stateTimeline = defineUI({
         showGrid: { type: "boolean", default: true, group: "Style", label: "Grid" },
 
         ...timeProps(),
+        ...refreshProps("data"),
         ...zoomProps(),
         ...exportProps({ thresholds: false }),
         ...annotationProps()
@@ -166,10 +167,8 @@ export const stateTimeline = defineUI({
     view: class extends TimeChartElement {
         _rows = new Map();   // key -> { ch: [{ t, v, note }] sorted, lastLive, demo }
 
-        mounted() {
-            // the last state lasts until now: a live chart moves (every second; not the editor)
-            this.every(1000, () => { if (!this.isEditor && !this.viewRange && this._open()) this.scheduleDraw(); });
-        }
+        // the last state lasts until now: it grows on the Refresh ticker (or when data comes in)
+        mounted() { this._startRefresh(); }
 
         propsChanged() { this.prepareData(); }
 
@@ -251,6 +250,7 @@ export const stateTimeline = defineUI({
 
         // changes into a row: a gap is kept only where no state starts at the same time
         _addChanges(r, st, list, fire) {
+            this._tickClock();
             if (st.demo) { st.ch = []; st.demo = false; }
             const cap = Math.max(50, numOr(r.maxChanges, 5000));
             let n = 0;
@@ -298,6 +298,7 @@ export const stateTimeline = defineUI({
             st.ch = [];
             while (t < now) { st.ch.push({ t, v: vals[k % vals.length], note: "" }); t += (20 + ((k * 37 + i * 11) % 50)) * 60000; k++; }
             st.demo = true;
+            this._tickClock();
         }
 
         // ---- a row's actions (its own Update node): (params = msg.payload, target) ----------------
@@ -323,6 +324,7 @@ export const stateTimeline = defineUI({
         }
 
         clear(params, target) {
+            this._tickClock();
             const r = this.findRow(target || (params && params.row));
             if (!r) return;
             this._row(r).ch = [];
@@ -331,6 +333,7 @@ export const stateTimeline = defineUI({
         }
 
         clearAll() {
+            this._tickClock();
             for (const st of this._rows.values()) st.ch = [];
             this.viewRange = null;
             this.hover = null;
@@ -342,8 +345,6 @@ export const stateTimeline = defineUI({
         _visible() { return this.rowList().filter((r) => r.visible !== false && this._row(r).ch.length > 0); }
 
         _open() { return this._visible().some((r) => { const ch = this._row(r).ch; return ch.length && ch[ch.length - 1].v !== null; }); }
-
-        _now() { return Date.now(); }
 
         // a row's segments within [a, b]: { start, end, v, note } (clipped), gaps left out
         segmentsOf(r, a, b) {

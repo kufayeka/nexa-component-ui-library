@@ -43,6 +43,17 @@ export function timeProps() {
     };
 }
 
+/** How often a live chart redraws: when data comes in, or on a ticker (its "now" moves on). */
+export function refreshProps(def) {
+    return {
+        refresh: {
+            type: "enum", group: "Data", label: "Refresh", default: def || "data",
+            options: opt([["data", "On new data"], ["100ms", "Every 100 ms"], ["250ms", "Every 250 ms"], ["500ms", "Every 500 ms"], ["1s", "Every 1 s"], ["2s", "Every 2 s"], ["5s", "Every 5 s"], ["10s", "Every 10 s"], ["30s", "Every 30 s"]]),
+            help: "On new data: the chart redraws only when an update comes in (between updates it stands still). Every …: it also redraws on its own, so the current state keeps growing up to now. Pauses while you hover, zoom or pan, and when the chart is off screen."
+        }
+    };
+}
+
 /** Zoom & pan, and their limits. */
 export function zoomProps() {
     return {
