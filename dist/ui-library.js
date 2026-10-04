@@ -7,4 +7,4 @@ import "./containers.js";
 import "./embed.js";
 import "./datetime.js";
 import "./pagination.js";
-import "./chart-line.js";
+import "./chart/index.js";

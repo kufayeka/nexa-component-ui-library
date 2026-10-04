@@ -32,5 +32,5 @@ This is a Nexa component plugin (`@kufayeka/nexa-component-ui-library`). Every c
 
 ## This plugin
 
-- Modules: `dist/` → chart-line.js containers.js core.js datetime.js display.js embed.js form.js pagination.js ui-library.js 
+- Modules: `dist/` → containers.js core.js datetime.js display.js embed.js form.js pagination.js ui-library.js; `dist/chart/` → core.js (ChartElement, the shared look / numbers / times / export menu), time.js, buffer.js, export.js, line.js, index.js (every chart; a new chart: its own file here, on ChartElement) 
 - Tests: `test/browser.test.js` (SDK testkit, headless Chrome).
