@@ -1,9 +1,11 @@
 import { html, asBinding, formatValue, formatParts, evaluateExpression } from "../../../nexa-sdk/nexa-component-sdk.js";
 import { PREFIX, paletteProp, part, defineUI } from "../core.js";
-import { chartCommon, ChartElement, SERIES_PALETTE, opt, NOTATIONS, DECIMALS, DASHES, notationOf, numOr, niceNum } from "./core.js";
+import { chartCommon, SERIES_PALETTE, opt, NOTATIONS, DECIMALS, DASHES, notationOf, numOr, niceNum } from "./core.js";
 import { getNiceTimeStep, parseTimeWindow, SPANS, WINDOWS, spanMs, timeOf, parts, pad2, clock, relative, DAYS, MONTHS } from "./time.js";
 import { TimeSeriesRingBuffer, lowerBoundRing, upperBoundRing, M4Decimator } from "./buffer.js";
 import { xlsxBlob } from "./export.js";
+import { TimeChartElement } from "./time-chart.js";
+import { timeProps, zoomProps, annotationProps, exportProps, timeEvents, timeActions } from "./props.js";
 
 const common = chartCommon;
 
@@ -246,6 +248,10 @@ export const lineChart = defineUI({
     groups: ["Series", "Data", "Time axis", "Tooltip", "Legend", "Thresholds", "Annotations", "Zoom & pan", "Export", "Style", "Behaviour"],
 
     properties: {
+        ...timeProps(),
+        ...zoomProps(),
+        ...exportProps({ thresholds: true }),
+        ...annotationProps(),
         series: {
             type: "list", group: "Series", label: "Series", noun: "series",
             help: "Each series has its own Update node, message and events in Logic (Events tab). The order is the layer order: the first is drawn under the others.",
@@ -286,41 +292,7 @@ export const lineChart = defineUI({
             }
         },
 
-        timeWindow: {
-            type: "enum", default: "auto", options: opt(WINDOWS), group: "Data", label: "Time range",
-            help: "A live window that follows the newest point. Zoom / pan pauses it; Live (or a double click) follows again."
-        },
 
-        ruler: {
-            type: "enum", group: "Time axis", label: "Time ruler", default: "tworow",
-            options: opt([["tworow", "Band (drag it)"], ["navigator", "Navigator: the whole history, a window to drag"], ["comb", "Comb (drag it)"], ["axis", "Labels only"], ["none", "None"]]),
-            help: "The style of ruler. Show time and Show date checkboxes control whether time and/or date are displayed."
-        },
-        showTime: {
-            type: "boolean", group: "Time axis", label: "Show time", default: true,
-            help: "Shows time labels on the time axis."
-        },
-        showDate: {
-            type: "boolean", group: "Time axis", label: "Show date", default: true,
-            help: "Shows date labels on the time axis."
-        },
-        dateFormat: {
-            type: "enum", group: "Time axis", label: "Date format", default: "default",
-            options: opt([["default", "Day D Mon Y (Sat 03 Oct 2026)"], ["iso", "YYYY-MM-DD (2026-10-03)"], ["dmy", "DD/MM/YYYY (03/10/2026)"], ["mdy", "MM/DD/YYYY (10/03/2026)"]]),
-            visibleWhen: (p) => p.showDate !== false
-        },
-        tickDensity: {
-            type: "enum", group: "Time axis", label: "Tick spacing", default: "normal",
-            options: opt([["loose", "Loose (Longgar)"], ["normal", "Normal (Sedang)"], ["dense", "Dense (Rapat)"]]),
-            help: "Controls how many time labels appear across the ruler."
-        },
-        rulerHeight: {
-            type: "number", group: "Time axis", label: "Ruler height", default: 0,
-            min: 0, max: 50, step: 1, unit: "%",
-            help: "0 = auto (~12 % of chart height). Can be set up to 50 %."
-        },
-        timeFormat: { type: "enum", group: "Time axis", label: "Time format", default: "24h", options: opt([["24h", "24 hours (14:05)"], ["12h", "12 hours (2:05 PM)"], ["relative", "Relative to the newest (−5m)"]]) },
-        timeZone: { type: "enum", group: "Time axis", label: "Time zone", default: "local", options: opt([["local", "The viewer's (local)"], ["utc", "UTC"]]) },
 
         tooltipShows: {
             type: "enum", group: "Tooltip", label: "Shows", default: "shared",
@@ -344,41 +316,7 @@ export const lineChart = defineUI({
             help: "Horizontal lines: a limit, a setpoint. A series crossing one fires its On Threshold Crossed.", item: { fields: THRESHOLD_FIELDS, noun: "threshold" }
         },
 
-        minSpan: { type: "enum", group: "Zoom & pan", label: "Zoom in to at most", default: "", options: opt(SPANS), help: "The shortest time the chart can show." },
-        maxSpan: { type: "enum", group: "Zoom & pan", label: "Zoom out to at most", default: "", options: opt(SPANS), help: "The longest time the chart can show." },
-        panLimit: {
-            type: "enum", group: "Zoom & pan", label: "Move in time", default: "data",
-            options: opt([["data", "Only where there is data"], ["window", "Only within the last…"], ["free", "Anywhere"]])
-        },
-        panWindow: { type: "enum", group: "Zoom & pan", label: "The last", default: "24h", options: opt(WINDOWS.slice(1)), visibleWhen: (p) => p.panLimit === "window" },
-        futureMargin: {
-            type: "enum", group: "Zoom & pan", label: "Room after the newest point", default: "0",
-            options: opt([["0", "None"], ["0.02", "2 %"], ["0.05", "5 %"], ["0.1", "10 %"]]), help: "Live: the newest point is not glued to the right edge."
-        },
-        enableZoomPan: { type: "boolean", default: true, group: "Zoom & pan", label: "Zoom (wheel) and pan (drag)" },
 
-        exportButton: { type: "boolean", group: "Export", label: "Export menu on the chart (⋮)", default: true, help: "A menu in the top-right corner: the formats below." },
-        exportCsv: { type: "boolean", group: "Export", label: "Menu: CSV", default: true, visibleWhen: (p) => p.exportButton !== false },
-        exportXlsx: { type: "boolean", group: "Export", label: "Menu: Excel", default: true, visibleWhen: (p) => p.exportButton !== false },
-        exportPng: { type: "boolean", group: "Export", label: "Menu: PNG", default: true, visibleWhen: (p) => p.exportButton !== false },
-        exportRange: {
-            type: "enum", group: "Export", label: "What it exports", default: "visible",
-            options: opt([["visible", "What is shown (zoom / pan applied)"], ["all", "Everything it holds"]]),
-            help: "Hidden series (legend, Hide) are never exported. Logic's Export action can say otherwise: { range: \"all\" }."
-        },
-        exportAnnotations: {
-            type: "boolean", group: "Export", label: "Annotations", default: true,
-            help: "CSV / Excel: an Annotation column, its own row at its exact time. PNG: drawn."
-        },
-        exportThresholds: {
-            type: "boolean", group: "Export", label: "Thresholds", default: true,
-            help: "Excel: a value past an upper / lower limit gets the limit's colour (an Info sheet lists them). PNG: drawn."
-        },
-        exportTitle: { type: "string", group: "Export", label: "Title", default: "", help: "Above the PNG and in the Excel Info sheet; {title} in the file name. Empty: the chart's name." },
-        exportFilename: {
-            type: "string", group: "Export", label: "File name expression", default: "", bindable: false,
-            help: "Expression or template for the download file name. Variables: {title}, {date}, {time}, {year}, {month}, {day}, {format}, {range}. Default: chart-YYYYMMDD-HHmm"
-        },
 
         colorPalette: paletteProp("primary"),
         showGrid: { type: "boolean", default: true, group: "Style", label: "Grid" },
@@ -390,22 +328,7 @@ export const lineChart = defineUI({
             type: "enum", group: "Style", label: "Default line style", default: "line",
             options: opt([["line", "Line"], ["step", "Step (Digital)"], ["smooth", "Smooth (Curved)"]]),
             help: "Default line style for series that do not specify their own variant."
-        },
-
-        annotations: {
-            type: "list", group: "Annotations", label: "Annotations", noun: "annotation", default: [],
-            item: {
-                noun: "annotation",
-                fields: {
-                    label: { type: "string", label: "Label", default: "Event" },
-                    time: { type: "string", label: "Time", default: "", help: "A date and time (2026-10-04 08:00), or ms since 1970." },
-                    color: { type: "color", label: "Colour", default: "#f59e0b" },
-                    description: { type: "string", label: "Description", default: "", help: "In the tooltip, and On Annotation Click." }
-                }
-            },
-            help: "Event markers (vertical lines with badges) on specific timestamps. From Logic: Add / Set / Clear annotations."
-        },
-        showAnnotations: { type: "boolean", default: true, group: "Annotations", label: "Show annotations", help: "Shows event marker annotations across the chart." }
+        }
     },
 
     parts: {
@@ -414,71 +337,23 @@ export const lineChart = defineUI({
     },
 
     events: {
-        rangeChange: {
-            label: "On Range Change", payload: { from: "number", to: "number", live: "boolean", cause: "string" },
-            help: "The time shown changed (zoom, pan, ruler, navigator, Live): from / to (ms), live, cause. Load what is needed for it."
-        },
-        liveChange: { label: "On Live / Paused", payload: { live: "boolean" }, help: "The viewer stopped following the newest data (zoom / pan), or follows it again." },
+        ...timeEvents(),
         hover: { label: "On Hover", payload: { time: "number", values: "object" }, help: "The time under the cursor and each series' value there: share a crosshair with other charts through a variable." },
-        hoverEnd: { label: "On Hover End", help: "The cursor left the chart." },
         click: { label: "On Click", payload: { time: "number", values: "object" }, help: "A click in the chart (not a drag): its time and the values there." },
-        annotationClick: {
-            label: "On Annotation Click", payload: { id: "string", time: "number", label: "string", color: "string", description: "string" },
-            help: "The viewer clicked an annotation badge or vertical marker line."
-        },
-        rangeSelect: { label: "On Range Select", payload: { from: "number", to: "number" }, help: "Shift + drag selected a time range: statistics, export, zoom other charts." },
         seriesToggle: { label: "On Series Toggle", payload: { series: "string", visible: "boolean" }, help: "The viewer showed / hid a series in the legend." }
     },
 
     actions: {
-        followLive: { label: "Follow live", help: "Shows the newest data again (as Live / a double click)." },
-        setRange: {
-            label: "Show a time range", params: { from: "number", to: "number" }, help: "Pauses live and shows that time.",
-            example: "{ \"from\": 1727852400000, \"to\": 1727856000000 }"
-        },
-        clearAll: { label: "Clear every series" },
-        addAnnotation: {
-            label: "Add annotation",
-            params: { time: "number", label: "string", color: "string" },
-            help: "Adds an annotation { time, label, color } to the chart.",
-            example: '{ "time": 1727852400000, "label": "Batch #104 Started", "color": "#10b981" }'
-        },
-        setAnnotations: {
-            label: "Set annotations",
-            help: "Replaces annotations with a new array [{ time, label, color }].",
-            example: '[{ "time": 1727852400000, "label": "Pump Trip", "color": "#ef4444" }]'
-        },
-        clearAnnotations: {
-            label: "Clear annotations", help: "Removes all annotations from the chart."
-        },
-        exportData: {
-            label: "Export (download)", params: { format: "string", range: "string", annotations: "boolean", thresholds: "boolean" },
-            help: "Downloads a file on the viewer's screen. Each option left out: the Properties' Export settings. Hidden series are never exported.",
-            example: "{ \"format\": \"xlsx\", \"range\": \"visible\", \"annotations\": true, \"thresholds\": true }  (format: csv | xlsx | png, range: visible | all)"
-        },
-        exportPNG: {
-            label: "Export PNG", params: { range: "string" }, help: "Downloads the chart as an image (2× sharp, a title, the time span, the legend).",
-            example: "{ \"range\": \"all\" }  (visible | all)"
-        }
+        ...timeActions(),
+        clearAll: { label: "Clear every series" }
     },
 
-    view: class extends ChartElement {
+    view: class extends TimeChartElement {
 
         decimator = new M4Decimator(2048);
         _navDecimator = new M4Decimator(1024);
         _series = new Map();      // key -> { buf, lastLive, dx, dy, n, demo, lastAt, stale }
         _hidden = new Set();
-        _dynamicAnnotations = [];
-        _annotationHits = [];
-        _hoverAnnotation = null;
-
-        viewRange = null;         // null = live
-        drag = null;              // { kind: "pan" | "ruler" | "nav" | "navL" | "navR" | "select", x0, min0, max0, moved }
-        hover = null;
-        _selection = null;        // { from, to } (Shift + drag)
-        _lastHoverEmit = 0;
-        _lastRangeEmit = 0;
-        _wasLive = true;
 
         get ringBuffer() { const l = this.seriesList(); return l.length ? this._state(l[0]).buf : new TimeSeriesRingBuffer(50); }
 
@@ -656,24 +531,6 @@ export const lineChart = defineUI({
             this.requestUpdate();
         }
 
-        // ---- the chart's actions (its Update node) ---------------------------------------------
-        followLive() {
-            this.viewRange = null;
-            this._selection = null;
-            this.draw();
-            this.requestUpdate();
-            this._rangeChanged("live");
-        }
-
-        setRange(params) {
-            const from = numOr(params && params.from, NaN), to = numOr(params && params.to, NaN);
-            if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from) return;
-            this.viewRange = { minX: from, maxX: to };
-            this.draw();
-            this.requestUpdate();
-            this._rangeChanged("action");
-        }
-
         clearAll() {
             for (const st of this._series.values()) st.buf.clear();
             this.viewRange = null;
@@ -684,14 +541,6 @@ export const lineChart = defineUI({
 
         // kept for v1 / v2 flows: the chart's Update node appending to a series named in params
         clearPoints() { this.clearAll(); }
-
-        // the time span an export covers: the time shown, or everything the shown series hold
-        _exportSpan(range) {
-            const list = this._visible();
-            const fb = this._bounds(list);
-            if (range === "visible" && this._scale) return { list, from: this._scale.vMinX, to: this._scale.vMaxX };
-            return { list, from: fb ? fb.minX : 0, to: fb ? fb.maxX : 0 };
-        }
 
         // the threshold a value is past (upper / lower limits of its series; the most extreme one)
         _pastLimit(s, v) {
@@ -762,154 +611,6 @@ export const lineChart = defineUI({
             return rows.length;
         }
 
-        /**
-         * The chart as an image, 2× sharp: a title and the time span above, the legend below. "visible":
-         * what is shown; "all": everything the shown series hold. Hidden series are left out.
-         */
-        exportPNG(params) {
-            const o = this._exportOpts(Object.assign({}, params || {}, { format: "png" }));
-            const { w, h } = this._layoutSize();
-            if (!(w > 0 && h > 0) || !this._visible().length) return Promise.resolve(null);
-            const S = 2, c = this._colors();
-            const span = this._exportSpan(o.range);
-            const range = o.range === "all" ? { vMinX: span.from, vMaxX: span.to > span.from ? span.to : span.from + 10 } : null;
-            // the chart, drawn again off the screen
-            const chart = document.createElement("canvas");
-            chart.width = w * S;
-            chart.height = h * S;
-            const cctx = chart.getContext("2d");
-            if (!cctx) return Promise.resolve(null);
-            cctx.setTransform(S, 0, 0, S, 0, 0);
-            const drawn = this.draw({ ctx: cctx, width: w, height: h, range, noAnnotations: !o.annotations, noThresholds: !o.thresholds });
-            this.scheduleDraw();
-            if (!drawn) return Promise.resolve(null);
-            // the legend: a swatch, the name, the value it shows
-            const mode = this.p.legendValue || "last";
-            const legend = this.p.legend === "none" ? [] : span.list.filter((s) => s.legend !== false).map((s) => {
-                const buf = this._state(s).buf;
-                let y = NaN;
-                if (mode === "last" && buf.count) y = buf.getY(buf.count - 1);
-                else if (mode !== "none") y = this._statsOf(s)[mode];
-                return { color: this.colorOf(s), text: (s.name || s.id) + (mode !== "none" && Number.isFinite(y) ? "  " + this.fmtValue(s, y) : "") };
-            });
-            const meas = document.createElement("canvas").getContext("2d");
-            meas.font = "11px " + c.mono;
-            const lines = [[]];
-            let lineW = 0;
-            for (const it of legend) {
-                const iw = 20 + meas.measureText(it.text).width + 16;
-                if (lineW + iw > w - 24 && lines[lines.length - 1].length) { lines.push([]); lineW = 0; }
-                lines[lines.length - 1].push(it);
-                lineW += iw;
-            }
-            const title = this._exportTitle();
-            const headH = title ? 40 : 24, legH = legend.length ? lines.length * 18 + 8 : 0;
-            const out = document.createElement("canvas");
-            out.width = w * S;
-            out.height = (headH + h + legH) * S;
-            const ctx = out.getContext("2d");
-            ctx.setTransform(S, 0, 0, S, 0, 0);
-            ctx.fillStyle = getComputedStyle(this).getPropertyValue("--panel").trim() || "#181b1f";
-            ctx.fillRect(0, 0, w, headH + h + legH);
-            ctx.textBaseline = "top";
-            ctx.textAlign = "left";
-            if (title) {
-                ctx.font = "600 14px " + (getComputedStyle(this).getPropertyValue("--nexa-fonts-body") || "sans-serif");
-                ctx.fillStyle = c.strong;
-                ctx.fillText(title, 12, 8);
-            }
-            ctx.font = "10.5px " + c.mono;
-            ctx.fillStyle = c.text;
-            ctx.fillText(this.fmtTime(drawn.vMinX) + "  →  " + this.fmtTime(drawn.vMaxX), 12, title ? 26 : 7);
-            ctx.drawImage(chart, 0, headH, w, h);
-            ctx.font = "11px " + c.mono;
-            lines.forEach((line, li) => {
-                let x = 12;
-                const y = headH + h + 4 + li * 18;
-                for (const it of line) {
-                    ctx.fillStyle = it.color;
-                    ctx.fillRect(x, y + 6, 14, 3);
-                    ctx.fillStyle = c.strong;
-                    ctx.fillText(it.text, x + 20, y + 1);
-                    x += 20 + ctx.measureText(it.text).width + 16;
-                }
-            });
-            return new Promise((resolve) => {
-                out.toBlob((blob) => {
-                    if (!blob) { resolve(null); return; }
-                    const name = this._getExportFileName("png", o.range);
-                    this._download(blob, name);
-                    this._lastExport = { name, blob, width: out.width, height: out.height };
-                    resolve(this._lastExport);
-                }, "image/png");
-            });
-        }
-
-        // ---- annotations -----------------------------------------------------------------------
-        _allAnnotations() {
-            if (this.p.showAnnotations === false) return [];
-            const staticList = Array.isArray(this.p.annotations) ? this.p.annotations : [];
-            const res = [];
-            for (const item of staticList) {
-                if (!item) continue;
-                const time = timeOf(item.time);
-                if (!Number.isFinite(time)) continue;
-                res.push({
-                    id: item.id || ("ann-s-" + time + "-" + (item.label || "")),
-                    time,
-                    label: String(item.label || "Event"),
-                    color: item.color || "#f59e0b",
-                    description: item.description ? String(item.description) : ""
-                });
-            }
-            return res.concat(this._dynamicAnnotations);
-        }
-
-        addAnnotation(params) {
-            if (!params) return;
-            const items = Array.isArray(params) ? params : [params];
-            for (const item of items) {
-                if (!item || typeof item !== "object") continue;
-                const time = item.time === undefined || item.time === null || item.time === "" ? Date.now() : timeOf(item.time);
-                if (!Number.isFinite(time)) continue;
-                this._dynamicAnnotations.push({
-                    id: item.id || ("ann-" + Date.now() + "-" + Math.random().toString(36).slice(2, 6)),
-                    time,
-                    label: String(item.label || "Event"),
-                    color: item.color || "#f59e0b",
-                    description: item.description ? String(item.description) : ""
-                });
-            }
-            this.draw();
-            this.requestUpdate();
-        }
-
-        setAnnotations(params) {
-            this._dynamicAnnotations = [];
-            const list = Array.isArray(params) ? params : (params && Array.isArray(params.annotations) ? params.annotations : (params && Array.isArray(params.list) ? params.list : (params ? [params] : [])));
-            for (const item of list) {
-                if (!item || typeof item !== "object") continue;
-                const time = item.time === undefined || item.time === null || item.time === "" ? Date.now() : timeOf(item.time);
-                if (!Number.isFinite(time)) continue;
-                this._dynamicAnnotations.push({
-                    id: item.id || ("ann-" + Date.now() + "-" + Math.random().toString(36).slice(2, 6)),
-                    time,
-                    label: String(item.label || "Event"),
-                    color: item.color || "#f59e0b",
-                    description: item.description ? String(item.description) : ""
-                });
-            }
-            this.draw();
-            this.requestUpdate();
-        }
-
-        clearAnnotations() {
-            this._dynamicAnnotations = [];
-            this._hoverAnnotation = null;
-            this.draw();
-            this.requestUpdate();
-        }
-
         _visible() {
             return this.seriesList().filter((s) => s.visible !== false && !this._hidden.has(s._key) && this._state(s).buf.count > 0);
         }
@@ -923,56 +624,6 @@ export const lineChart = defineUI({
                 if (b.maxX + s._shift > maxX) maxX = b.maxX + s._shift;
             }
             return Number.isFinite(minX) ? { minX, maxX } : null;
-        }
-
-        _rulerHeight(chartH) {
-            const kind = this.p.ruler || "tworow";
-            if (kind === "none") return 0;
-            const showDate = this.p.showDate !== false;
-            const showTime = this.p.showTime !== false;
-            const ch = chartH || this._layoutSize().h || 320;
-            const rhp = numOr(this.p.rulerHeight, 0);
-            const pct = rhp > 0 ? Math.min(50, Math.max(1, rhp)) : 0;
-
-            if (pct > 0) {
-                const targetH = Math.round((ch * pct) / 100);
-                if (kind === "axis") {
-                    if (!showDate && !showTime) return 0;
-                    const minH = (!showDate || !showTime) ? 18 : 28;
-                    return Math.max(minH, targetH);
-                }
-                if (kind === "navigator") {
-                    const minH = (!showDate && !showTime) ? 36 : (!showDate || !showTime) ? 48 : 60;
-                    return Math.max(minH, targetH);
-                }
-                // the band: ticks (10) + the rows + the grip (6)
-                const minH = (!showDate && !showTime) ? 14 : (!showDate || !showTime) ? 28 : 40;
-                return Math.max(minH, targetH);
-            }
-
-            if (kind === "tworow" || kind === "comb") {
-                if (!showDate && !showTime) return 14;
-                if (!showDate || !showTime) return 28;
-                return 40;
-            }
-            if (kind === "axis") {
-                if (!showDate && !showTime) return 0;
-                if (showDate && showTime) return 30;
-                return 20;
-            }
-            if (kind === "navigator") {
-                if (!showDate && !showTime) return 38;
-                if (!showDate || !showTime) return 54;
-                return 68;
-            }
-            return 38;
-        }
-
-        _timeStep(span, w) {
-            const density = this.p.tickDensity || "normal";
-            const div = density === "loose" ? 150 : density === "dense" ? 60 : 90;
-            const maxT = density === "loose" ? 5 : density === "dense" ? 12 : 8;
-            return getNiceTimeStep(span, Math.max(2, Math.min(maxT, Math.floor(w / div))));
         }
 
         _axisTitle(s) { return String(s.axisTitle || s.unit || ""); }
@@ -1015,48 +666,6 @@ export const lineChart = defineUI({
         }
 
         fmtValue(s, y) { return formatValue(y, this._seriesSpec(s), s.unit || ""); }
-
-        // ---- time range & limits ---------------------------------------------------------------
-        clampViewRange(minX, maxX, fb) {
-            let span = maxX - minX;
-            const lo = spanMs(this.p.minSpan) || 10, hi = spanMs(this.p.maxSpan) || Infinity;
-            if (span < lo) { const c = (minX + maxX) / 2; minX = c - lo / 2; maxX = c + lo / 2; span = lo; }
-            if (span > hi) { const c = (minX + maxX) / 2; minX = c - hi / 2; maxX = c + hi / 2; span = hi; }
-            if (!fb || this.p.panLimit === "free") return { minX, maxX };
-            let left = fb.minX, right = fb.maxX + span * numOr(this.p.futureMargin, 0);
-            if (this.p.panLimit === "window") left = Math.max(left, fb.maxX - (spanMs(this.p.panWindow) || 86400000));
-            if (span >= right - left) return { minX: left, maxX: left + span };
-            if (minX < left) { minX = left; maxX = left + span; }
-            if (maxX > right) { maxX = right; minX = right - span; }
-            return { minX, maxX };
-        }
-
-        getEffectiveTimeRange(fb) {
-            if (!fb) return { vMinX: 0, vMaxX: 1 };
-            if (this.viewRange) {
-                const c = this.clampViewRange(this.viewRange.minX, this.viewRange.maxX, fb);
-                return { vMinX: c.minX, vMaxX: c.maxX };
-            }
-            const windowMs = parseTimeWindow(this.p.timeWindow);
-            let vMinX = windowMs > 0 ? Math.max(fb.minX, fb.maxX - windowMs) : fb.minX, vMaxX = fb.maxX;
-            const margin = numOr(this.p.futureMargin, 0);
-            if (margin > 0) vMaxX += (vMaxX - vMinX) * margin;
-            const hi = spanMs(this.p.maxSpan);
-            if (hi && vMaxX - vMinX > hi) vMinX = vMaxX - hi;
-            if (vMaxX - vMinX < 10) { vMinX -= 5; vMaxX += 5; }
-            return { vMinX, vMaxX };
-        }
-
-        _rangeChanged(cause) {
-            const live = !this.viewRange;
-            if (live !== this._wasLive) { this._wasLive = live; this.emit("liveChange", { live }); }
-            const sc = this._scale;
-            if (!sc) return;
-            const now = Date.now();
-            if (cause === "wheel" && now - this._lastRangeEmit < 150) return;
-            this._lastRangeEmit = now;
-            this.emit("rangeChange", { from: sc.vMinX, to: sc.vMaxX, live, cause });
-        }
 
         // ---- drawing ---------------------------------------------------------------------------
         _decimate(dec, s, vMinX, vMaxX, w, into) {
@@ -1109,32 +718,6 @@ export const lineChart = defineUI({
             if (!(step > 0) || !Number.isFinite(step)) return values;
             for (let v = Math.ceil(r.lo / step) * step, k = 0; v <= r.hi + step * 1e-9 && k < 60; v += step, k++) values.push(Math.abs(v) < step * 1e-9 ? 0 : v);
             return values;
-        }
-
-        /**
-         * Draws the chart on its canvas; with a target ({ ctx, width, height, range?, noAnnotations?,
-         * noThresholds? }) into that one instead (an export): no hover, no selection, the screen's
-         * state left as it was. -> { vMinX, vMaxX } drawn (a target), or nothing.
-         */
-        draw(target) {
-            if (target) {
-                const keep = { scale: this._scale, full: this._full, newest: this._newest, hover: this.hover, sel: this._selection, hr: this._hoverRuler, drag: this.drag, ha: this._hoverAnnotation, hits: this._annotationHits };
-                this._exporting = target;
-                this.hover = null; this._selection = null; this._hoverRuler = false; this.drag = null; this._hoverAnnotation = null;
-                try {
-                    this._drawInto(target.ctx, target.width, target.height, target.range || null);
-                    return this._scale ? { vMinX: this._scale.vMinX, vMaxX: this._scale.vMaxX } : null;
-                } finally {
-                    this._exporting = null;
-                    this._scale = keep.scale; this._full = keep.full; this._newest = keep.newest; this.hover = keep.hover; this._selection = keep.sel;
-                    this._hoverRuler = keep.hr; this.drag = keep.drag; this._hoverAnnotation = keep.ha; this._annotationHits = keep.hits;
-                }
-            }
-            if (!this.canvas || !this.ctx) return;
-            const { w: width, h: height } = this._layoutSize();
-            if (width <= 0 || height <= 0) return;
-            if (!this.resizeCanvas()) return;
-            this._drawInto(this.ctx, width, height, null);
         }
 
         _drawInto(ctx, width, height, range) {
@@ -1338,80 +921,6 @@ export const lineChart = defineUI({
             ctx.restore();
         }
 
-        _drawAnnotations(ctx, toX, plotX, plotY, plotW, plotH, vMinX, vMaxX) {
-            const list = this._allAnnotations();
-            this._annotationHits = [];
-            if (!list.length) return;
-            const cs = getComputedStyle(this);
-            const mono = cs.getPropertyValue("--mono") || "monospace";
-
-            ctx.save();
-            ctx.font = "9.5px " + mono;
-
-            for (const ann of list) {
-                if (ann.time < vMinX || ann.time > vMaxX) continue;
-                const x = toX(ann.time);
-                if (x < plotX - 25 || x > plotX + plotW + 25) continue;
-
-                const color = ann.color || "#f59e0b";
-                const isHovered = this._hoverAnnotation && this._hoverAnnotation.id === ann.id;
-
-                // 1. Vertical marker line
-                ctx.strokeStyle = color;
-                ctx.lineWidth = isHovered ? 2 : 1.2;
-                ctx.setLineDash([4, 3]);
-                ctx.beginPath();
-                ctx.moveTo(Math.round(x) + 0.5, plotY + 18);
-                ctx.lineTo(Math.round(x) + 0.5, plotY + plotH);
-                ctx.stroke();
-                ctx.setLineDash([]);
-
-                // 2. Badge pill at top
-                const text = ann.label || "Event";
-                const tw = ctx.measureText(text).width;
-                const bw = Math.max(28, tw + 12);
-                const bh = 17;
-                const bx = Math.max(plotX + 2, Math.min(plotX + plotW - bw - 2, x - bw / 2));
-                const by = plotY + 2;
-
-                // Badge background & border
-                ctx.fillStyle = isHovered ? color : "rgba(30, 34, 40, 0.92)";
-                ctx.strokeStyle = color;
-                ctx.lineWidth = 1;
-                ctx.beginPath();
-                if (ctx.roundRect) ctx.roundRect(bx, by, bw, bh, 3);
-                else ctx.rect(bx, by, bw, bh);
-                ctx.fill();
-                ctx.stroke();
-
-                // Small triangular pointer down to line
-                ctx.fillStyle = color;
-                ctx.beginPath();
-                ctx.moveTo(x - 3, by + bh);
-                ctx.lineTo(x + 3, by + bh);
-                ctx.lineTo(x, by + bh + 3);
-                ctx.closePath();
-                ctx.fill();
-
-                // Text
-                ctx.fillStyle = isHovered ? "#fff" : color;
-                ctx.textAlign = "center";
-                ctx.textBaseline = "middle";
-                ctx.fillText(text, bx + bw / 2, by + bh / 2);
-
-                this._annotationHits.push({
-                    id: ann.id,
-                    time: ann.time,
-                    label: ann.label,
-                    color: ann.color,
-                    description: ann.description,
-                    box: { x: bx, y: by, w: bw, h: bh + 4, lineX: x }
-                });
-            }
-
-            ctx.restore();
-        }
-
         _drawHover(ctx, toX, toY, plotY, plotH) {
             const h = this.hover;
             if (!h || !h.hits.length) return;
@@ -1527,200 +1036,6 @@ export const lineChart = defineUI({
             ctx.restore();
         }
 
-        // ---- the time ruler (every variant but "axis" / "none" can be dragged) ------------------
-        // a row of times at the ticks (a label at an edge stays inside the ruler)
-        _timeRow(ctx, toX, minX, maxX, step, x, w, ty, dateShown, inset) {
-            const pad = inset || 2;
-            ctx.textBaseline = "top";
-            for (let t = Math.ceil(minX / step) * step, k = 0; t <= maxX && k < 200; t += step, k++) {
-                const label = this.fmtTick(t, step, dateShown), tx = toX(t), tw = ctx.measureText(label).width;
-                if (tx - tw / 2 < x + pad) { ctx.textAlign = "left"; ctx.fillText(label, x + pad, ty); }
-                else if (tx + tw / 2 > x + w - pad) { ctx.textAlign = "right"; ctx.fillText(label, x + w - pad, ty); }
-                else { ctx.textAlign = "center"; ctx.fillText(label, tx, ty); }
-            }
-        }
-
-        // a row of dates: once per day, in the middle of the day's part of the ruler (shorter, or
-        // none, when it does not fit); lineFrom / lineTo: a line where a day starts
-        _dateRow(ctx, toX, minX, maxX, x, w, ty, lineFrom, lineTo, lineColor) {
-            const utc = this._tf().utc;
-            const dayStart = (t) => { const q = parts(t, utc); return utc ? Date.UTC(q.y, q.mo, q.d) : new Date(q.y, q.mo, q.d).getTime(); };
-            ctx.textBaseline = "top";
-            ctx.textAlign = "center";
-            let d0 = dayStart(minX), guard = 0;
-            while (d0 <= maxX && guard++ < 400) {
-                const q = parts(d0 + 43200000, utc);
-                const d1 = utc ? Date.UTC(q.y, q.mo, q.d + 1) : new Date(q.y, q.mo, q.d + 1).getTime();
-                const a = Math.max(x, toX(d0)), b = Math.min(x + w, toX(d1)), room = b - a - 8;
-                let label = this.fmtDate(d0 + 1000);
-                if (ctx.measureText(label).width > room) label = this.fmtDateShort(d0 + 1000);
-                if (ctx.measureText(label).width <= room) ctx.fillText(label, (a + b) / 2, ty);
-                if (d0 > minX && lineTo > lineFrom) {
-                    const lx = Math.round(toX(d0)) + 0.5;
-                    ctx.save();
-                    ctx.strokeStyle = lineColor;
-                    ctx.beginPath();
-                    ctx.moveTo(lx, lineFrom);
-                    ctx.lineTo(lx, lineTo);
-                    ctx.stroke();
-                    ctx.restore();
-                }
-                d0 = d1;
-            }
-        }
-
-        _drawRuler(ctx, m, minX, maxX, list) {
-            const kind = this.p.ruler || "tworow";
-            if (kind === "none") return;
-            const c = this._colors();
-            const { rulerX: x, rulerY: y, rulerW: w, rulerH: h } = m;
-            if (!h) return;
-            const span = Math.max(1, maxX - minX);
-            const step = this._timeStep(span, w);
-            const toX = (t) => x + ((t - minX) / span) * w;
-            const hot = this._hoverRuler || (this.drag && this.drag.kind !== "pan" && this.drag.kind !== "select");
-            const showDate = this.p.showDate !== false;
-            // ticks a day (or more) apart: the date row already names them
-            const showTime = this.p.showTime !== false && !(showDate && step >= 86400000);
-            const both = showTime && showDate;
-            ctx.save();
-
-            if (kind === "navigator") { this._drawNavigator(ctx, m, minX, maxX, list, c); ctx.restore(); return; }
-
-            if (kind === "axis") {
-                // labels only: the rows centred in the ruler
-                const rowsH = both ? 24 : 11, top = y + Math.max(2, Math.round((h - rowsH) / 2));
-                ctx.font = "10px " + c.mono;
-                ctx.fillStyle = c.text;
-                if (showTime) this._timeRow(ctx, toX, minX, maxX, step, x, w, top, showDate);
-                if (showDate) {
-                    ctx.font = "600 9.5px " + c.mono;
-                    this._dateRow(ctx, toX, minX, maxX, x, w, showTime ? top + 13 : top, y, y + h, c.grid);
-                }
-                ctx.restore();
-                return;
-            }
-
-            // comb / band: a band that says "drag me"; ticks on top, then the time row, the date row
-            ctx.fillStyle = hot ? this.hexToRgba(c.accent, 0.14) : c.band;
-            ctx.fillRect(x, y, w, h);
-            ctx.strokeStyle = hot ? c.accent : c.grid;
-            ctx.lineWidth = 1;
-            ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
-            const minor = step <= 20 ? step / 2 : step / 5;
-            ctx.beginPath();
-            ctx.strokeStyle = c.grid;
-            for (let t = Math.ceil(minX / minor) * minor, k = 0; t <= maxX && k < 1000; t += minor, k++) { const sx = Math.round(toX(t)) + 0.5; ctx.moveTo(sx, y); ctx.lineTo(sx, y + 4); }
-            ctx.stroke();
-            ctx.beginPath();
-            ctx.strokeStyle = c.text;
-            for (let t = Math.ceil(minX / step) * step, k = 0; t <= maxX && k < 200; t += step, k++) { const sx = Math.round(toX(t)) + 0.5; ctx.moveTo(sx, y); ctx.lineTo(sx, y + 8); }
-            ctx.stroke();
-
-            // the rows start under the ticks (y + 10) and sit in the middle of what is left
-            const rowsH = both ? 24 : (showTime || showDate) ? 11 : 0;
-            const top = y + 10 + Math.max(0, Math.floor((h - 10 - 6 - rowsH) / 2));
-            if (showTime) {
-                ctx.font = "10px " + c.mono;
-                ctx.fillStyle = c.strong;
-                this._timeRow(ctx, toX, minX, maxX, step, x, w, top, showDate, 12);
-            }
-            if (showDate) {
-                ctx.font = "600 9.5px " + c.mono;
-                ctx.fillStyle = c.text;
-                const dy = showTime ? top + 13 : top;
-                this._dateRow(ctx, toX, minX, maxX, x, w, dy, showTime ? top + 12 : y, y + h, c.text);
-            }
-            // the drag affordance: a grip at the bottom middle, arrows at both ends
-            const cx = x + w / 2, gy = y + h - 3;
-            ctx.fillStyle = hot ? c.accent : c.text;
-            for (let k = -2; k <= 2; k++) { ctx.beginPath(); ctx.arc(cx + k * 5, gy, 1.2, 0, Math.PI * 2); ctx.fill(); }
-            ctx.font = "11px " + c.mono;
-            ctx.textBaseline = "middle";
-            ctx.textAlign = "left";
-            ctx.fillText("‹", x + 3, y + h / 2);
-            ctx.textAlign = "right";
-            ctx.fillText("›", x + w - 3, y + h / 2);
-            if (hot) this._hint(ctx, "drag ⇆ to move · wheel to zoom", x + w - 12, y + 1, c);
-            ctx.restore();
-        }
-
-        // the navigator: every point the chart holds, small; a window (the time shown) to drag / resize
-        _navGeom(m) {
-            const full = this._full;
-            if (!full || !this._scale) return null;
-            const { rulerX: x, rulerY: y, rulerW: w, rulerH } = m;
-            const span = Math.max(1, full.maxX - full.minX);
-            const toX = (t) => x + ((t - full.minX) / span) * w;
-            const a = Math.max(x, toX(this._scale.vMinX)), b = Math.min(x + w, toX(this._scale.vMaxX));
-            const showTime = this.p.showTime !== false;
-            const showDate = this.p.showDate !== false;
-            const labelH = (showTime && showDate) ? 27 : (showTime || showDate) ? 15 : 0;
-            const h = Math.max(24, (rulerH || 54) - labelH);
-            return { x, y, w, h, a, b: Math.max(b, a + 6), span, full, toX };
-        }
-
-        _drawNavigator(ctx, m, minX, maxX, list, c) {
-            const g = this._navGeom(m);
-            if (!g) return;
-            const { x, y, w, h } = g;
-            ctx.fillStyle = c.band;
-            ctx.fillRect(x, y, w, h);
-            // the series, small
-            const tmp = {};
-            for (const s of list) {
-                this._decimate(this._navDecimator, s, g.full.minX, g.full.maxX, w / 2, tmp);
-                let lo = Infinity, hi = -Infinity;
-                for (let i = 0; i < tmp.n; i++) { if (tmp.dy[i] < lo) lo = tmp.dy[i]; if (tmp.dy[i] > hi) hi = tmp.dy[i]; }
-                if (!tmp.n || !Number.isFinite(lo)) continue;
-                const r = hi - lo || 1;
-                ctx.beginPath();
-                ctx.strokeStyle = this.hexToRgba(this.colorOf(s), 0.8);
-                ctx.lineWidth = 1;
-                for (let i = 0; i < tmp.n; i++) { const sx = g.toX(tmp.dx[i]), sy = y + h - 3 - ((tmp.dy[i] - lo) / r) * (h - 6); if (i) ctx.lineTo(sx, sy); else ctx.moveTo(sx, sy); }
-                ctx.stroke();
-            }
-            // outside the window: shaded; the window: a frame with two handles
-            ctx.fillStyle = "rgba(0, 0, 0, 0.28)";
-            ctx.fillRect(x, y, g.a - x, h);
-            ctx.fillRect(g.b, y, x + w - g.b, h);
-            ctx.strokeStyle = c.accent;
-            ctx.lineWidth = 1.5;
-            ctx.strokeRect(g.a + 0.5, y + 0.5, g.b - g.a - 1, h - 1);
-            ctx.fillStyle = this.hexToRgba(c.accent, this._hoverRuler ? 0.18 : 0.08);
-            ctx.fillRect(g.a, y, g.b - g.a, h);
-            for (const hx of [g.a, g.b]) {
-                ctx.fillStyle = c.accent;
-                ctx.beginPath();
-                const handleH = Math.min(22, Math.max(16, Math.round(h * 0.5)));
-                ctx.roundRect ? ctx.roundRect(hx - 4, y + h / 2 - handleH / 2, 8, handleH, 3) : ctx.rect(hx - 4, y + h / 2 - handleH / 2, 8, handleH);
-                ctx.fill();
-                ctx.strokeStyle = "#fff";
-                ctx.lineWidth = 1;
-                ctx.beginPath();
-                ctx.moveTo(hx - 1.5, y + h / 2 - 5); ctx.lineTo(hx - 1.5, y + h / 2 + 5);
-                ctx.moveTo(hx + 1.5, y + h / 2 - 5); ctx.lineTo(hx + 1.5, y + h / 2 + 5);
-                ctx.stroke();
-            }
-            // the whole history's times and dates under it
-            const showDate = this.p.showDate !== false;
-            if (this.p.showTime !== false || showDate) {
-                const step = this._timeStep(g.span, w), top = y + h + 2;
-                const showTime = this.p.showTime !== false && !(showDate && step >= 86400000);
-                if (showTime) {
-                    ctx.font = "9.5px " + c.mono;
-                    ctx.fillStyle = c.text;
-                    this._timeRow(ctx, g.toX, g.full.minX, g.full.maxX, step, x, w, top, showDate);
-                }
-                if (showDate) {
-                    ctx.font = "600 9.5px " + c.mono;
-                    ctx.fillStyle = c.text;
-                    this._dateRow(ctx, g.toX, g.full.minX, g.full.maxX, x, w, showTime ? top + 12 : top, 0, 0, c.grid);
-                }
-            }
-            if (this._hoverRuler) this._hint(ctx, "drag the window ⇆ · its edges resize", x + w - 4, y + 2, c);
-        }
-
         // ---- legend ----------------------------------------------------------------------------
         _statsOf(s) {
             const st = this._state(s);
@@ -1803,35 +1118,70 @@ export const lineChart = defineUI({
             return (s.tooltipLabel || s.name || "Value") + ": " + (s.prefix || "") + f.text + (s.suffix || "") + (f.unit ? " " + f.unit : "");
         }
 
-        _showTooltip(px, py, rectW) {
+        _values(hits) {
+            const values = {};
+            hits.forEach((h) => { values[h.s.id || h.s.name] = h.y; });
+            return values;
+        }
+
+        // ---- TimeChartElement's hooks -----------------------------------------------------------
+        _fullBounds() { return this._bounds(this._visible()); }
+        _hasData() { return this._visible().length > 0; }
+
+        _pngLegend(span) {
+            const mode = this.p.legendValue || "last";
+            return span.list.filter((s) => s.legend !== false).map((s) => {
+                const buf = this._state(s).buf;
+                let y = NaN;
+                if (mode === "last" && buf.count) y = buf.getY(buf.count - 1);
+                else if (mode !== "none") y = this._statsOf(s)[mode];
+                return { color: this.colorOf(s), text: (s.name || s.id) + (mode !== "none" && Number.isFinite(y) ? "  " + this.fmtValue(s, y) : "") };
+            });
+        }
+
+        _navTraces(ctx, g, list) {
+            const { y, w, h } = g;
+            // the series, small
+            const tmp = {};
+            for (const s of list) {
+                this._decimate(this._navDecimator, s, g.full.minX, g.full.maxX, w / 2, tmp);
+                let lo = Infinity, hi = -Infinity;
+                for (let i = 0; i < tmp.n; i++) { if (tmp.dy[i] < lo) lo = tmp.dy[i]; if (tmp.dy[i] > hi) hi = tmp.dy[i]; }
+                if (!tmp.n || !Number.isFinite(lo)) continue;
+                const r = hi - lo || 1;
+                ctx.beginPath();
+                ctx.strokeStyle = this.hexToRgba(this.colorOf(s), 0.8);
+                ctx.lineWidth = 1;
+                for (let i = 0; i < tmp.n; i++) { const sx = g.toX(tmp.dx[i]), sy = y + h - 3 - ((tmp.dy[i] - lo) / r) * (h - 6); if (i) ctx.lineTo(sx, sy); else ctx.moveTo(sx, sy); }
+                ctx.stroke();
+            }
+        }
+
+        _plotHover(L, time) {
+            const { px, py } = L;
+            const hits = this._hits(px, py, time);
+            let at = time, best = Infinity;
+            for (const h of hits) if (Math.abs(h.x - time) < best) { best = Math.abs(h.x - time); at = h.x; }
+            this.hover = { time: at, px, py, hits };
+            this.draw();
+            this._showTooltip(px, py, L.rect.width);
+            const now = Date.now();
+            if (now - this._lastHoverEmit > 100) {
+                this._lastHoverEmit = now;
+                this.emit("hover", { time: this.hover.time, values: this._values(hits) });
+            }
+        }
+
+        _plotClick(L, time) {
+            const hits = this._hits(L.px, L.py, time);
+            this.emit("click", { time, values: this._values(hits) });
+            const near = hits.slice().sort((a, b) => a.d - b.d)[0];
+            if (near && near.d <= 12) this.emit("pointClick", { x: near.x, y: near.y }, this._target(near.s));
+        }
+
+        _showHitsTooltip(px, py, rectW) {
             const tip = this.renderRoot.querySelector(".tooltip");
             if (!tip) return;
-            if (!px && !py && !rectW) {
-                tip.style.display = "none";
-                return;
-            }
-            if (this._hoverAnnotation) {
-                const ann = this._hoverAnnotation;
-                tip.querySelector(".tooltip-time").textContent = this.fmtDate(ann.time) + " " + this.fmtTime(ann.time);
-                const body = tip.querySelector(".tooltip-rows");
-                while (body.children.length > 1) body.removeChild(body.lastChild);
-                let row = body.children[0];
-                if (!row) {
-                    row = document.createElement("div");
-                    row.className = "tooltip-row";
-                    row.appendChild(document.createElement("span")).className = "tooltip-dot";
-                    row.appendChild(document.createElement("span")).className = "tooltip-text";
-                    body.appendChild(row);
-                }
-                row.children[0].style.background = ann.color || "#f59e0b";
-                row.children[1].textContent = ann.label + (ann.description ? " · " + ann.description : "");
-                const flip = px > rectW - 200;
-                tip.style.display = "block";
-                tip.style.left = `${Math.round(flip ? px - 12 : px + 12)}px`;
-                tip.style.top = `${Math.round(py)}px`;
-                tip.style.transform = flip ? "translate(-100%, -50%)" : "translate(0, -50%)";
-                return;
-            }
             const h = this.hover;
             const rows = h ? h.hits.filter((x) => x.s.tooltip !== false || this.p.tooltipShows === "nearest") : [];
             if (!rows.length || this.p.tooltipShows === "off") { tip.style.display = "none"; return; }
@@ -1857,210 +1207,12 @@ export const lineChart = defineUI({
             tip.style.transform = flip ? "translate(-100%, -50%)" : "translate(0, -50%)";
         }
 
-        // ---- pointer ---------------------------------------------------------------------------
-        _local(e) {
-            const { box, w, h } = this._layoutSize();
-            if (!box || w <= 0 || h <= 0) return null;
-            const rect = box.getBoundingClientRect();
-            const sx = rect.width > 0 ? w / rect.width : 1, sy = rect.height > 0 ? h / rect.height : 1;
-            const m = this._scale && this._scale.m ? this._scale.m : this.getPlotMetrics(w, h);
-            return { box, rect: { width: w, height: h }, m, sx, px: (e.clientX - rect.left) * sx, py: (e.clientY - rect.top) * sy };
-        }
-
-        _zone(L) {
-            const { m, px, py } = L;
-            const kind = this.p.ruler || "tworow";
-            if (m.rulerH && kind !== "axis" && px >= m.rulerX - 6 && px <= m.rulerX + m.rulerW + 6 && py >= m.rulerY && py <= m.rulerY + m.rulerH) {
-                if (kind !== "navigator") return "ruler";
-                const g = this._navGeom(m);
-                if (!g || py > g.y + g.h) return "none";
-                if (Math.abs(px - g.a) <= 7) return "navL";
-                if (Math.abs(px - g.b) <= 7) return "navR";
-                return px > g.a && px < g.b ? "nav" : "navJump";
-            }
-            if (px >= m.plotX && px <= m.plotX + m.plotW && py >= m.plotY && py <= m.plotY + m.plotH) return "plot";
-            return "none";
-        }
-
-        onPointerDown(e) {
-            if (e.button !== 0 || !this.canvas) return;
-            // the corner's buttons (Live, the export menu) are not a click / drag on the chart
-            if (e.composedPath().some((n) => n.classList && (n.classList.contains("corner") || n.classList.contains("menu-dropdown")))) return;
-            const L = this._local(e);
-            if (!L) return;
-            const zone = this._zone(L);
-            if (zone === "none") return;
-            const fb = this._bounds(this._visible());
-            if (!fb || !this._scale) return;
-            const { vMinX, vMaxX } = this._scale;
-            const base = { x0: e.clientX, sx: L.sx, min0: vMinX, max0: vMaxX, moved: false, down: { px: L.px, py: L.py } };
-            if (zone === "navJump") {
-                // a click beside the window: the window jumps there
-                const g = this._navGeom(L.m), t = g.full.minX + ((L.px - g.x) / g.w) * g.span, half = (vMaxX - vMinX) / 2;
-                this.viewRange = this.clampViewRange(t - half, t + half, fb);
-                this.draw();
-                this.requestUpdate();
-                this._rangeChanged("navigator");
-                return;
-            }
-            if (zone === "plot" && e.shiftKey) this.drag = Object.assign(base, { kind: "select" });
-            else if (zone === "plot") this.drag = Object.assign(base, { kind: this.p.enableZoomPan ? "pan" : "click" });
-            else this.drag = Object.assign(base, { kind: zone });
-            L.box.classList.add(zone === "plot" ? (e.shiftKey ? "selecting" : "dragging") : "scrubbing");
-            try { e.target.setPointerCapture(e.pointerId); } catch (_) { }
-        }
-
-        onPointerMove(e) {
-            const L = this._local(e);
-            if (!L || !this.canvas) return;
-            const { m, px, py, box } = L;
-            const d = this.drag;
-            if (d) {
-                const dx = (e.clientX - d.x0) * (d.sx || 1);
-                if (Math.abs(dx) > 3) d.moved = true;
-                if (!d.moved || d.kind === "click") return;
-                const fb = this._bounds(this._visible());
-                if (d.kind === "select") {
-                    const sc = this._scale;
-                    const t0 = d.min0 + ((d.down.px - m.plotX) / m.plotW) * (d.max0 - d.min0), t1 = d.min0 + ((px - m.plotX) / m.plotW) * (d.max0 - d.min0);
-                    this._selection = { from: Math.min(t0, t1), to: Math.max(t0, t1) };
-                    if (sc) this.draw();
-                    return;
-                }
-                if (d.kind === "pan" || d.kind === "ruler") {
-                    const delta = (dx / m.plotW) * (d.max0 - d.min0);
-                    this.viewRange = this.clampViewRange(d.min0 - delta, d.max0 - delta, fb);
-                } else {
-                    // the navigator: its scale is the whole history
-                    const g = this._navGeom(m);
-                    if (!g) return;
-                    const delta = (dx / g.w) * g.span;
-                    if (d.kind === "nav") this.viewRange = this.clampViewRange(d.min0 + delta, d.max0 + delta, fb);
-                    else if (d.kind === "navL") this.viewRange = this.clampViewRange(Math.min(d.min0 + delta, d.max0 - 10), d.max0, fb);
-                    else this.viewRange = this.clampViewRange(d.min0, Math.max(d.max0 + delta, d.min0 + 10), fb);
-                }
-                this.draw();
-                return;
-            }
-
-            // Check annotation hits
-            let hitAnn = null;
-            if (this._annotationHits && this._annotationHits.length) {
-                for (const h of this._annotationHits) {
-                    const b = h.box;
-                    if ((px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h) ||
-                        (Math.abs(px - b.lineX) <= 6 && py >= m.plotY && py <= m.plotY + m.plotH)) {
-                        hitAnn = h;
-                        break;
-                    }
-                }
-            }
-            if (hitAnn !== this._hoverAnnotation) {
-                this._hoverAnnotation = hitAnn;
-                this.draw();
-            }
-            box.classList.toggle("hover-ann", !!hitAnn);
-            if (hitAnn) {
-                if (this.hover) { this.hover = null; this.draw(); this.emit("hoverEnd", {}); }
-                this._showTooltip(px, py, L.rect.width);
-                return;
-            }
-
-            const zone = this._zone(L);
-            const onRuler = zone === "ruler" || zone === "nav" || zone === "navL" || zone === "navR" || zone === "navJump";
-            if (onRuler !== !!this._hoverRuler) { this._hoverRuler = onRuler; this.draw(); }
-            box.classList.toggle("hover-ruler", zone === "ruler" || zone === "nav");
-            box.classList.toggle("hover-edge", zone === "navL" || zone === "navR");
-            if (zone !== "plot" || !this._scale) {
-                if (this.hover) { this.hover = null; this.draw(); this.emit("hoverEnd", {}); }
-                this._showTooltip(0, 0, 0);
-                return;
-            }
-            const sc = this._scale;
-            const time = sc.vMinX + ((px - m.plotX) / m.plotW) * (sc.vMaxX - sc.vMinX);
-            const hits = this._hits(px, py, time);
-            let at = time, best = Infinity;
-            for (const h of hits) if (Math.abs(h.x - time) < best) { best = Math.abs(h.x - time); at = h.x; }
-            this.hover = { time: at, px, py, hits };
-            this.draw();
-            this._showTooltip(px, py, L.rect.width);
-            const now = Date.now();
-            if (now - this._lastHoverEmit > 100) {
-                this._lastHoverEmit = now;
-                this.emit("hover", { time: this.hover.time, values: this._values(hits) });
-            }
-        }
-
-        _values(hits) {
-            const values = {};
-            hits.forEach((h) => { values[h.s.id || h.s.name] = h.y; });
-            return values;
-        }
-
-        onPointerUp(e) {
-            const d = this.drag;
-            this.drag = null;
-            const L = this._local(e);
-            if (L) L.box.classList.remove("dragging", "scrubbing", "selecting");
-            try { e.target.releasePointerCapture(e.pointerId); } catch (_) { }
-            if (!d) return;
-            if (d.kind === "select") {
-                if (d.moved && this._selection) this.emit("rangeSelect", { from: this._selection.from, to: this._selection.to });
-                return;
-            }
-            if (d.moved && d.kind !== "click") {
-                this.requestUpdate();
-                this._rangeChanged(d.kind === "pan" ? "pan" : d.kind === "ruler" ? "ruler" : "navigator");
-                return;
-            }
-            if ((d.kind === "pan" || d.kind === "click") && L && this._scale) {
-                // a click (no drag): the chart's On Click; on a point, that series' On Point Click
-                this._selection = null;
-                if (this._hoverAnnotation) {
-                    const ann = this._hoverAnnotation;
-                    this.emit("annotationClick", { id: ann.id, time: ann.time, label: ann.label, color: ann.color, description: ann.description });
-                }
-                const sc = this._scale, m = L.m;
-                const time = sc.vMinX + ((L.px - m.plotX) / m.plotW) * (sc.vMaxX - sc.vMinX);
-                const hits = this._hits(L.px, L.py, time);
-                this.emit("click", { time, values: this._values(hits) });
-                const near = hits.slice().sort((a, b) => a.d - b.d)[0];
-                if (near && near.d <= 12) this.emit("pointClick", { x: near.x, y: near.y }, this._target(near.s));
-                this.draw();
-            }
-        }
-
-        onWheel(e) {
-            if (!this.p.enableZoomPan || !this.canvas) return;
-            const L = this._local(e);
-            if (!L || !this._scale) return;
-            const zone = this._zone(L);
-            if (zone === "none") return;
-            e.preventDefault();
-            const { m, px } = L;
-            const fb = this._bounds(this._visible());
-            const { vMinX, vMaxX } = this._scale;
-            const cur = vMaxX - vMinX;
-            if (zone !== "plot" && (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY))) {
-                const delta = ((e.deltaX !== 0 ? e.deltaX : e.deltaY) / m.plotW) * cur * 0.4;
-                this.viewRange = this.clampViewRange(vMinX + delta, vMaxX + delta, fb);
-            } else {
-                const ratio = Math.max(0, Math.min(1, (px - m.plotX) / m.plotW));
-                const at = vMinX + ratio * cur, span = cur * (e.deltaY < 0 ? 0.75 : 1.33);
-                this.viewRange = this.clampViewRange(at - ratio * span, at + (1 - ratio) * span, fb);
-            }
-            this.draw();
-            this.requestUpdate();
-            this._rangeChanged("wheel");
-        }
-
-        onPointerLeave() {
-            this._hoverAnnotation = null;
-            if (this.hover) { this.hover = null; this.draw(); this.emit("hoverEnd", {}); }
-            this._showTooltip(0, 0, 0);
-            if (this._hoverRuler) { this._hoverRuler = false; this.draw(); }
-            const box = this._plotEl();
-            if (box) box.classList.remove("hover-ruler", "hover-edge", "hover-ann");
+        // what an export covers: the shown series, the time shown or all they hold
+        _exportSpan(range) {
+            const list = this._visible();
+            const fb = this._bounds(list);
+            if (range === "visible" && this._scale) return { list, from: this._scale.vMinX, to: this._scale.vMaxX };
+            return { list, from: fb ? fb.minX : 0, to: fb ? fb.maxX : 0 };
         }
 
         render() {
