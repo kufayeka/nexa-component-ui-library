@@ -383,6 +383,10 @@ export class ChartElement extends UIElement {
                 }
             };
             window.addEventListener("pointerdown", this._docPointerDown);
+            // print / Export PDF: redrawn sharp, in the colours of the moment (a theme set for paper)
+            this._onPrint = (e) => { this._printing = e.type === "beforeprint"; if (this.resizeCanvas()) this.draw(); };
+            window.addEventListener("beforeprint", this._onPrint);
+            window.addEventListener("afterprint", this._onPrint);
             requestAnimationFrame(() => { if (this.resizeCanvas()) this.draw(); });
         }
 
@@ -390,6 +394,11 @@ export class ChartElement extends UIElement {
             if (this._docPointerDown) {
                 window.removeEventListener("pointerdown", this._docPointerDown);
                 this._docPointerDown = null;
+            }
+            if (this._onPrint) {
+                window.removeEventListener("beforeprint", this._onPrint);
+                window.removeEventListener("afterprint", this._onPrint);
+                this._onPrint = null;
             }
             if (this.resizeObserver) { this.resizeObserver.disconnect(); this.resizeObserver = null; }
             if (this.intersectionObserver) { this.intersectionObserver.disconnect(); this.intersectionObserver = null; }
@@ -466,7 +475,8 @@ export class ChartElement extends UIElement {
             const zoom = rect.width > 0 ? Math.max(0.25, Math.min(4, rect.width / w)) : 1;
             const rawDpr = window.devicePixelRatio || 1;
             const base = w >= 1200 ? Math.min(rawDpr, 1.0) : (w >= 800 ? Math.min(rawDpr, 1.25) : Math.min(rawDpr, 1.5));
-            const dpr = Math.round(base * zoom * 100) / 100;
+            // printing: drawn sharp for paper (3x), then back to the screen's resolution
+            const dpr = this._printing ? 3 : Math.round(base * zoom * 100) / 100;
             const pixelW = Math.max(1, Math.floor(w * dpr)), pixelH = Math.max(1, Math.floor(h * dpr));
             if (this.canvas.style.width || this.canvas.style.height) { this.canvas.style.width = ""; this.canvas.style.height = ""; }
             if (this.canvas.width === pixelW && this.canvas.height === pixelH && this._lastDpr === dpr) return true;
