@@ -13,7 +13,7 @@ function load(file) {
     const names = [...src.matchAll(/^export (?:var|let|const|function) (\w+)/gm)].map((m) => m[1]);
     return new Function(src.replace(/^export /gm, '') + '\nreturn {' + names.join(',') + '};')();
 }
-const R = load('rows.js'), S = load('stack.js');
+const R = load('rows.js'), S = load('stack.js'), C = load('curves.js');
 
 let passed = 0;
 function ok(label, fn) { fn(); passed++; console.log('✔ ' + label); }
@@ -122,6 +122,21 @@ ok('niceTicks: 1 / 2 / 5 steps, the ends rounded outwards; a flat range still ha
     assert.deepStrictEqual(S.logTicks(1, 1000).filter((t) => t === 1 || t === 10 || t === 100 || t === 1000), [1, 10, 100, 1000]);
     assert.ok(S.logTicks(1, 10000).indexOf(100) !== -1 && S.logTicks(1, 10000).indexOf(2) === -1, 'decades only when wide');
     assert.deepStrictEqual(S.extent([Float64Array.from([3, NaN, 1]), [Infinity, 9]]), { min: 1, max: 9 });
+});
+
+ok('monotoneSegments: ends at the points, never overshoots a peak or a valley (a flat run stays flat); stepPoints: after / before / center', () => {
+    const xs = [0, 1, 2, 3, 4], ys = [0, 0, 10, 10, 0];
+    const seg = C.monotoneSegments(xs, ys, 5);
+    assert.strictEqual(seg.length, 24);
+    for (let k = 0; k < 4; k++) {
+        assert.strictEqual(seg[k * 6 + 4], xs[k + 1]); assert.strictEqual(seg[k * 6 + 5], ys[k + 1]);
+        [1, 3].forEach((o) => assert.ok(seg[k * 6 + o] >= -1e-9 && seg[k * 6 + o] <= 10 + 1e-9, 'a control point stays within the data: ' + seg[k * 6 + o]));
+    }
+    [seg[0] - 1 / 3, seg[1], seg[2] - 2 / 3, seg[3]].forEach((v) => assert.ok(Math.abs(v) < 1e-12, 'the flat start stays flat'));
+    assert.strictEqual(C.monotoneSegments([0], [1], 1).length, 0);
+    assert.deepStrictEqual(C.stepPoints([0, 10, 20], [1, 2, 3], 3, 'after'), [0, 1, 10, 1, 10, 2, 20, 2, 20, 3]);
+    assert.deepStrictEqual(C.stepPoints([0, 10], [1, 2], 2, 'before'), [0, 1, 0, 2, 10, 2]);
+    assert.deepStrictEqual(C.stepPoints([0, 10], [1, 2], 2, 'center'), [0, 1, 5, 1, 5, 2, 10, 2]);
 });
 
 console.log(`\n${passed} passed\nALL OK`);
