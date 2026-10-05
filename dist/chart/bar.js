@@ -1,6 +1,6 @@
 import { html, asBinding, formatValue, formatParts, evaluateExpression } from "../../../nexa-sdk/nexa-component-sdk.js";
 import { PREFIX, part, defineUI } from "../core.js";
-import { chartCommon, SERIES_PALETTE, opt, NOTATIONS, DECIMALS, DASHES, notationOf, numOr, niceNum } from "./core.js";
+import { chartCommon, opt, NOTATIONS, DECIMALS, DASHES, notationOf, numOr, niceNum } from "./core.js";
 import { getNiceTimeStep, parseTimeWindow, SPANS, WINDOWS, spanMs, timeOf, parts, pad2, clock, relative, DAYS, MONTHS } from "./time.js";
 import { xlsxBlob } from "./export.js";
 import { TimeChartElement } from "./time-chart.js";
@@ -101,15 +101,9 @@ export class BarChartElement extends TimeChartElement {
     }
 
     colorOf(s, barIndex) {
-        if (s.colorMode === "byCategory" && Number.isFinite(barIndex)) {
-            return SERIES_PALETTE[barIndex % SERIES_PALETTE.length];
-        }
+        if (s.colorMode === "byCategory" && Number.isFinite(barIndex)) return this.seriesColor(barIndex);
         if (s.color && typeof s.color === "string" && s.color.trim()) return s.color.trim();
-        const cs = getComputedStyle(this);
-        if (s._i === 0) {
-            return cs.getPropertyValue("--cp-solid").trim() || cs.getPropertyValue("--nexa-colors-primary-solid").trim() || SERIES_PALETTE[0];
-        }
-        return SERIES_PALETTE[s._i % SERIES_PALETTE.length];
+        return this.seriesColor(s._i);
     }
 
     _seriesSpec() {
@@ -532,7 +526,7 @@ export class BarChartElement extends TimeChartElement {
         this._clearCanvas(ctx, w, h);
         const m = this.getPlotMetrics(w, h);
         const c = this._colors();
-        const mono = c.mono;
+        const mono = c.font;
         const font = c.font;
 
         const isTime = this.p.xType === "time";
@@ -957,7 +951,7 @@ export class BarChartElement extends TimeChartElement {
         const mode = s.showDataLabels;
         if (!mode || mode === "none") return;
         const text = mode === "percent" ? Math.round(val) + "%" : this.fmtValue(val);
-        const mono = c.mono;
+        const mono = c.font;
 
         ctx.save();
         ctx.font = "9.5px " + mono;
@@ -1206,7 +1200,6 @@ export const barChart = defineUI({
                     const s = seriesDefaults();
                     s.id = "s" + n;
                     s.name = "Series " + n;
-                    s.color = SERIES_PALETTE[(n - 1) % SERIES_PALETTE.length];
                     return s;
                 },
                 actions: {

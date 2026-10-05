@@ -19,7 +19,12 @@ export const CHART_CAPS = { resizable: true, rotatable: false, flippable: false,
 /** The defineUI fields every chart shares. */
 export const chartCommon = { category: CATEGORY_CHART, capabilities: CHART_CAPS, css: "" };
 
-export const SERIES_PALETTE = ["#3b82f6", "#f59e0b", "#10b981", "#ef4444", "#8b5cf6", "#06b6d4", "#ec4899", "#84cc16", "#f97316", "#14b8a6"];
+// Series colours come from the THEME (Theme & Styling: colors.chart.1 … chart.14, Carbon's categorical colours): the
+// view asks `seriesColor(i)`. This list is only the fallback when a page has no theme variables (a bare harness).
+export const SERIES_PALETTE = ["#6929c4", "#1192e8", "#005d5d", "#9f1853", "#fa4d56", "#520408", "#198038", "#002d9c", "#ee5396", "#b28600", "#009d9a", "#012749", "#8a3800", "#a56eff"];
+// the semantic status colours (tokens colors.red.solid …), with Carbon's values as the fallback
+export const STATUS_FALLBACK = { error: "#da1e28", warning: "#f1c21b", success: "#198038", info: "#0f62fe", neutral: "#8d8d8d" };
+const STATUS_VAR = { error: "red", warning: "yellow", success: "green", info: "blue", neutral: "gray" };
 
 export const opt = (list) => list.map((x) => (Array.isArray(x) ? { value: x[0], label: x[1] } : { value: x, label: String(x) }));
 
@@ -125,7 +130,7 @@ export const CHART_CSS = css`
         display: flex;
         align-items: center;
         gap: 5px;
-        font-family: var(--nexa-fonts-mono, monospace);
+        font-family: var(--nexa-fonts-body, "IBM Plex Sans", system-ui, sans-serif);
     }
 
     .btn-chip:hover { background: rgba(50, 56, 65, 0.98); color: #fff; }
@@ -136,12 +141,12 @@ export const CHART_CSS = css`
     }
 
     .btn-menu {
-        background: rgba(30, 34, 40, 0.88);
-        color: #94a3b8;
-        border: 1px solid rgba(255, 255, 255, 0.18);
-        border-radius: 4px;
-        width: 22px;
-        height: 22px;
+        background: transparent;
+        color: var(--fg-muted, #6f6f6f);
+        border: 1px solid transparent;
+        border-radius: var(--r, 4px);
+        width: 24px;
+        height: 24px;
         padding: 0;
         cursor: pointer;
         display: inline-flex;
@@ -151,9 +156,8 @@ export const CHART_CSS = css`
     }
 
     .btn-menu:hover, .btn-menu.open {
-        background: rgba(50, 56, 65, 0.98);
-        color: #fff;
-        border-color: rgba(255, 255, 255, 0.35);
+        background: var(--panel-bg-subtle, rgba(127, 127, 127, 0.14));
+        color: var(--fg, #161616);
     }
 
     .menu-dropdown {
@@ -161,10 +165,10 @@ export const CHART_CSS = css`
         top: calc(100% + 4px);
         right: 0;
         min-width: 140px;
-        background: #1e2228;
-        border: 1px solid rgba(255, 255, 255, 0.18);
-        border-radius: 4px;
-        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+        background: var(--panel, #fff);
+        border: 1px solid var(--bd, #e0e0e0);
+        border-radius: var(--r, 4px);
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
         padding: 4px 0;
         z-index: 25;
         display: flex;
@@ -175,9 +179,9 @@ export const CHART_CSS = css`
         background: none;
         border: none;
         padding: 6px 12px;
-        color: #cbd5e1;
-        font-size: 11px;
-        font-family: var(--nexa-fonts-mono, monospace);
+        color: var(--fg, #161616);
+        font-size: 12px;
+        font-family: var(--nexa-fonts-body, "IBM Plex Sans", system-ui, sans-serif);
         text-align: left;
         cursor: pointer;
         display: flex;
@@ -188,8 +192,8 @@ export const CHART_CSS = css`
     }
 
     .menu-item:hover {
-        background: rgba(59, 130, 246, 0.18);
-        color: #fff;
+        background: var(--panel-bg-subtle, rgba(127, 127, 127, 0.14));
+        color: var(--fg, #161616);
     }
 
     .menu-icon {
@@ -234,7 +238,7 @@ export const CHART_CSS = css`
     }
 
     .lg-val {
-        font-family: var(--mono, monospace);
+        font-family: var(--nexa-fonts-body, "IBM Plex Sans", system-ui, sans-serif);
         color: var(--fg, #fff);
         font-variant-numeric: tabular-nums;
     }
@@ -281,7 +285,7 @@ export const CHART_CSS = css`
         white-space: nowrap;
         z-index: 10;
         transform: translate(12px, -50%);
-        font-family: var(--nexa-fonts-mono, monospace);
+        font-family: var(--nexa-fonts-body, "IBM Plex Sans", system-ui, sans-serif);
         display: none;
     }
 
@@ -323,7 +327,7 @@ export const CHART_CSS = css`
         align-items: center;
         gap: 5px;
         transition: all 0.15s ease;
-        font-family: var(--nexa-fonts-mono, monospace);
+        font-family: var(--nexa-fonts-body, "IBM Plex Sans", system-ui, sans-serif);
     }
 
     .btn-reset-zoom:hover {
@@ -495,8 +499,41 @@ export class ChartElement extends UIElement {
                 strong: cs.getPropertyValue("--fg").trim() || "#e5e7eb",
                 band: cs.getPropertyValue("--panel-bg-subtle").trim() || "rgba(127, 127, 127, 0.12)",
                 accent: cs.getPropertyValue("--cp-solid").trim() || "#3b82f6",
-                mono: cs.getPropertyValue("--mono") || "monospace"
+                // the canvas text is the theme's body font (Carbon charts: Plex Sans)
+                font: cs.getPropertyValue("--nexa-fonts-body").trim() || '"IBM Plex Sans", system-ui, sans-serif'
             };
+        }
+
+        /** Series i's colour: the theme's colors.chart.(i mod 14), so a theme change restyles every chart. */
+        seriesColor(i) {
+            const n = ((Math.max(0, Math.floor(i) || 0)) % SERIES_PALETTE.length) + 1;
+            return getComputedStyle(this).getPropertyValue("--nexa-colors-chart-" + n).trim() || SERIES_PALETTE[n - 1];
+        }
+
+        /** A status colour from the theme (error / warning / success / info / neutral): thresholds, states, alarms. */
+        statusColor(kind) {
+            const k = STATUS_VAR[kind] ? kind : "neutral";
+            return getComputedStyle(this).getPropertyValue("--nexa-colors-" + STATUS_VAR[k] + "-solid").trim() || STATUS_FALLBACK[k];
+        }
+
+        // a fresh canvas for a draw. Printing: the chart's own background painted in, since the browser prints a canvas's
+        // transparent pixels as white paper (on screen they show what is behind). EVERY chart clears through this, never clearRect.
+        _clearCanvas(ctx, w, h) {
+            ctx.clearRect(0, 0, w, h);
+            if (!this._printing || this._exporting) return;
+            const bg = this._backgroundColor();
+            if (bg) { ctx.fillStyle = bg; ctx.fillRect(0, 0, w, h); }
+        }
+
+        // the colour the chart is seen on: its container's, else the first opaque one around it
+        _backgroundColor() {
+            const opaque = (c) => c && c !== "transparent" && !/rgba\(.*,\s*0\)$/.test(c);
+            // the chart's own box: .chart-container, or (Pie, Gauge, Sparkline, Histogram) the first element of its shadow root
+            const rr = this.renderRoot;
+            let el = rr && (rr.querySelector(".chart-container, [part=container]") || Array.from(rr.children).filter((n) => n.tagName !== "STYLE" && n.tagName !== "SCRIPT")[0]);
+            let c = el && getComputedStyle(el).backgroundColor;
+            for (el = this; !opaque(c) && el; el = el.parentElement || (el.getRootNode && el.getRootNode().host)) c = getComputedStyle(el).backgroundColor;
+            return opaque(c) ? c : "";
         }
 
         hexToRgba(hexOrRgb, alpha) {
@@ -511,7 +548,7 @@ export class ChartElement extends UIElement {
 
         // a hint over the ruler, on its own dark plate (it never mixes with the labels under it)
         _hint(ctx, text, right, top, c) {
-            ctx.font = "9.5px " + c.mono;
+            ctx.font = "9.5px " + c.font;
             const tw = ctx.measureText(text).width;
             ctx.fillStyle = "rgba(0, 0, 0, 0.66)";
             ctx.fillRect(right - tw - 8, top, tw + 8, 13);

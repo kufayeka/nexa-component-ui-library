@@ -8,7 +8,7 @@
 //   - Gestures (page-first / chart-first), time ruler, live ticker, annotations, and export
 import { html, asBinding, evaluateExpression } from "../../../nexa-sdk/nexa-component-sdk.js";
 import { PREFIX, defineUI } from "../core.js";
-import { chartCommon, SERIES_PALETTE, opt, NOTATIONS, DECIMALS, DASHES, notationOf, numOr, niceNum } from "./core.js";
+import { chartCommon, opt, NOTATIONS, DECIMALS, DASHES, notationOf, numOr, niceNum } from "./core.js";
 import { getNiceTimeStep, parseTimeWindow, SPANS, WINDOWS, spanMs, timeOf, parts, pad2, clock, relative } from "./time.js";
 import { TimeSeriesRingBuffer, lowerBoundRing, upperBoundRing, M4Decimator } from "./buffer.js";
 import { xlsxBlob } from "./export.js";
@@ -97,11 +97,7 @@ export class AreaChartElement extends TimeChartElement {
 
     colorOf(s) {
         if (s.color && typeof s.color === "string" && s.color.trim()) return s.color.trim();
-        const cs = getComputedStyle(this);
-        if (s._i === 0) {
-            return cs.getPropertyValue("--cp-solid").trim() || SERIES_PALETTE[0];
-        }
-        return SERIES_PALETTE[s._i % SERIES_PALETTE.length];
+        return this.seriesColor(s._i);
     }
 
     _fullBounds() {
@@ -195,7 +191,7 @@ export class AreaChartElement extends TimeChartElement {
         const padL = 48, padR = 24, padT = 16, padB = rulerH + 8;
         const plotX = padL, plotY = padT, plotW = w - padL - padR, plotH = h - padT - padB;
 
-        ctx.clearRect(0, 0, w, h);
+        this._clearCanvas(ctx, w, h);
         if (plotW <= 0 || plotH <= 0) return;
 
         const mode = (this.p && this.p.mode) || "standard";
@@ -231,7 +227,7 @@ export class AreaChartElement extends TimeChartElement {
             ctx.stroke();
 
             // Y label
-            ctx.font = `10px ${colors.mono || "sans-serif"}`;
+            ctx.font = `10px ${colors.font || "sans-serif"}`;
             ctx.fillStyle = colors.text;
             ctx.textAlign = "right";
             ctx.textBaseline = "middle";

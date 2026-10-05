@@ -1713,6 +1713,53 @@ withHarness({
         assert.strictEqual((await px()).px[3], 0, 'after: transparent again');
     });
 
+    await ok('Histogram: it DRAWS (bars, grid, labels), and its inspector has its props (they were declared under props: / name: and the SDK saw none)', async () => {
+        await mount('hg-draw', 'histogram', { title: 'W', lsl: 495, target: 500, usl: 505 }, { width: 500, height: 260 });
+        const r = await js(`(async function () {
+            var w = NexaTest.wc("hg-draw"), a = [];
+            for (var i = 0; i < 400; i++) { var s = 0; for (var k = 0; k < 6; k++) s += Math.sin(i * 12.9898 + k * 78.233) * 0.5 + 0.5; a.push(500 + (s - 3) * 3.2); }
+            w.setData(a); await NexaTest.settle(); await new Promise(function (r) { setTimeout(r, 300); });
+            var cv = w.renderRoot.querySelector("canvas"), d = cv.getContext("2d").getImageData(0, 0, cv.width, cv.height).data, n = 0;
+            for (var j = 3; j < d.length; j += 4) if (d[j]) n++;
+            var def = NEXA.getComponent("${P}histogram");
+            return { painted: n, label: def.label, props: Object.keys(def.nexa.props) };
+        })()`);
+        assert.ok(r.painted > 5000, 'bars and axes are painted: ' + r.painted);
+        assert.strictEqual(r.label, 'Histogram');
+        ['binMode', 'binCount', 'lsl', 'target', 'usl', 'showNormalCurve', 'series'].forEach((k) => assert.ok(r.props.indexOf(k) !== -1, k));
+    });
+
+    await ok('Print: every chart with a panel paints it in (Pie, Gauge, Area, Histogram clear through _clearCanvas, not clearRect)', async () => {
+        const kinds = { pie: ['pie-chart', { slices: [{ id: 'a', name: 'A', value: 3 }, { id: 'b', name: 'B', value: 1 }] }], gauge: ['gauge', { value: 40 }], area: ['area-chart', { series: [{ id: 's1', name: 'S' }] }],
+            hist: ['histogram', {}] };       // (the Sparkline has no panel of its own: nothing to paint in)
+        for (const name of Object.keys(kinds)) await mount('pr-' + name, kinds[name][0], kinds[name][1], { width: 300, height: 180 });
+        const px = (name) => js(`(function () { var w = NexaTest.wc("pr-${name}"), cv = w.renderRoot.querySelector("canvas"); return Array.from(cv.getContext("2d").getImageData(1, 1, 1, 1).data); })()`);
+        for (const name of Object.keys(kinds)) assert.strictEqual((await px(name))[3], 0, name + ' on screen: transparent');
+        await js('window.dispatchEvent(new Event("beforeprint")); 1');
+        await js('new Promise(function (r) { setTimeout(r, 300); })');
+        for (const name of Object.keys(kinds)) assert.strictEqual((await px(name))[3], 255, name + ' printing: opaque');
+        await js('window.dispatchEvent(new Event("afterprint")); 1');
+        await js('new Promise(function (r) { setTimeout(r, 300); })');
+        for (const name of Object.keys(kinds)) assert.strictEqual((await px(name))[3], 0, name + ' after: transparent again');
+    });
+
+    await ok('Colours come from the THEME: series i = colors.chart.(i+1) (Carbon categorical), status = the semantic tokens; a theme change restyles; a bare page falls back to Carbon\'s values', async () => {
+        await mount('th-line', 'line-chart', { series: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }] }, { width: 300, height: 160 });
+        const get = () => js(`(function () { var w = NexaTest.wc("th-line"), r = document.documentElement.style; return { s0: w.colorOf({ _i: 0 }), s1: w.colorOf({ _i: 1 }), s14: w.colorOf({ _i: 14 }), err: w.statusColor("error"), warn: w.statusColor("warning"), ok: w.statusColor("success") }; })()`);
+        let c = await get();
+        assert.deepStrictEqual([c.s0, c.s1, c.s14], [c.s0, c.s1, c.s0], 'wraps after 14');
+        await js('document.documentElement.style.setProperty("--nexa-colors-chart-1", "#112233"); document.documentElement.style.setProperty("--nexa-colors-chart-2", "#445566"); document.documentElement.style.setProperty("--nexa-colors-red-solid", "#aa0000"); 1');
+        c = await get();
+        assert.strictEqual(c.s0, '#112233', 'series 0 = colors.chart.1');
+        assert.strictEqual(c.s1, '#445566');
+        assert.strictEqual(c.s14, '#112233');
+        assert.strictEqual(c.err, '#aa0000', 'a threshold / alarm = colors.red.solid');
+        await js('["--nexa-colors-chart-1", "--nexa-colors-chart-2", "--nexa-colors-red-solid"].forEach(function (k) { document.documentElement.style.removeProperty(k); }); 1');
+        c = await get();
+        assert.strictEqual(c.s0.toLowerCase(), '#6929c4', 'no theme variable: Carbon purple 70');
+        assert.strictEqual(c.err.toLowerCase(), '#da1e28');
+    });
+
     await ok('the inspector: every plain prop takes a binding (Static | Binding); colours and sizes take theme tokens (◆), a token shows as a chip', async () => {
         const r = await js(`(async function () {
             var t = NexaTest.inspector("${P}button", {});

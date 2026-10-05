@@ -127,7 +127,7 @@ export class GaugeElement extends ChartElement {
         if (w <= 0 || h <= 0) return;
 
         const ctx = this.ctx;
-        ctx.clearRect(0, 0, w, h);
+        this._clearCanvas(ctx, w, h);
 
         const mode = (this.p && this.p.mode) || "radial";
         if (mode === "linear") {
@@ -251,7 +251,7 @@ export class GaugeElement extends ChartElement {
         // Min & Max Labels
         if (this.p && this.p.showMinMax !== false) {
             ctx.save();
-            ctx.font = `10px ${colors.mono || "sans-serif"}`;
+            ctx.font = `10px ${colors.font || "sans-serif"}`;
             ctx.fillStyle = colors.text;
 
             const startX = cx + Math.cos(startRad) * (R - thickness / 2 - 14);
@@ -341,7 +341,7 @@ export class GaugeElement extends ChartElement {
 
             // Scaled font size
             const fs = Math.min(32, Math.max(16, Math.round(R * 0.32)));
-            ctx.font = `600 ${fs}px ${colors.mono || "sans-serif"}`;
+            ctx.font = `600 ${fs}px ${colors.font || "sans-serif"}`;
             ctx.fillStyle = colors.strong;
 
             const textY = arcDeg <= 200 ? cy - R * 0.15 : cy + R * 0.45;
@@ -430,7 +430,7 @@ export class GaugeElement extends ChartElement {
             ctx.fill();
 
             // 5. Min / Max / Readout
-            ctx.font = `11px ${colors.mono || "sans-serif"}`;
+            ctx.font = `11px ${colors.font || "sans-serif"}`;
             ctx.fillStyle = colors.text;
             ctx.textAlign = "left";
             ctx.fillText(this._fmtVal(min), barX, barY - 8);
@@ -439,7 +439,7 @@ export class GaugeElement extends ChartElement {
 
             if (this.p && this.p.showReadout !== false) {
                 ctx.textAlign = "center";
-                ctx.font = `600 16px ${colors.mono || "sans-serif"}`;
+                ctx.font = `600 16px ${colors.font || "sans-serif"}`;
                 ctx.fillStyle = colors.strong;
                 ctx.fillText(this._fmtVal(val) + (this.p.unit ? " " + this.p.unit : ""), barX + barW / 2, barY - 8);
             }
@@ -469,7 +469,7 @@ export class GaugeElement extends ChartElement {
 
             // Readout
             if (this.p && this.p.showReadout !== false) {
-                ctx.font = `600 13px ${colors.mono || "sans-serif"}`;
+                ctx.font = `600 13px ${colors.font || "sans-serif"}`;
                 ctx.fillStyle = colors.strong;
                 ctx.textAlign = "center";
                 ctx.fillText(this._fmtVal(val) + (this.p.unit ? " " + this.p.unit : ""), padX, h - 8);

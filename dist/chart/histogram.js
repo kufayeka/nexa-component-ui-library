@@ -11,7 +11,7 @@
 //   - Export to CSV, real Excel (.xlsx) with Statistics sheet, and 2× sharp PNG snapshot
 import { html, css, evaluateExpression } from "../../../nexa-sdk/nexa-component-sdk.js";
 import { PREFIX, defineUI } from "../core.js";
-import { chartCommon, SERIES_PALETTE, opt, NOTATIONS, DECIMALS, notationOf, numOr, niceNum } from "./core.js";
+import { chartCommon, opt, NOTATIONS, DECIMALS, notationOf, numOr, niceNum } from "./core.js";
 import { xlsxBlob } from "./export.js";
 import { ChartElement } from "./core.js";
 import { exportProps } from "./props.js";
@@ -34,6 +34,12 @@ const HISTOGRAM_CSS = css`
         width: 100%;
         height: 100%;
         position: relative;
+        box-sizing: border-box;
+        overflow: hidden;
+        /* the panel every chart has (it was missing: text in the theme's colour sat on the bare page) */
+        background: var(--panel, #fff);
+        border: 1px solid var(--bd, #e0e0e0);
+        border-radius: var(--r, 4px);
     }
     .hist-header {
         display: flex;
@@ -56,7 +62,7 @@ const HISTOGRAM_CSS = css`
         display: flex;
         align-items: center;
         gap: 12px;
-        font-family: var(--mono, "IBM Plex Mono", monospace);
+        font-family: var(--nexa-fonts-body, "IBM Plex Sans", system-ui, sans-serif);
         font-size: 11px;
         color: var(--fg-muted, #a0aec0);
         overflow-x: auto;
@@ -150,7 +156,7 @@ const HISTOGRAM_CSS = css`
     .tip-range {
         font-weight: 600;
         color: var(--fg, #ffffff);
-        font-family: var(--mono, "IBM Plex Mono", monospace);
+        font-family: var(--nexa-fonts-body, "IBM Plex Sans", system-ui, sans-serif);
         margin-bottom: 4px;
         border-bottom: 1px solid var(--bd, #333333);
         padding-bottom: 2px;
@@ -162,7 +168,7 @@ const HISTOGRAM_CSS = css`
         margin-top: 2px;
     }
     .tip-val {
-        font-family: var(--mono, "IBM Plex Mono", monospace);
+        font-family: var(--nexa-fonts-body, "IBM Plex Sans", system-ui, sans-serif);
         font-weight: 500;
     }
     .tip-status {
@@ -242,8 +248,7 @@ export class HistogramElement extends ChartElement {
 
     colorOf(s, index = 0) {
         if (s && s.color) return s.color;
-        const pal = this.p.palette || SERIES_PALETTE;
-        return pal[index % pal.length];
+        return this.seriesColor(index);
     }
 
     prepareData() {
@@ -422,15 +427,13 @@ export class HistogramElement extends ChartElement {
 
     // ---- Drawing ---------------------------------------------------------------------------
     draw() {
-        const cv = this.renderRoot.querySelector("canvas");
-        if (!cv) return;
-        const ctx = cv.getContext("2d");
-        if (!ctx) return;
-
-        const { w, h, dpr } = this.resizeCanvas(cv);
+        // the chart core sizes the canvas (resizeCanvas() answers true / false, it does not return a size) and gives its layout size
+        if (!this.ctx || !this.canvas) return;
+        const ctx = this.ctx;
+        const { w, h } = this._layoutSize();
         if (w <= 0 || h <= 0) return;
 
-        ctx.clearRect(0, 0, w, h);
+        this._clearCanvas(ctx, w, h);
 
         const seriesList = this.seriesList();
         const bResult = this._calculateBins(seriesList);
@@ -486,7 +489,7 @@ export class HistogramElement extends ChartElement {
             ctx.stroke();
 
             // Y Axis Label
-            ctx.font = `10px ${colors.mono || "IBM Plex Mono, monospace"}`;
+            ctx.font = `10px ${colors.font}`;
             ctx.fillStyle = colors.text || "rgba(255, 255, 255, 0.6)";
             ctx.textAlign = "right";
             ctx.textBaseline = "middle";
@@ -552,7 +555,7 @@ export class HistogramElement extends ChartElement {
             }
 
             // X-axis bin label ticks
-            ctx.font = `10px ${colors.mono || "IBM Plex Mono, monospace"}`;
+            ctx.font = `10px ${colors.font}`;
             ctx.fillStyle = colors.text || "rgba(255, 255, 255, 0.6)";
             ctx.textAlign = "center";
             ctx.textBaseline = "top";
@@ -564,7 +567,7 @@ export class HistogramElement extends ChartElement {
         // Last bin edge label
         if (bins.length) {
             const last = bins[bins.length - 1];
-            ctx.font = `10px ${colors.mono || "IBM Plex Mono, monospace"}`;
+            ctx.font = `10px ${colors.font}`;
             ctx.fillStyle = colors.text || "rgba(255, 255, 255, 0.6)";
             ctx.textAlign = "center";
             ctx.textBaseline = "top";
@@ -963,12 +966,12 @@ export class HistogramElement extends ChartElement {
 defineUI({
     ...common,
     id: PREFIX + "histogram",
-    name: "Histogram",
+    label: "Histogram",
     description: "Statistical distribution and frequency analysis with Freedman-Diaconis binning, normal Gaussian curve overlay, and Six Sigma Cp/Cpk quality tolerance limits.",
     icon: "chart-bar",
     version: 1,
 
-    props: {
+    properties: {
         title: { type: "string", group: "Settings", label: "Title", default: "" },
         unit: { type: "string", group: "Settings", label: "Value unit", default: "" },
 

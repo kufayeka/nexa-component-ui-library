@@ -10,7 +10,7 @@
 //   - Full export to CSV, Excel (.xlsx), and PNG
 import { html, css } from "../../../nexa-sdk/nexa-component-sdk.js";
 import { PREFIX, defineUI } from "../core.js";
-import { chartCommon, SERIES_PALETTE, opt, NOTATIONS, DECIMALS, notationOf, numOr } from "./core.js";
+import { chartCommon, opt, NOTATIONS, DECIMALS, notationOf, numOr } from "./core.js";
 import { xlsxBlob } from "./export.js";
 import { ChartElement } from "./core.js";
 
@@ -45,7 +45,7 @@ const PIE_CSS = css`
         padding: 4px 10px 8px 10px;
     }
     .lg-pct {
-        font-family: var(--mono, monospace);
+        font-family: var(--nexa-fonts-body, "IBM Plex Sans", system-ui, sans-serif);
         opacity: 0.75;
         font-size: 10px;
         margin-left: 2px;
@@ -150,7 +150,7 @@ export class PieChartElement extends ChartElement {
 
     colorOf(slice, index) {
         if (slice.color && typeof slice.color === "string" && slice.color.trim()) return slice.color.trim();
-        return SERIES_PALETTE[index % SERIES_PALETTE.length];
+        return this.seriesColor(index);
     }
 
     prepareData() {
@@ -255,7 +255,7 @@ export class PieChartElement extends ChartElement {
         if (w <= 0 || h <= 0) return;
 
         const ctx = this.ctx;
-        ctx.clearRect(0, 0, w, h);
+        this._clearCanvas(ctx, w, h);
 
         const colors = this._colors();
         const slices = this._preparedSlices;
@@ -340,7 +340,7 @@ export class PieChartElement extends ChartElement {
 
                 // Number
                 const numFontSize = Math.min(24, Math.max(12, Math.round(rInner * 0.38)));
-                ctx.font = `600 ${numFontSize}px ${colors.mono || "sans-serif"}`;
+                ctx.font = `600 ${numFontSize}px ${colors.font || "sans-serif"}`;
                 ctx.fillStyle = colors.strong;
                 ctx.fillText(statVal, cx, cy - (statLabel ? 6 : 0));
 
@@ -381,7 +381,7 @@ export class PieChartElement extends ChartElement {
                     const ly = cy + Math.sin(s.mid) * rMid;
 
                     ctx.save();
-                    ctx.font = `600 11px ${colors.mono || "sans-serif"}`;
+                    ctx.font = `600 11px ${colors.font || "sans-serif"}`;
                     ctx.fillStyle = "#ffffff";
                     ctx.textAlign = "center";
                     ctx.textBaseline = "middle";
@@ -409,7 +409,7 @@ export class PieChartElement extends ChartElement {
                     ctx.stroke();
 
                     // Text
-                    ctx.font = `11px ${colors.mono || "sans-serif"}`;
+                    ctx.font = `11px ${colors.font || "sans-serif"}`;
                     ctx.fillStyle = colors.strong;
                     ctx.textAlign = isRight ? "left" : "right";
                     ctx.textBaseline = "middle";

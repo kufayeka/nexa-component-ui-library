@@ -1,6 +1,6 @@
 import { html, asBinding, formatValue, formatParts, evaluateExpression } from "../../../nexa-sdk/nexa-component-sdk.js";
 import { PREFIX, paletteProp, part, defineUI } from "../core.js";
-import { chartCommon, SERIES_PALETTE, opt, NOTATIONS, DECIMALS, DASHES, notationOf, numOr, niceNum } from "./core.js";
+import { chartCommon, opt, NOTATIONS, DECIMALS, DASHES, notationOf, numOr, niceNum } from "./core.js";
 import { getNiceTimeStep, parseTimeWindow, SPANS, WINDOWS, spanMs, timeOf, parts, pad2, clock, relative, DAYS, MONTHS } from "./time.js";
 import { TimeSeriesRingBuffer, lowerBoundRing, upperBoundRing, M4Decimator } from "./buffer.js";
 import { xlsxBlob } from "./export.js";
@@ -658,11 +658,7 @@ export const lineChart = defineUI({
 
         colorOf(s) {
             if (s.color && typeof s.color === "string" && s.color.trim()) return s.color.trim();
-            if (s._i === 0) {
-                const cs = getComputedStyle(this);
-                return cs.getPropertyValue("--cp-solid").trim() || cs.getPropertyValue("--nexa-colors-primary-solid").trim() || SERIES_PALETTE[0];
-            }
-            return SERIES_PALETTE[s._i % SERIES_PALETTE.length];
+            return this.seriesColor(s._i);
         }
 
         fmtValue(s, y) { return formatValue(y, this._seriesSpec(s), s.unit || ""); }
@@ -738,7 +734,7 @@ export const lineChart = defineUI({
             const titled = list.some((s) => s._side !== "off" && this._axisTitle(s));
             const plotH0 = this._vertical(height, titled).plotH;
             const c = this._colors();
-            ctx.font = "10px " + c.mono;
+            ctx.font = "10px " + c.font;
             const col = (s) => {
                 const ticks = this._ticks(yr[s._key], plotH0), spec = this._seriesSpec(s);
                 const labels = ticks.map((v) => formatValue(v, spec));
@@ -898,9 +894,8 @@ export const lineChart = defineUI({
         _drawThresholds(ctx, toY, plotX, plotW) {
             const list = Array.isArray(this.p.thresholds) ? this.p.thresholds : [];
             if (!list.length) return;
-            const cs = getComputedStyle(this);
             ctx.save();
-            ctx.font = "10px " + (cs.getPropertyValue("--mono") || "monospace");
+            ctx.font = "10px " + this._colors().font;
             ctx.textAlign = "right";
             ctx.textBaseline = "bottom";
             for (const t of list) {
@@ -908,14 +903,14 @@ export const lineChart = defineUI({
                 // on the scale of its series (not drawn while that series is hidden)
                 if (!Number.isFinite(v) || !on || !this._scale.yr[on._key]) continue;
                 const y = Math.round(toY(v, on._key)) + 0.5;
-                ctx.strokeStyle = (t && t.color) || "#ef4444";
+                ctx.strokeStyle = (t && t.color) || this.statusColor("error");
                 ctx.lineWidth = 1;
                 ctx.setLineDash(DASHES[t && t.dash] || DASHES.dashed);
                 ctx.beginPath();
                 ctx.moveTo(plotX, y);
                 ctx.lineTo(plotX + plotW, y);
                 ctx.stroke();
-                if (t && t.label) { ctx.fillStyle = (t && t.color) || "#ef4444"; ctx.fillText(String(t.label), plotX + plotW - 4, y - 2); }
+                if (t && t.label) { ctx.fillStyle = (t && t.color) || this.statusColor("error"); ctx.fillText(String(t.label), plotX + plotW - 4, y - 2); }
             }
             ctx.setLineDash([]);
             ctx.restore();
@@ -952,7 +947,7 @@ export const lineChart = defineUI({
             const many = layout.left.length + layout.right.length > 1;
             const gridCol = layout.left[0] || layout.right[0] || null;
             ctx.save();
-            ctx.font = "10px " + c.mono;
+            ctx.font = "10px " + c.font;
             const drawCol = (col, edge, side) => {
                 const s = col.s, r = yr[s._key], range = r.hi - r.lo || 1;
                 const color = many ? this.colorOf(s) : c.text;

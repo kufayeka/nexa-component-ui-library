@@ -16,7 +16,7 @@
 // start, last end, the current state and since when — over the time shown.
 import { html, formatValue } from "../../../nexa-sdk/nexa-component-sdk.js";
 import { PREFIX, part, defineUI } from "../core.js";
-import { chartCommon, opt, numOr, SERIES_PALETTE } from "./core.js";
+import { chartCommon, opt, numOr } from "./core.js";
 import { timeOf, parts, pad2, clock } from "./time.js";
 import { xlsxBlob } from "./export.js";
 import { TimeChartElement } from "./time-chart.js";
@@ -110,7 +110,7 @@ export const stateTimeline = defineUI({
             default: [{ label: "Running", match: "value", value: "1", color: "#10b981" }, { label: "Stopped", match: "value", value: "0", color: "#ef4444" }, { label: "Idle", match: "value", value: "2", color: "#f59e0b" }],
             item: {
                 fields: STATE_FIELDS, noun: "state",
-                create: (items) => ({ label: "State " + (items.length + 1), match: "value", value: String(items.length), color: SERIES_PALETTE[items.length % SERIES_PALETTE.length] })
+                create: (items) => ({ label: "State " + (items.length + 1), match: "value", value: String(items.length), color: "{token:colors.chart." + ((items.length % 14) + 1) + "}" })
             }
         },
 
@@ -456,7 +456,7 @@ export const stateTimeline = defineUI({
             const { vMinX, vMaxX } = range || this.getEffectiveTimeRange(fb);
             const c = this._colors();
             // the label column and the statistics column: as wide as their texts
-            ctx.font = "11px " + c.mono;
+            ctx.font = "11px " + c.font;
             let labelW = 40;
             for (const l of lanes) labelW = Math.max(labelW, Math.ceil(ctx.measureText(l.label).width));
             labelW = Math.min(labelW, Math.round(width * 0.3));
@@ -494,7 +494,7 @@ export const stateTimeline = defineUI({
                 ctx.fillRect(plotX, b.y, plotW, b.h);
                 ctx.fillStyle = c.strong;
                 ctx.textAlign = "right";
-                ctx.font = "11px " + c.mono;
+                ctx.font = "11px " + c.font;
                 ctx.fillText(this._fit(ctx, b.lane.label, labelW), plotX - 8, b.y + b.h / 2);
             }
 
@@ -522,7 +522,7 @@ export const stateTimeline = defineUI({
                         ctx.strokeRect(x0 + 1, b.y + 1, x1 - x0 - 2, b.h - 2);
                     }
                     if (this.p.showLabels !== false && b.h >= 12) {
-                        ctx.font = "10.5px " + c.mono;
+                        ctx.font = "10.5px " + c.font;
                         const text = st.label, tw = ctx.measureText(text).width;
                         if (tw + 8 < x1 - x0) {
                             ctx.fillStyle = this._contrast(st.color);
@@ -548,7 +548,7 @@ export const stateTimeline = defineUI({
 
             // the statistics: a header, a column per figure, a row per lane
             if (cols.length) {
-                ctx.font = "10px " + c.mono;
+                ctx.font = "10px " + c.font;
                 ctx.textAlign = "right";
                 let x = m.statsX;
                 cols.forEach(([k, title], j) => {

@@ -40,7 +40,7 @@ const SPARK_CSS = css`
     .spark-readout {
         flex: 0 0 auto;
         padding-left: 8px;
-        font-family: var(--mono, monospace);
+        font-family: var(--nexa-fonts-body, "IBM Plex Sans", system-ui, sans-serif);
         font-size: 13px;
         font-weight: 600;
         color: var(--fg, #ffffff);
@@ -57,7 +57,7 @@ const SPARK_CSS = css`
         padding: 2px 6px;
         font-size: 10px;
         line-height: 1.2;
-        font-family: var(--mono, monospace);
+        font-family: var(--nexa-fonts-body, "IBM Plex Sans", system-ui, sans-serif);
         white-space: nowrap;
         z-index: 10;
         transform: translate(-50%, -120%);
@@ -95,7 +95,7 @@ export class SparklineElement extends ChartElement {
         if (w <= 0 || h <= 0) return;
 
         const ctx = this.ctx;
-        ctx.clearRect(0, 0, w, h);
+        this._clearCanvas(ctx, w, h);
 
         const data = this._getData();
         if (!data || data.length < 2) return;
