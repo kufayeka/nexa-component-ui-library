@@ -1805,9 +1805,9 @@ withHarness({
         await mount('ch4', 'chart', {}, { width: 300, height: 200 });
         const T0 = 1727852400000;
         await js(`NexaTest.invoke("ch4", "setRows", [{ x: ${T0}, y: 1, s: "a" }, { x: ${T0 + 60000}, y: 2, s: "a" }])`); await settle();
-        assert.strictEqual(await js(`${cw('ch4')}._frame.xType`), 'time');
+        assert.strictEqual(await js(`${cw('ch4')}._xt`), 'time');
         await js(`NexaTest.invoke("ch4", "appendRows", [{ x: ${T0 + 120000}, y: 3, s: "a" }])`); await settle();
-        assert.deepStrictEqual(await js(`Array.from(${cw('ch4')}._frame.series[0].y)`), [1, 2, 3]);
+        assert.deepStrictEqual(await js(`(function () { var b = ${cw('ch4')}._tser.get("y").buf, o = []; for (var i = 0; i < b.count; i++) o.push(b.getY(i)); return o; })()`), [1, 2, 3], 'a time x: Float64 rings, not rows');
     });
 
     await ok('Chart: stacked piles, 100 % (the axis ends at 100), clustered; the tooltip lists every series at that category with the total of a stack; a single-series tooltip', async () => {
@@ -1818,10 +1818,10 @@ withHarness({
         assert.ok(/08:00/.test(tip.text) && /F1/.test(tip.text) && /F2/.test(tip.text) && /F3/.test(tip.text) && /Total45/.test(tip.text.replace(/\s/g, '')), tip.text);
         await pointer('ch5', 'pointerleave', 0.2, 0.4);
         assert.strictEqual(await js(`${cw('ch5')}.renderRoot.querySelector(".tooltip").style.display`), 'none');
-        const hi = await js(`${cw('ch5')}._geo.axes.left.hi`);
+        const hi = await js(`${cw('ch5')}._geo.axes.get("y").hi`);
         assert.ok(hi >= 45, 'the stack total sets the axis: ' + hi);
         await mount('ch5p', 'chart', { rows: energyRows(), xField: 'hour', yField: 'kwh', splitField: 'floor', stacking: 'percent' }, { width: 500, height: 280 });
-        assert.strictEqual(await js(`${cw('ch5p')}._geo.axes.left.hi`), 100);
+        assert.strictEqual(await js(`${cw('ch5p')}._geo.axes.get("y").hi`), 100);
         await mount('ch5s', 'chart', { rows: energyRows(), xField: 'hour', yField: 'kwh', splitField: 'floor', stacking: 'stacked', tooltipShows: 'single' }, { width: 500, height: 280 });
         await pointer('ch5s', 'pointermove', 0.2, 0.7); await settle();
         const one = await js(`${cw('ch5s')}.renderRoot.querySelectorAll(".tooltip-row").length`);
@@ -1840,8 +1840,8 @@ withHarness({
 
     await ok('Chart: the right axis, a line over columns (combo), orientation horizontal, data labels, a band; each draws', async () => {
         await mount('ch7', 'chart', { rows: energyRows().concat(HOURS.map((h, i) => ({ hour: h, floor: 'T', kwh: 18 + i }))), xField: 'hour', yField: 'kwh', splitField: 'floor', stacking: 'stacked', labels: true,
-            series: [{ id: 'T', name: 'Temp', mark: 'line', axis: 'right' }], references: [{ kind: 'band', value: 30, to: 40, label: 'Target' }], y2Title: 'C' }, { width: 500, height: 280 });
-        const g = await js(`(function () { var g = ${cw('ch7')}._geo; return { left: !!g.axes.left, right: !!g.axes.right, hiR: g.axes.right && g.axes.right.hi }; })()`);
+            series: [{ id: 'T', name: 'Temp', mark: 'line', axis: 'y2' }], references: [{ kind: 'band', value: 30, to: 40, label: 'Target' }], axes: [{ id: 'y', side: 'left', grid: true }, { id: 'y2', side: 'right', title: 'C' }] }, { width: 500, height: 280 });
+        const g = await js(`(function () { var g = ${cw('ch7')}._geo; return { left: g.axes.has("y"), right: g.axes.has("y2"), hiR: g.axes.get("y2") && g.axes.get("y2").hi }; })()`);
         assert.ok(g.left && g.right && g.hiR >= 21, JSON.stringify(g));
         assert.ok(await painted('ch7') > 4000);
         await mount('ch7h', 'chart', { rows: energyRows(), xField: 'hour', yField: 'kwh', splitField: 'floor', stacking: 'stacked', orientation: 'horizontal', labels: true }, { width: 500, height: 280 });
@@ -1878,10 +1878,79 @@ withHarness({
         assert.deepStrictEqual(await js(`${cw('ch10')}.seriesList().map(function (s) { return s.name; })`), ['Lighting', 'HVAC']);
     });
 
+    await ok('Chart: stack groups: a stack owns the mode and the axis; a series picks it; the rest of the data joins the stack that takes it; any marks stack (a line sits at the cumulative top); stacks stand side by side', async () => {
+        await mount('st1', 'chart', { rows: energyRows(), xField: 'hour', yField: 'kwh', splitField: 'floor',
+            stacks: [{ id: 'k1', name: 'Floors', mode: 'stacked', axis: 'y', includeRest: true }],
+            series: [{ id: 'F3', name: 'F3', mark: 'line', stack: 'k1' }] }, { width: 500, height: 280 });
+        const r = await js(`(function () { var g = ${cw('st1')}._geo, st = g.stackOf;
+            return { groups: Array.from(new Set(g.groupOf.values())).map(function (x) { return [x.id, x.members.map(function (m) { return m.name; })]; }), f1hi: Array.from(st.get("F1").hi), f2lo: Array.from(st.get("F2").lo),
+                f3: st.get("F3") && Array.from(st.get("F3").hi), lines: Array.from(g.lines.keys()), axisHi: g.axes.get("y").hi }; })()`);
+        assert.deepStrictEqual(r.groups, [['k1', ['F3', 'F1', 'F2']]], 'F3 picks the stack (a line); F1 and F2, listed nowhere, join the stack that takes the rest');
+        // the pile, bottom to top: F3 (20..23), F1 (10..13), F2 (15..18): F1 sits on F3
+        assert.deepStrictEqual(r.f1hi, [30, 32, 34, 36], 'F1 sits on F3 (the first of the pile)');
+        assert.deepStrictEqual(r.f2lo, [30, 32, 34, 36], 'F2 sits on F1');
+        assert.deepStrictEqual(r.f3, [20, 21, 22, 23], 'a LINE in the stack: its own value is the first of the pile, drawn at the cumulative top');
+        assert.ok(r.lines.indexOf('F3') !== -1);
+        assert.ok(r.axisHi >= 45, 'the axis covers the pile: ' + r.axisHi);
+        await mount('st2', 'chart', { rows: energyRows(), xField: 'hour', yField: 'kwh', splitField: 'floor',
+            axes: [{ id: 'y', side: 'left', grid: true }, { id: 'y2', side: 'right' }],
+            stacks: [{ id: 'a', name: 'A', mode: 'stacked', axis: 'y' }, { id: 'b', name: 'B', mode: 'none', axis: 'y2', placement: 'overlay', width: 50 }],
+            series: [{ id: 'F1', name: 'F1', stack: 'a' }, { id: 'F2', name: 'F2', stack: 'a' }, { id: 'F3', name: 'F3', stack: 'b' }] }, { width: 500, height: 280 });
+        const t = await js(`(function () { var g = ${cw('st2')}._geo; return { onAxis: g.vis.map(function (s) { return [s.name, g.axisOf.get(s._key)]; }), axes: Array.from(g.axes.keys()) }; })()`);
+        assert.deepStrictEqual(t.onAxis, [['F1', 'y'], ['F2', 'y'], ['F3', 'y2']], 'the stack axis wins');
+        assert.deepStrictEqual(t.axes, ['y', 'y2']);
+        assert.ok(await painted('st2') > 3000);
+    });
+
+    await ok('Chart: any number of axes; a series picks one by id (the first when empty); an older "right" means the first right axis; hard min / max clip', async () => {
+        await mount('ax1', 'chart', { rows: energyRows(), xField: 'hour', yField: 'kwh', splitField: 'floor', mark: 'line',
+            axes: [{ id: 'a', side: 'left' }, { id: 'b', side: 'left', title: 'B', min: 0, max: 100 }, { id: 'c', side: 'right' }],
+            series: [{ id: 'F1', name: 'F1', axis: 'b' }, { id: 'F2', name: 'F2', axis: 'right' }] }, { width: 500, height: 260 });
+        const r = await js(`(function () { var g = ${cw('ax1')}._geo; return { onAxis: g.vis.map(function (s) { return g.axisOf.get(s._key); }), b: [g.axes.get("b").lo, g.axes.get("b").hi], n: g.axes.size }; })()`);
+        assert.deepStrictEqual(r.onAxis, ['b', 'c', 'a']);
+        assert.deepStrictEqual(r.b, [0, 100]);
+        assert.strictEqual(r.n, 3);
+    });
+
+    await ok('Chart: a TIME x keeps every point in Float64 rings (600 000), draws a frame fast, has the time ruler, zoom (Show a range), Live, a tooltip, columns grouped to the width of the screen, a stacked area', async () => {
+        const T0 = 1727852400000, N = 200000;
+        const made = await js(`(function () { var rows = []; for (var i = 0; i < ${N}; i++) { ["A", "B", "C"].forEach(function (k, j) { rows.push({ t: ${T0} + i * 1000, host: k, v: 40 + j * 10 + 15 * Math.sin(i / 3000 + j) + 4 * Math.sin(i / 30) }); }); } window.__big = rows; return rows.length; })()`);
+        assert.strictEqual(made, 3 * N);
+        await js(`NexaTest.mount("tm1", "${P}chart", { rows: window.__big, xField: "t", yField: "v", splitField: "host", mark: "line", legendValue: "last" }, { width: 600, height: 300 }); 1`);
+        await settle();
+        const r = await js(`(function () { var w = ${cw('tm1')}; w.draw(); var t = performance.now(); for (var i = 0; i < 5; i++) w.draw(); var ms = (performance.now() - t) / 5;
+            return { xt: w._xt, counts: Array.from(w._tser.values()).map(function (x) { return x.buf.count; }), ms: ms, ruler: !!w._scale && w._scale.m.rulerH > 0, f64: w._tser.get("A").buf.y instanceof Float64Array, legend: Array.from(w.renderRoot.querySelectorAll(".lg-val")).map(function (e) { return e.textContent; }) }; })()`);
+        assert.strictEqual(r.xt, 'time');
+        assert.deepStrictEqual(r.counts, [N, N, N]);
+        assert.strictEqual(r.f64, true);
+        assert.ok(r.ruler, 'the time ruler');
+        assert.ok(r.ms < 80, 'a frame of 600 000 points: ' + r.ms.toFixed(1) + ' ms');
+        assert.strictEqual(r.legend.length, 3);
+        assert.ok(await painted('tm1') > 8000);
+        await js(`NexaTest.invoke("tm1", "setRange", { from: ${T0 + 5000000}, to: ${T0 + 6000000} })`); await settle();
+        const z = await js(`(function () { var w = ${cw('tm1')}; return { range: [w._scale.vMinX, w._scale.vMaxX], zoomed: !!w.viewRange }; })()`);
+        assert.deepStrictEqual(z.range, [T0 + 5000000, T0 + 6000000]);
+        assert.strictEqual(z.zoomed, true);
+        await js(`NexaTest.invoke("tm1", "followLive")`); await settle();
+        assert.strictEqual(await js(`!!${cw('tm1')}.viewRange`), false);
+        await js(`(function () { var w = ${cw('tm1')}, pl = w.renderRoot.querySelector(".plot"), r = pl.getBoundingClientRect(); pl.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: r.left + r.width * 0.5, clientY: r.top + r.height * 0.4, pointerId: 3 })); })()`); await settle();
+        const tip = await js(`(function () { var t = ${cw('tm1')}.renderRoot.querySelector(".tooltip"); return { shown: t.style.display, text: t.textContent }; })()`);
+        assert.strictEqual(tip.shown, 'block');
+        assert.ok(/A/.test(tip.text) && /B/.test(tip.text) && /C/.test(tip.text), tip.text);
+        await js(`NexaTest.mount("tm2", "${P}chart", { rows: window.__big.filter(function (r) { return r.t < ${T0 + 3600000 * 6}; }), xField: "t", yField: "v", splitField: "host", mark: "column", stacking: "stacked" }, { width: 600, height: 280 }); 1`);
+        await settle();
+        const c2 = await js(`(function () { var w = ${cw('tm2')}; w.draw(); var g = w._geo; return { n: g.n, stacked: g.stackOf.size }; })()`);
+        assert.ok(c2.n > 20 && c2.n <= 100 && c2.stacked === 3, JSON.stringify(c2));
+        await js(`NexaTest.mount("tm3", "${P}chart", { rows: window.__big.filter(function (r) { return r.host !== "C" && r.t < ${T0 + 3600000 * 6}; }), xField: "t", yField: "v", splitField: "host", mark: "area", stacking: "stacked" }, { width: 600, height: 280 }); 1`);
+        await settle();
+        assert.ok(await painted('tm3') > 5000, 'a stacked area on a time x');
+        await js('delete window.__big; 1');
+    });
+
     await ok('Chart: the inspector is a Power BI style format pane: its cards in order, series as a list of items', async () => {
         const r = await js(`(function () { var m = NEXA.getComponent("${P}chart").nexa; var seen = []; Object.keys(m.props).forEach(function (k) { var g = m.props[k].group; if (g && seen.indexOf(g) === -1) seen.push(g); }); return { groups: seen, order: m.groupOrder, targets: m.targetList.map(function (t) { return [t.key, t.actionList.map(function (a) { return a.name; })]; }), label: m.label }; })()`);
-        assert.deepStrictEqual(r.order.slice(0, 6), ['Data', 'Series', 'Visual', 'Title', 'Legend', 'X axis']);
-        ['Y axis', 'Secondary Y axis', 'Data labels', 'Tooltip', 'Reference lines', 'General', 'Export'].forEach((g) => assert.ok(r.groups.indexOf(g) !== -1, g));
+        assert.deepStrictEqual(r.order.slice(0, 7), ['Data', 'Series', 'Stacks', 'Axes', 'Visual', 'Title', 'Legend']);
+        ['X axis', 'Time axis', 'Data labels', 'Tooltip', 'Reference lines', 'Zoom & pan', 'Annotations', 'General', 'Export'].forEach((g) => assert.ok(r.groups.indexOf(g) !== -1, g));
         assert.deepStrictEqual(r.targets, [['series', ['setData', 'setPoint', 'appendPoint', 'clear', 'show', 'hide']]]);
         assert.strictEqual(r.label, 'Chart');
     });

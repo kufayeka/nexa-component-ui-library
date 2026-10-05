@@ -583,20 +583,22 @@ return msg;
 
 ### Chart (`nexa-ui-chart`)
 
-The Cartesian chart: columns, bars, lines, steps, areas and points on a left and a right axis, stacked, 100 % or side by side, any mix (a combo). The first of the new chart family (see `.agents/CHART_FAMILIES_DESIGN.md`); Line and State Timeline stay as they are.
+The Cartesian chart, built in **layers**: every series is a column, line, step, area or points chart of its own, on any axis, in any stack. The first of the new chart family (see `.agents/CHART_FAMILIES_DESIGN.md`); Line and State Timeline stay as they are. It draws like the Line Chart (smooth monotone curves, gradient fills, a dashed crosshair, the time ruler) in a Power BI style format pane.
 
-**Data: rows, split by a field.** Logic (or a bound list) gives rows `[{ hour, floor, kwh }]`; in *Data* you say the **X field** (`hour`), the **Y field** (`kwh`; several, comma separated, is the wide form: a series each) and **Split into series by** (`floor`): one series per floor. Rows with the same x and series are added up (or averaged, last, min, max, count). X is detected: a category (words), a number, or a time (epoch ms / seconds, an ISO text). Per series, Logic can also **Set data** (`[12, 18]`, `{ "Floor 1": 12 }` or `[{x, y}]`), **Set a point**, **Append a point**, Clear, Show, Hide. Actions of the chart: **Set rows**, **Append rows**, Clear, Export.
+**Data: rows, split by a field.** Logic (or a bound list) gives rows `[{ hour, floor, kwh }]`; in *Data* you say the **X field**, the **Y field** (several, comma separated: the wide form) and **Split into series by** (`floor`): one series per floor. The x is detected: a category, a number, or a **time** (epoch ms / seconds, an ISO text). Per series, Logic can also **Set data**, **Set a point**, **Append a point**, Clear, Show, Hide; a series can have a **Live value** (a tag). Actions of the chart: **Set rows**, **Append rows**, Clear, Export, and for a time x the Line Chart's (Follow live, Show a range, annotations).
 
-**The format pane (Power BI style cards):** Data · Series · Visual · Title · Legend · X axis · Y axis · Secondary Y axis · Data labels · Tooltip · Reference lines · General · Export.
-- *Series* (optional, to style one): mark (column, line, step, area, points), axis (left / right), pile (stack group), colour, opacity, line width and dash, area fill, markers, corner radius, data labels, unit, notation, decimals. A series from the data takes the chart's defaults and the next colour of the palette; add a series with its **value of the split field as the Id** to style it.
-- *Visual*: default mark, **Columns and areas**: clustered / stacked / 100 % / overlapping; vertical or horizontal; space between categories and columns; widest column; corner radius; line width; area fill; markers.
-- *Legend*: bottom, top, left, right, inside (any corner) or none; a value next to the name (last, total, average, min, max); click hides a series (Alt+click: only this one).
-- *Axes*: titles, linear or logarithmic, soft and hard min / max, notation, decimals, gridlines, label colour and angle; the right axis exists when a series is on it.
-- *Tooltip*: every series at that category / x (with the total of a stack), or only the one under the cursor; a band or a line highlights it.
-- *Reference lines*: a line or a band (from – to) on either axis, with a label.
-- **Colours**: every colour field takes a **hex** or a **theme token** (◆ picker: `{token:colors.red.solid}`); empty = the theme's chart palette (`colors.chart.1…14`, Theme & Styling). Status colours (a reference line) are the theme's `error`.
+**A time x keeps every point** in Float64 ring buffers with the LOD of the Line Chart (up to 2 000 000 a series, 16 bytes a point): lines are drawn at pixel accuracy (M4), columns and stacks group the points into columns of the width the screen allows (average, sum, min, max or last), and the time ruler, zoom / pan, Live, annotations and the refresh ticker are the Line Chart's.
 
-Not yet (next slices): zoom / pan / the time ruler / live follow, the ring buffers + LOD for a million points (a big trend stays on the Line Chart), readouts, a table legend, tooltip templates, SPC.
+**Layers.** A series' own fields: mark, axis, stack, colour, opacity, curve, line width and dash, fill, markers, corner radius, data labels, unit, notation, decimals. The chart-level *Visual* settings are only the **defaults** of a series that leaves its field empty.
+- **Axes** (a list): any number, left or right, linear or logarithmic, soft and hard min / max, notation, decimals, gridlines, label colour. A series, a stack and a reference line pick one by Id (empty: the first).
+- **Stacks** (a list): add a stack, then pick it in each series' **Stack** field; the order of the series is the order of the pile (the first at the bottom). A stack owns its **mode** (stacked, 100 %, side by side, overlapping), its **axis** (every member is on it: a sum is only meaningful on one scale) and its **place** (beside the other stacks, or over them, narrower: a target over an actual). *Any marks stack together*: a column is a rectangle from its base to its top, an area a band, a line or points sit at the cumulative top ("the total so far"). **Also every other series of the data** puts the series that came from the split field and are listed nowhere into the stack: the floors of a building, however many. Tooltips and labels show a series' own value, plus a Total for a pile.
+- Series in no stack: *Visual -> Series in no stack* (side by side, one pile, 100 %, overlapping).
+
+**The format pane:** Data · Series · Stacks · Axes · Visual · Title · Legend · X axis · Time axis · Data labels · Tooltip · Reference lines · Zoom & pan · Annotations · General · Export. Legend: six positions (also inside any corner), a value next to the name (last, total, average, min, max), click hides (Alt+click: only this one). Tooltip: every series at that category / x, or only the one under the cursor. Reference lines and bands on any axis.
+
+**Colours**: every colour field takes a **hex** or a **theme token** (the ◆ picker: `{token:colors.red.solid}`); empty = the theme's chart palette (`colors.chart.1...14`, Theme & Styling). Status colours (a reference line) are the theme's `error`.
+
+Not yet: a table legend, tooltip templates, per-series conditional colours (thresholds, value mappings), readouts (a big current value anywhere), SPC; the Stacks field is a pick-from-the-series field (a nested "add child" editor comes later).
 
 ### Histogram (`nexa-ui-histogram`)
 
