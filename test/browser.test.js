@@ -17,7 +17,7 @@ async function ok(label, fn) { await fn(); passed++; console.log('✔ ' + label)
 const P = 'nexa-ui-';
 const ALL = ['button', 'input', 'textarea', 'number-input', 'password-input', 'checkbox', 'switch', 'radio-group', 'segmented', 'select', 'combobox', 'slider', 'tags-input', 'pin-input', 'rating',
     'text', 'heading', 'badge', 'tag', 'card', 'avatar', 'stat', 'alert', 'progress', 'spinner', 'skeleton', 'separator', 'empty-state', 'timeline', 'fieldset',
-    'tabs', 'iframe', 'datetime', 'daterange', 'pagination', 'line-chart', 'state-timeline', 'bar-chart', 'pie-chart', 'gauge', 'area-chart', 'sparkline', 'histogram'];
+    'tabs', 'iframe', 'datetime', 'daterange', 'pagination', 'line-chart', 'state-timeline', 'bar-chart', 'pie-chart', 'gauge', 'area-chart', 'sparkline', 'histogram', 'chart'];
 const TAG = '{sparkplug:Plant::Line1::Mixer::Speed}';
 
 withHarness({
@@ -42,7 +42,7 @@ withHarness({
         await settle();
     };
 
-    await ok('all 43 components register (UI · Form / Display / Layout / Embed / Charts), each mounts and draws', async () => {
+    await ok('all 44 components register (UI · Form / Display / Layout / Embed / Charts), each mounts and draws', async () => {
         const reg = await js(`${JSON.stringify(ALL)}.map(function (id) { var d = NEXA.getComponent("${P}" + id); return d ? d.category : "MISSING " + id; })`);
         assert.deepStrictEqual(reg.filter((c) => c !== 'UI · Form' && c !== 'UI · Display' && c !== 'UI · Layout' && c !== 'UI · Embed' && c !== 'UI · Charts'), []);
         for (const id of ALL) await mount('all-' + id, id, {}, { width: 320, height: 120 });
@@ -1758,6 +1758,132 @@ withHarness({
         c = await get();
         assert.strictEqual(c.s0.toLowerCase(), '#6929c4', 'no theme variable: Carbon purple 70');
         assert.strictEqual(c.err.toLowerCase(), '#da1e28');
+    });
+
+    // ---- Chart (the Cartesian chart) ---------------------------------------------------------------------------
+    const cw = (name) => `NexaTest.wc(${JSON.stringify(name)})`;
+    const FLOORS = ['F1', 'F2', 'F3'], HOURS = ['08:00', '09:00', '10:00', '11:00'];
+    const energyRows = () => { const r = []; HOURS.forEach((h, hi) => FLOORS.forEach((f, fi) => r.push({ hour: h, floor: f, kwh: 10 + fi * 5 + hi }))); return r; };
+    const painted = (name) => js(`(function () { var c = ${root(name)}.querySelector("canvas"), d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data, n = 0; for (var i = 3; i < d.length; i += 4) if (d[i]) n++; return n; })()`);
+    const pointer = (name, type, fx, fy) => js(`(function () { var w = ${cw(name)}, pl = w.renderRoot.querySelector(".plot"), r = pl.getBoundingClientRect(); pl.dispatchEvent(new PointerEvent("${type}", { bubbles: true, clientX: r.left + r.width * ${fx}, clientY: r.top + r.height * ${fy}, pointerId: 3 })); return 1; })()`);
+
+    await ok('Chart: rows split by a field become a series each (long form), draw, and the legend lists them; wide form: a series per y field', async () => {
+        await mount('ch1', 'chart', { rows: energyRows(), xField: 'hour', yField: 'kwh', splitField: 'floor', title: 'Energy', stacking: 'clustered' }, { width: 500, height: 280 });
+        const r = await js(`(function () { var w = ${cw('ch1')}; return { xType: w._frame.xType, cats: w._frame.cats, series: w.seriesList().map(function (s) { return s.name; }), legend: Array.from(w.renderRoot.querySelectorAll(".lg-name")).map(function (e) { return e.textContent; }), title: w.renderRoot.querySelector(".c-title").textContent }; })()`);
+        assert.strictEqual(r.xType, 'category');
+        assert.deepStrictEqual(r.cats, HOURS);
+        assert.deepStrictEqual(r.series, FLOORS);
+        assert.deepStrictEqual(r.legend, FLOORS);
+        assert.strictEqual(r.title, 'Energy');
+        assert.ok(await painted('ch1') > 3000, 'columns, axes and labels are drawn');
+        await mount('ch2', 'chart', { rows: [{ t: 'a', p: 1, q: 2 }, { t: 'b', p: 3, q: 4 }], xField: 't', yField: 'p, q' }, { width: 300, height: 200 });
+        assert.deepStrictEqual(await js(`${cw('ch2')}.seriesList().map(function (s) { return s.name; })`), ['p', 'q']);
+    });
+
+    await ok('Chart: Logic Set rows / Append rows replace / add; a time x is detected; item actions (Set data, Set a point, Append, Hide, Show, Clear) drive one series; a click fires On Point Click with the series as target', async () => {
+        await mount('ch3', 'chart', { series: [{ id: 's1', name: 'Load' }], xField: 'x', yField: 'y' }, { width: 500, height: 260 });
+        await js(`NexaTest.invoke("ch3", "clearAll")`);            // (the harness is an editor: an empty chart shows sample data until it is cleared)
+        await js(`NexaTest.invoke("ch3", "setData", { "A": 5, "B": 9, "C": 7 }, { list: "series", id: "s1", index: 0 })`); await settle();
+        assert.deepStrictEqual(await js(`(function () { var w = ${cw('ch3')}; return [w._frame.cats, Array.from(w._frame.series[0].y)]; })()`), [['A', 'B', 'C'], [5, 9, 7]]);
+        await js(`NexaTest.invoke("ch3", "setPoint", { x: "B", y: 20 }, { list: "series", id: "s1", index: 0 })`);
+        await js(`NexaTest.invoke("ch3", "appendPoint", { x: "D", y: 1 }, { list: "series", id: "s1", index: 0 })`); await settle();
+        assert.deepStrictEqual(await js(`(function () { var w = ${cw('ch3')}; return [w._frame.cats, Array.from(w._frame.series[0].y)]; })()`), [['A', 'B', 'C', 'D'], [5, 20, 7, 1]]);
+        await js(`NexaTest.invoke("ch3", "hide", null, { list: "series", id: "s1", index: 0 })`); await settle();
+        assert.strictEqual(await js(`${cw('ch3')}._visible().length`), 0);
+        await js(`NexaTest.invoke("ch3", "show", null, { list: "series", id: "s1", index: 0 })`); await settle();
+        assert.strictEqual(await js(`${cw('ch3')}._visible().length`), 1);
+        // a click on a column: the event of THAT series
+        await js(`${cw('ch3')}.draw(); 1`);          // the drawing is what a click is measured on
+        await js(`window.__ev = []; var w = ${cw('ch3')}; var old = w.emit.bind(w); w.emit = function (n, p, t) { window.__ev.push([n, p, t]); return old(n, p, t); }; w.isEditor = false; 1`);
+        await js(`(function () { var pl = ${cw('ch3')}.renderRoot.querySelector(".plot"), r = pl.getBoundingClientRect(); pl.dispatchEvent(new MouseEvent("click", { bubbles: true, clientX: r.left + r.width * 0.43, clientY: r.top + r.height * 0.5 })); })()`);
+        const ev = await js('window.__ev.filter(function (e) { return e[0] === "pointClick"; })');
+        assert.strictEqual(ev.length, 1, JSON.stringify(ev));
+        assert.deepStrictEqual(ev[0][2], { list: 'series', id: 's1' });
+        assert.strictEqual(ev[0][1].x, 'B');
+        await js(`NexaTest.invoke("ch3", "clear", null, { list: "series", id: "s1", index: 0 })`); await settle();
+        assert.strictEqual(await js(`${cw('ch3')}._frame.series.length`), 0);
+        await mount('ch4', 'chart', {}, { width: 300, height: 200 });
+        const T0 = 1727852400000;
+        await js(`NexaTest.invoke("ch4", "setRows", [{ x: ${T0}, y: 1, s: "a" }, { x: ${T0 + 60000}, y: 2, s: "a" }])`); await settle();
+        assert.strictEqual(await js(`${cw('ch4')}._frame.xType`), 'time');
+        await js(`NexaTest.invoke("ch4", "appendRows", [{ x: ${T0 + 120000}, y: 3, s: "a" }])`); await settle();
+        assert.deepStrictEqual(await js(`Array.from(${cw('ch4')}._frame.series[0].y)`), [1, 2, 3]);
+    });
+
+    await ok('Chart: stacked piles, 100 % (the axis ends at 100), clustered; the tooltip lists every series at that category with the total of a stack; a single-series tooltip', async () => {
+        await mount('ch5', 'chart', { rows: energyRows(), xField: 'hour', yField: 'kwh', splitField: 'floor', stacking: 'stacked' }, { width: 500, height: 280 });
+        await pointer('ch5', 'pointermove', 0.2, 0.4); await settle();
+        const tip = await js(`(function () { var t = ${cw('ch5')}.renderRoot.querySelector(".tooltip"); return { shown: t.style.display, text: t.textContent }; })()`);
+        assert.strictEqual(tip.shown, 'block');
+        assert.ok(/08:00/.test(tip.text) && /F1/.test(tip.text) && /F2/.test(tip.text) && /F3/.test(tip.text) && /Total45/.test(tip.text.replace(/\s/g, '')), tip.text);
+        await pointer('ch5', 'pointerleave', 0.2, 0.4);
+        assert.strictEqual(await js(`${cw('ch5')}.renderRoot.querySelector(".tooltip").style.display`), 'none');
+        const hi = await js(`${cw('ch5')}._geo.axes.left.hi`);
+        assert.ok(hi >= 45, 'the stack total sets the axis: ' + hi);
+        await mount('ch5p', 'chart', { rows: energyRows(), xField: 'hour', yField: 'kwh', splitField: 'floor', stacking: 'percent' }, { width: 500, height: 280 });
+        assert.strictEqual(await js(`${cw('ch5p')}._geo.axes.left.hi`), 100);
+        await mount('ch5s', 'chart', { rows: energyRows(), xField: 'hour', yField: 'kwh', splitField: 'floor', stacking: 'stacked', tooltipShows: 'single' }, { width: 500, height: 280 });
+        await pointer('ch5s', 'pointermove', 0.2, 0.7); await settle();
+        const one = await js(`${cw('ch5s')}.renderRoot.querySelectorAll(".tooltip-row").length`);
+        assert.strictEqual(one, 1, 'one series under the cursor');
+    });
+
+    await ok('Chart: a colour is a hex OR a theme token (a list item too); no colour: the theme\'s palette; a status colour for a reference line', async () => {
+        await mount('ch6', 'chart', { rows: energyRows(), xField: 'hour', yField: 'kwh', splitField: 'floor',
+            series: [{ id: 'F1', name: 'F1', color: '{token:colors.red.solid}' }, { id: 'F2', name: 'F2', color: '#123456' }], references: [{ kind: 'line', value: 20, label: 'Limit' }] }, { width: 400, height: 240 });
+        const c = await js(`(function () { var w = ${cw('ch6')}, l = w.seriesList(); return { c: l.map(function (s) { return w.colorOf(s); }), p0: w.seriesColor(0), e: w.statusColor("error") }; })()`);
+        assert.strictEqual(c.c[0], '#da1e28', 'the token, in the current mode');
+        assert.strictEqual(c.c[1], '#123456', 'a hex as it is');
+        assert.strictEqual(c.c[2].toLowerCase(), c.p0.toLowerCase().length ? await js(`${cw('ch6')}.seriesColor(2)`).then((x) => x.toLowerCase()) : '', 'the third: the palette');
+        assert.ok(/^#|^rgb/.test(c.p0), c.p0);
+    });
+
+    await ok('Chart: the right axis, a line over columns (combo), orientation horizontal, data labels, a band; each draws', async () => {
+        await mount('ch7', 'chart', { rows: energyRows().concat(HOURS.map((h, i) => ({ hour: h, floor: 'T', kwh: 18 + i }))), xField: 'hour', yField: 'kwh', splitField: 'floor', stacking: 'stacked', labels: true,
+            series: [{ id: 'T', name: 'Temp', mark: 'line', axis: 'right' }], references: [{ kind: 'band', value: 30, to: 40, label: 'Target' }], y2Title: 'C' }, { width: 500, height: 280 });
+        const g = await js(`(function () { var g = ${cw('ch7')}._geo; return { left: !!g.axes.left, right: !!g.axes.right, hiR: g.axes.right && g.axes.right.hi }; })()`);
+        assert.ok(g.left && g.right && g.hiR >= 21, JSON.stringify(g));
+        assert.ok(await painted('ch7') > 4000);
+        await mount('ch7h', 'chart', { rows: energyRows(), xField: 'hour', yField: 'kwh', splitField: 'floor', stacking: 'stacked', orientation: 'horizontal', labels: true }, { width: 500, height: 280 });
+        assert.strictEqual(await js(`${cw('ch7h')}._geo.horizontal`), true);
+        assert.ok(await painted('ch7h') > 3000);
+    });
+
+    await ok('Chart: ordered legend (toggle hides a series and fires On Series Toggle), a legend value, positions (top / left / right / inside / none)', async () => {
+        await mount('ch8', 'chart', { rows: energyRows(), xField: 'hour', yField: 'kwh', splitField: 'floor', legendValue: 'sum' }, { width: 500, height: 260 });
+        assert.deepStrictEqual(await js(`Array.from(${cw('ch8')}.renderRoot.querySelectorAll(".lg-val")).map(function (e) { return e.textContent; })`), ['46', '66', '86']);
+        await js(`${cw('ch8')}.renderRoot.querySelector(".lg-item").click()`); await settle();
+        assert.strictEqual(await js(`${cw('ch8')}._visible().length`), 2);
+        for (const at of ['top', 'left', 'right', 'inside-tr', 'none']) {
+            await mount('ch8' + at, 'chart', { rows: energyRows(), xField: 'hour', yField: 'kwh', splitField: 'floor', legend: at }, { width: 500, height: 260 });
+            const cls = await js(`(function () { var l = ${cw('ch8' + at)}.renderRoot.querySelector(".legend"); return l ? l.className : null; })()`);
+            assert.strictEqual(cls !== null, at !== 'none', at);
+            if (at === 'left' || at === 'right') assert.ok(cls.split(' ').indexOf('v') !== -1, 'vertical: ' + cls);
+            if (at === 'inside-tr') assert.ok(/inside tr/.test(cls), cls);
+        }
+    });
+
+    await ok('Chart: export CSV / Excel of what it shows, the file name; PNG; no errors; the editor draws sample data when it is empty', async () => {
+        await mount('ch9', 'chart', { rows: energyRows(), xField: 'hour', yField: 'kwh', splitField: 'floor', title: 'E' }, { width: 400, height: 220 });
+        const n = await js(`${cw('ch9')}.exportData({ format: "csv" })`);
+        assert.strictEqual(n, 4);
+        const csv = await js(`${cw('ch9')}._lastExport.blob.text()`);
+        assert.ok(csv.indexOf('"hour","F1","F2","F3"') <= 1, csv.slice(0, 40));
+        assert.ok(/"08:00",10,15,20/.test(csv), csv);
+        assert.strictEqual(await js(`${cw('ch9')}.exportData({ format: "xlsx" })`), 4);
+        assert.ok(/\.xlsx$/.test(await js(`${cw('ch9')}._lastExport.name`)));
+        await mount('ch10', 'chart', {}, { width: 400, height: 220, design: true });
+        await js('new Promise(function (r) { setTimeout(r, 200); })');
+        assert.ok(await painted('ch10') > 2000, 'sample data in the editor');
+        assert.deepStrictEqual(await js(`${cw('ch10')}.seriesList().map(function (s) { return s.name; })`), ['Lighting', 'HVAC']);
+    });
+
+    await ok('Chart: the inspector is a Power BI style format pane: its cards in order, series as a list of items', async () => {
+        const r = await js(`(function () { var m = NEXA.getComponent("${P}chart").nexa; var seen = []; Object.keys(m.props).forEach(function (k) { var g = m.props[k].group; if (g && seen.indexOf(g) === -1) seen.push(g); }); return { groups: seen, order: m.groupOrder, targets: m.targetList.map(function (t) { return [t.key, t.actionList.map(function (a) { return a.name; })]; }), label: m.label }; })()`);
+        assert.deepStrictEqual(r.order.slice(0, 6), ['Data', 'Series', 'Visual', 'Title', 'Legend', 'X axis']);
+        ['Y axis', 'Secondary Y axis', 'Data labels', 'Tooltip', 'Reference lines', 'General', 'Export'].forEach((g) => assert.ok(r.groups.indexOf(g) !== -1, g));
+        assert.deepStrictEqual(r.targets, [['series', ['setData', 'setPoint', 'appendPoint', 'clear', 'show', 'hide']]]);
+        assert.strictEqual(r.label, 'Chart');
     });
 
     await ok('the inspector: every plain prop takes a binding (Static | Binding); colours and sizes take theme tokens (◆), a token shows as a chip', async () => {

@@ -7,3 +7,4 @@ import "./gauge.js";
 import "./area.js";
 import "./sparkline.js";
 import "./histogram.js";
+import "./cartesian.js";

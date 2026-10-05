@@ -7,7 +7,7 @@ A themed component library for **Nexa Dashboard**: 43 form, display, feedback, n
 
 - **Layout & Navigation**: Tabs — each tab has a panel you drop components into (the SDK's *slots*); Pagination — IBM Carbon-inspired pagination bar.
 - **Embed**: Iframe — another web page (Grafana, a camera, a report), with Logic both ways.
-- **Charts**: Line Chart (time series, an axis per series, thresholds, 1 M+ points), State Timeline (machine states, statistics), Bar Chart (grouped / dempet, stacked, 100% stacked, and Pareto 80/20 analysis), Pie / Donut Chart (categorical proportions, center KPI, auto "Others" grouping), Radial & Linear Gauge (dial / linear meter, needle pointer, bounds, threshold zones, target marker), Area & Stacked Area Chart (cumulative volume/flow, 100% stacked, time ruler), Sparkline (compact KPI trend indicator for cards and tables), and Histogram (statistical distribution and frequency analysis, Freedman-Diaconis binning, normal Gaussian curve overlay, and Six Sigma Cp/Cpk tolerance limits). All are driven item by item from Logic, export CSV / Excel / PNG, and print as they look.
+- **Charts**: Line Chart (time series, an axis per series, thresholds, 1 M+ points), State Timeline (machine states, statistics), Bar Chart (grouped / dempet, stacked, 100% stacked, and Pareto 80/20 analysis), Pie / Donut Chart (categorical proportions, center KPI, auto "Others" grouping), Radial & Linear Gauge (dial / linear meter, needle pointer, bounds, threshold zones, target marker), Area & Stacked Area Chart (cumulative volume/flow, 100% stacked, time ruler), Sparkline (compact KPI trend indicator for cards and tables), and Chart (the Cartesian chart: columns / bars / lines / areas / points, stacked or side by side, rows split by a field), and Histogram (statistical distribution and frequency analysis, Freedman-Diaconis binning, normal Gaussian curve overlay, and Six Sigma Cp/Cpk tolerance limits). All are driven item by item from Logic, export CSV / Excel / PNG, and print as they look.
 
 In the editor they are in the palette under **UI · Form**, **UI · Display**, **UI · Layout** and **UI · Charts**.
 
@@ -580,6 +580,23 @@ return msg;
 ```
 
 ---
+
+### Chart (`nexa-ui-chart`)
+
+The Cartesian chart: columns, bars, lines, steps, areas and points on a left and a right axis, stacked, 100 % or side by side, any mix (a combo). The first of the new chart family (see `.agents/CHART_FAMILIES_DESIGN.md`); Line and State Timeline stay as they are.
+
+**Data: rows, split by a field.** Logic (or a bound list) gives rows `[{ hour, floor, kwh }]`; in *Data* you say the **X field** (`hour`), the **Y field** (`kwh`; several, comma separated, is the wide form: a series each) and **Split into series by** (`floor`): one series per floor. Rows with the same x and series are added up (or averaged, last, min, max, count). X is detected: a category (words), a number, or a time (epoch ms / seconds, an ISO text). Per series, Logic can also **Set data** (`[12, 18]`, `{ "Floor 1": 12 }` or `[{x, y}]`), **Set a point**, **Append a point**, Clear, Show, Hide. Actions of the chart: **Set rows**, **Append rows**, Clear, Export.
+
+**The format pane (Power BI style cards):** Data · Series · Visual · Title · Legend · X axis · Y axis · Secondary Y axis · Data labels · Tooltip · Reference lines · General · Export.
+- *Series* (optional, to style one): mark (column, line, step, area, points), axis (left / right), pile (stack group), colour, opacity, line width and dash, area fill, markers, corner radius, data labels, unit, notation, decimals. A series from the data takes the chart's defaults and the next colour of the palette; add a series with its **value of the split field as the Id** to style it.
+- *Visual*: default mark, **Columns and areas**: clustered / stacked / 100 % / overlapping; vertical or horizontal; space between categories and columns; widest column; corner radius; line width; area fill; markers.
+- *Legend*: bottom, top, left, right, inside (any corner) or none; a value next to the name (last, total, average, min, max); click hides a series (Alt+click: only this one).
+- *Axes*: titles, linear or logarithmic, soft and hard min / max, notation, decimals, gridlines, label colour and angle; the right axis exists when a series is on it.
+- *Tooltip*: every series at that category / x (with the total of a stack), or only the one under the cursor; a band or a line highlights it.
+- *Reference lines*: a line or a band (from – to) on either axis, with a label.
+- **Colours**: every colour field takes a **hex** or a **theme token** (◆ picker: `{token:colors.red.solid}`); empty = the theme's chart palette (`colors.chart.1…14`, Theme & Styling). Status colours (a reference line) are the theme's `error`.
+
+Not yet (next slices): zoom / pan / the time ruler / live follow, the ring buffers + LOD for a million points (a big trend stays on the Line Chart), readouts, a table legend, tooltip templates, SPC.
 
 ### Histogram (`nexa-ui-histogram`)
 
