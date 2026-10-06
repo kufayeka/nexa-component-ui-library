@@ -1,0 +1,4 @@
+node_modules/
+*.log
+# the chart screenshots (npm run screenshots) stay in the repo, not in the package
+screenshots/

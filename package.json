@@ -8,7 +8,8 @@
     "test:tags": "node test/tags-e2e.test.js",
     "test:chart": "node test/chart-e2e.test.js",
     "test:charts": "node test/chart-pure.test.js && node test/browser.test.js --only \"Chart|Timeline|Print|Colours|Histogram|Gauge|KPI|Pie|Pareto|Scatter|Sample data|all 4. components|Gestures|JavaScript errors\"",
-    "lint": "node -e \"process.exit(require('@kufayeka/node-red-nexa-dashboard/sdk/lint-plugin').cli('.'))\""
+    "lint": "node -e \"process.exit(require('@kufayeka/node-red-nexa-dashboard/sdk/lint-plugin').cli('.'))\"",
+    "screenshots": "node screenshots/scripts/all.js"
   },
   "node-red": {
     "version": ">=4.0.0",

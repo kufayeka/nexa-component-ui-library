@@ -343,6 +343,8 @@ Which causes to fix **first**: downtime by reason, defects by type, scrap by cau
 
 **Look:** vertical or **horizontal** (long names), the bar / faded / Others colours, the gap, rounded corners; the cumulative line straight / smooth / step / none, an area under it, markers, its % at each point; labels on the bars (value / % / both); axis titles, gridlines, unit, decimals. **Tooltip:** value, %, cumulative %, rank (Others: what is in it; stacked: its parts). **On Bar Click** `{ name, value, percent, cumulative, rank, group }` (a listed category also its own On Click). Export CSV / Excel (rank, value, %, cumulative %, vital few) / PNG. In the editor an empty Pareto shows sample causes (*Sample data*).
 
+**Screenshots:** every chart in light and dark is in [`screenshots/`](screenshots/); `npm run screenshots` draws them again from the current code (the scripts are in `screenshots/scripts/`, one per chart, on the dashboard testkit's harness browser).
+
 ### Scatter (`nexa-ui-scatter`)
 
 How two variables move together and where the process window is: oven temperature against the reject rate, a motor's power against its temperature, pressure against flow.
