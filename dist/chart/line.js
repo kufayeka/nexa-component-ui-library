@@ -5,7 +5,8 @@ import { getNiceTimeStep, parseTimeWindow, SPANS, WINDOWS, spanMs, timeOf, parts
 import { TimeSeriesRingBuffer, lowerBoundRing, upperBoundRing, M4Decimator } from "./buffer.js";
 import { xlsxBlob } from "./export.js";
 import { TimeChartElement } from "./time-chart.js";
-import { timeProps, zoomProps, annotationProps, exportProps, timeEvents, timeActions } from "./props.js";
+import { timeProps, zoomProps, rangeBarProps, annotationProps, exportProps, timeEvents, timeActions } from "./props.js";
+import { legendProps, legendTemplate, legendPlace, fillLegend, placeInsideLegend } from "./legend.js";
 
 const common = chartCommon;
 
@@ -58,15 +59,16 @@ const SERIES_FIELDS = {
     },
 
     variant: {
-        type: "enum", section: "Line", label: "Line style", default: "",
-        options: opt([["", "The chart's default line style"], ["line", "Line"], ["step", "Step (Digital)"], ["smooth", "Smooth (Curved)"], ["bars", "Bars"], ["points", "Points only"]]),
-        help: "How points are joined. 'Step' is ideal for digital signals (ON/OFF) and state transitions."
+        type: "enum", section: "Line", label: "Interpolation", default: "",
+        options: opt([["", "The chart's default"], ["line", "Linear (straight lines)"], ["smooth", "Smooth (curved, never overshoots)"], ["step", "Step (digital: holds the value)"],
+            ["auto", "Automatic: step for on / off and whole numbers, else linear"], ["bars", "Bars"], ["points", "Points only"]]),
+        help: "How points are joined. Step holds a value until the next one: on / off signals, counters, modes. Automatic picks step while every value is a whole number."
     },
     step: {
         type: "enum", section: "Line", label: "Step at", default: "after", options: opt([["after", "After the point (Standard)"], ["before", "Before the point"], ["center", "Half way"]]),
-        visibleWhen: (s, p) => (s.variant || s.interpolation || (p && p.defaultInterpolation)) === "step"
+        visibleWhen: (s, p) => ["step", "auto"].indexOf(s.variant || s.interpolation || (p && p.defaultInterpolation)) !== -1
     },
-    color: { type: "color", section: "Line", label: "Colour", default: "", help: "Empty: the next colour of the palette." },
+    color: { type: "color", section: "Line", label: "Colour", default: "", tokens: "colors", help: "A hex colour, or a theme token (◆). Empty: the next colour of the theme's chart palette." },
     width: { type: "number", section: "Line", label: "Width", default: 2, min: 0.5, max: 10, step: 0.5, unit: "px" },
     dash: { type: "enum", section: "Line", label: "Dash", default: "solid", options: opt([["solid", "Solid"], ["dashed", "Dashed"], ["dotted", "Dotted"]]) },
     opacity: { type: "number", section: "Line", label: "Opacity", default: 1, min: 0, max: 1, step: 0.05 },
@@ -104,6 +106,10 @@ const SERIES_FIELDS = {
         options: opt([["locale", "The page's language"], ["dot", "1,234.5"], ["comma", "1.234,5"]])
     },
     thousands: { type: "boolean", section: "Axis/Numbers", label: "Thousands separator", default: true },
+    valueMap: {
+        type: "string", section: "Axis/Numbers", label: "Value texts", default: "", bindable: false,
+        help: "A text for a value: 0=Off, 1=Run, 2=Fault. Shown in the tooltip, the legend and on the axis (its ticks are then those values)."
+    },
 
     axisLine: { type: "boolean", section: "Axis/Spine", label: "Show the spine and ticks", default: true },
     axisLineColor: {
@@ -138,8 +144,13 @@ const THRESHOLD_FIELDS = {
     value: { type: "number", label: "Value", default: 0 },
     kind: {
         type: "enum", label: "Kind", default: "line",
-        options: opt([["line", "Line only (a setpoint)"], ["upper", "Upper limit (at or above it: past it)"], ["lower", "Lower limit (at or below it: past it)"]]),
-        help: "A limit colours the values past it in an Excel export (its colour)."
+        options: opt([["line", "Line only (a setpoint)"], ["upper", "Upper limit (at or above it: past it)"], ["lower", "Lower limit (at or below it: past it)"], ["band", "Band (a zone from Value to To)"]]),
+        help: "A limit colours the values past it in an Excel export (its colour). A band shades a zone: the normal range, a target, a warning zone."
+    },
+    to: { type: "number", label: "To", default: "", visibleWhen: (t) => t.kind === "band", help: "The band's other edge (above or below Value)." },
+    shade: {
+        type: "boolean", label: "Shade past the limit", default: false, visibleWhen: (t) => t.kind === "upper" || t.kind === "lower",
+        help: "Tints the area beyond the limit (above an upper one, below a lower one)."
     },
     label: { type: "string", label: "Label", default: "" },
     series: {
@@ -148,9 +159,25 @@ const THRESHOLD_FIELDS = {
             .filter((x) => x && x.id).map((x) => ({ value: x.id, label: (x.name || x.id) + " (" + x.id + ")" }))),
         help: "The series whose Y axis the line follows; that series fires On Threshold Crossed."
     },
-    color: { type: "color", label: "Colour", default: "#ef4444" },
+    color: {
+        type: "color", label: "Colour", default: "", tokens: "colors",
+        help: "A hex colour, or a theme token (◆). Empty: the theme's status colour (a limit: error; a band: warning; a setpoint: info)."
+    },
     dash: { type: "enum", label: "Dash", default: "dashed", options: opt([["solid", "Solid"], ["dashed", "Dashed"], ["dotted", "Dotted"]]) }
 };
+
+// "0=Off, 1=Run" -> Map(0 => "Off", 1 => "Run") (null: none)
+function parseValueMap(text) {
+    if (typeof text !== "string" || !text.trim()) return null;
+    const m = new Map();
+    for (const part of text.split(/[,;\n]+/)) {
+        const i = part.indexOf("=");
+        if (i < 1) continue;
+        const v = Number(part.slice(0, i).trim()), t = part.slice(i + 1).trim();
+        if (Number.isFinite(v) && t) m.set(v, t);
+    }
+    return m.size ? m : null;
+}
 
 export const lineChart = defineUI({
     ...common,
@@ -250,6 +277,7 @@ export const lineChart = defineUI({
     properties: {
         ...timeProps(),
         ...zoomProps(),
+        ...rangeBarProps(),
         ...exportProps({ thresholds: true }),
         ...annotationProps(),
         series: {
@@ -305,15 +333,11 @@ export const lineChart = defineUI({
             visibleWhen: (p) => p.tooltipShows !== "nearest" && p.tooltipShows !== "off"
         },
 
-        legend: { type: "enum", group: "Legend", label: "Legend", default: "bottom", options: opt([["bottom", "Below"], ["top", "Above"], ["none", "None"]]) },
-        legendValue: {
-            type: "enum", group: "Legend", label: "Value in the legend", default: "last",
-            options: opt([["none", "None"], ["last", "Last"], ["min", "Min (shown)"], ["max", "Max (shown)"], ["avg", "Average (shown)"]])
-        },
+        ...legendProps({ value: "last" }),
 
         thresholds: {
             type: "list", group: "Thresholds", label: "Thresholds", noun: "threshold", default: [],
-            help: "Horizontal lines: a limit, a setpoint. A series crossing one fires its On Threshold Crossed.", item: { fields: THRESHOLD_FIELDS, noun: "threshold" }
+            help: "Horizontal lines and bands: a limit, a setpoint, a normal range. A series crossing one (a band: either edge) fires its On Threshold Crossed.", item: { fields: THRESHOLD_FIELDS, noun: "threshold" }
         },
 
 
@@ -325,9 +349,13 @@ export const lineChart = defineUI({
             help: "Spacing between adjacent Y-axis columns when multiple axes are shown."
         },
         defaultInterpolation: {
-            type: "enum", group: "Style", label: "Default line style", default: "line",
-            options: opt([["line", "Line"], ["step", "Step (Digital)"], ["smooth", "Smooth (Curved)"]]),
-            help: "Default line style for series that do not specify their own variant."
+            type: "enum", group: "Style", label: "Default interpolation", default: "line",
+            options: opt([["line", "Linear"], ["smooth", "Smooth (curved)"], ["step", "Step (digital)"], ["auto", "Automatic: step for whole numbers, else linear"]]),
+            help: "How a series joins its points when it does not choose its own Interpolation."
+        },
+        lastValue: {
+            type: "boolean", group: "Style", label: "Last value at the end of each line", default: false,
+            help: "A label in the series' colour at the plot's right edge: the newest value is always readable (ISA-101), also when the legend is off. Only while the newest point is in view."
         }
     },
 
@@ -382,6 +410,7 @@ export const lineChart = defineUI({
                 o._key = String(o.id || "#" + i);
                 o._shift = spanMs(o.timeShift);
                 o._side = o.axis === "right" ? "right" : o.axis === "off" || o.axis === "none" ? "off" : "left";
+                o._map = parseValueMap(o.valueMap);
                 return o;
             });
             this._sl = { raw, defInterp, list };
@@ -391,7 +420,7 @@ export const lineChart = defineUI({
         _state(s) {
             let st = this._series.get(s._key);
             if (!st) {
-                st = { buf: new TimeSeriesRingBuffer(Math.max(50, numOr(s.maxPoints, 10000))), lastLive: undefined, dx: null, dy: null, n: 0, demo: false, lastAt: 0, stale: false };
+                st = { buf: new TimeSeriesRingBuffer(Math.max(50, numOr(s.maxPoints, 10000))), lastLive: undefined, dx: null, dy: null, n: 0, demo: false, lastAt: 0, stale: false, allInt: true };
                 this._series.set(s._key, st);
             }
             return st;
@@ -433,7 +462,7 @@ export const lineChart = defineUI({
         // points into a series: {x, y} / a number (time = now); the newest one is checked against the
         // thresholds (On Threshold Crossed) and wakes a stale series (On Resume)
         _add(s, st, pts) {
-            if (st.demo) { st.buf.clear(); st.demo = false; }
+            if (st.demo) { st.buf.clear(); st.demo = false; st.allInt = true; }
             const xf = s.xField || "x", yf = s.yField || "y";
             let added = 0, prevY = st.buf.count ? st.buf.getY(st.buf.count - 1) : NaN, lastY = NaN;
             for (const p of pts) {
@@ -441,7 +470,7 @@ export const lineChart = defineUI({
                 let x, y;
                 if (typeof p === "object") { x = Number(p[xf]); y = Number(p[yf]); }
                 else { x = Date.now(); y = Number(p); }
-                if (Number.isFinite(x) && Number.isFinite(y) && st.buf.push(x, y)) { added++; lastY = y; }
+                if (Number.isFinite(x) && Number.isFinite(y) && st.buf.push(x, y)) { added++; lastY = y; if (st.allInt && !Number.isInteger(y)) st.allInt = false; }
             }
             if (added && !this.isEditor) {
                 const now = Date.now();
@@ -462,10 +491,11 @@ export const lineChart = defineUI({
             for (const t of Array.isArray(this.p.thresholds) ? this.p.thresholds : []) {
                 const on = this._thresholdOf(t);
                 if (!on || on._key !== s._key) continue;
-                const v = numOr(t.value, NaN);
-                if (!Number.isFinite(v)) continue;
-                if (from < v && to >= v) this.emit("thresholdCross", { direction: "up", value: to, threshold: v, label: t.label || "" }, this._target(s));
-                else if (from >= v && to < v) this.emit("thresholdCross", { direction: "down", value: to, threshold: v, label: t.label || "" }, this._target(s));
+                for (const v of t.kind === "band" ? [numOr(t.value, NaN), numOr(t.to, NaN)] : [numOr(t.value, NaN)]) {
+                    if (!Number.isFinite(v)) continue;
+                    if (from < v && to >= v) this.emit("thresholdCross", { direction: "up", value: to, threshold: v, label: t.label || "" }, this._target(s));
+                    else if (from >= v && to < v) this.emit("thresholdCross", { direction: "down", value: to, threshold: v, label: t.label || "" }, this._target(s));
+                }
             }
         }
 
@@ -480,10 +510,23 @@ export const lineChart = defineUI({
             }
         }
 
+        // whole numbers only (Automatic interpolation: step): after a Replace, once
+        _scanInt(st) {
+            const b = st.buf;
+            st.allInt = true;
+            for (let i = 0; i < b.count; i++) if (!Number.isInteger(b.getY(i))) { st.allInt = false; return; }
+        }
+
+        // the interpolation drawn: Automatic = step while every value is a whole number
+        _variantOf(s) {
+            return s.variant === "auto" ? (this._state(s).allInt ? "step" : "line") : s.variant;
+        }
+
         _demo(st, i) {
             const now = Date.now(), n = 240;
             for (let k = 0; k < n; k++) st.buf.push(now - (n - k) * 500, Math.round((50 + i * 15 + 18 * Math.sin(k / 18 + i * 1.3) + 6 * Math.sin(k / 5 + i)) * 10) / 10);
             st.demo = true;
+            st.allInt = false;
         }
 
         // ---- the actions of ONE series (its own Update node): (params = msg.payload, target) ----
@@ -506,6 +549,7 @@ export const lineChart = defineUI({
             const st = this._state(s);
             st.demo = false;
             st.buf.loadArray(this._pointsOf(params), s.xField || "x", s.yField || "y");
+            this._scanInt(st);
             st.lastAt = Date.now();
             this.scheduleDraw();
             this.requestUpdate();
@@ -515,7 +559,9 @@ export const lineChart = defineUI({
         clear(params, target) {
             const s = this.findSeries(target || (params && params.series));
             if (!s) return;
-            this._state(s).buf.clear();
+            const st = this._state(s);
+            st.buf.clear();
+            st.allInt = true;
             this.scheduleDraw();
             this.requestUpdate();
         }
@@ -532,7 +578,7 @@ export const lineChart = defineUI({
         }
 
         clearAll() {
-            for (const st of this._series.values()) st.buf.clear();
+            for (const st of this._series.values()) { st.buf.clear(); st.allInt = true; }
             this.viewRange = null;
             this.hover = null;
             this.scheduleDraw();
@@ -586,13 +632,13 @@ export const lineChart = defineUI({
             let blob;
             if (o.format === "xlsx") {
                 // a value past a limit: the limit's colour
-                const fills = o.thresholds ? rows.map((r) => r.map((v, c) => (c >= 1 && c <= n && v !== null ? ((this._pastLimit(list[c - 1], v) || {}).color || null) : null))) : null;
+                const fills = o.thresholds ? rows.map((r) => r.map((v, c) => { const t = c >= 1 && c <= n && v !== null ? this._pastLimit(list[c - 1], v) : null; return t ? this._thresholdColor(t) : null; })) : null;
                 const lims = (Array.isArray(this.p.thresholds) ? this.p.thresholds : []).filter((t) => t && (t.kind === "upper" || t.kind === "lower"));
                 const zone = utc ? "UTC" : ((() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch (e) { return "local"; } })());
                 const info = [["Chart", this._exportTitle() || "Line chart"], ["From", stamp(from)], ["To", stamp(to)], ["Range", o.range === "all" ? "Everything it holds" : "What was shown"],
                     ["Time zone", zone], ["Exported", stamp(Date.now())]]
                     .concat(list.map((s) => ["Series", (s.name || s.id) + (s.unit ? " (" + s.unit + ")" : "") + " — Id " + s.id]))
-                    .concat(o.thresholds ? lims.map((t) => { const on = this._thresholdOf(t); return ["Threshold", (t.label ? t.label + ": " : "") + (t.kind === "upper" ? "≥ " : "≤ ") + t.value + (on ? " on " + (on.name || on.id) : "") + " (" + (t.color || "#ef4444") + ")"]; }) : []);
+                    .concat(o.thresholds ? lims.map((t) => { const on = this._thresholdOf(t); return ["Threshold", (t.label ? t.label + ": " : "") + (t.kind === "upper" ? "≥ " : "≤ ") + t.value + (on ? " on " + (on.name || on.id) : "") + " (" + this._thresholdColor(t) + ")"]; }) : []);
                 blob = xlsxBlob(header, rows, utc, { fills, info, textCols: o.annotations ? [n + 1] : [] });
             } else {
                 // a comma as the decimal separator: ";" between the columns (as Excel there expects)
@@ -656,12 +702,18 @@ export const lineChart = defineUI({
             return this.seriesList().some((s) => s._side === "right" && s.visible !== false && !this._hidden.has(s._key));
         }
 
-        colorOf(s) {
-            if (s.color && typeof s.color === "string" && s.color.trim()) return s.color.trim();
-            return this.seriesColor(s._i);
+        colorOf(s) { return this._tok(s.color) || this.seriesColor(s._i); }
+
+        // a threshold's colour: its own (hex or token), else the theme's status colour for its kind
+        _thresholdColor(t) {
+            return this._tok(t && t.color) || this.statusColor(t && t.kind === "band" ? "warning" : t && (t.kind === "upper" || t.kind === "lower") ? "error" : "info");
         }
 
-        fmtValue(s, y) { return formatValue(y, this._seriesSpec(s), s.unit || ""); }
+        // a value as text: its Value text (0=Off) or the number with the series' format and unit
+        fmtValue(s, y) {
+            const t = s._map ? s._map.get(y) : undefined;
+            return t !== undefined ? t : formatValue(y, this._seriesSpec(s), s.unit || "");
+        }
 
         // ---- drawing ---------------------------------------------------------------------------
         _decimate(dec, s, vMinX, vMaxX, w, into) {
@@ -736,8 +788,10 @@ export const lineChart = defineUI({
             const c = this._colors();
             ctx.font = "10px " + c.font;
             const col = (s) => {
-                const ticks = this._ticks(yr[s._key], plotH0), spec = this._seriesSpec(s);
-                const labels = ticks.map((v) => formatValue(v, spec));
+                const r = yr[s._key], spec = this._seriesSpec(s);
+                // value texts: the ticks are those values (Off / Run), not round numbers
+                const ticks = s._map ? Array.from(s._map.keys()).filter((v) => v >= r.lo && v <= r.hi).sort((a, b) => a - b) : this._ticks(r, plotH0);
+                const labels = ticks.map((v) => (s._map && s._map.has(v) ? s._map.get(v) : formatValue(v, spec)));
                 const title = this._axisTitle(s);
                 let w = 0;
                 for (const l of labels) w = Math.max(w, ctx.measureText(l).width);
@@ -764,14 +818,22 @@ export const lineChart = defineUI({
                 ctx.fillStyle = "rgba(59, 130, 246, 0.14)";
                 ctx.fillRect(a, plotY, b - a, plotH);
             }
-            for (const s of list) this._drawSeries(ctx, s, toX, toY, plotY, plotH);
             const ex = this._exporting;
+            // the last values first (measured): the threshold labels keep clear of them
+            const lv = this.p.lastValue ? this._lastValueItems(ctx, list, toX, toY, m, vMaxX) : null;
+            this._labelRoom = lv && lv.items.length ? lv.room + 4 : 0;
+            if (!(ex && ex.noThresholds)) this._drawBands(ctx, toY, plotX, plotY, plotW, plotH);
+            for (const s of list) this._drawSeries(ctx, s, toX, toY, plotY, plotH);
             if (!(ex && ex.noThresholds)) this._drawThresholds(ctx, toY, plotX, plotW);
             if (!(ex && ex.noAnnotations)) this._drawAnnotations(ctx, toX, plotX, plotY, plotW, plotH, vMinX, vMaxX);
             this._drawHover(ctx, toX, toY, plotY, plotH);
             ctx.restore();
+            if (lv) this._drawLastValues(ctx, lv.items, m);
             this._drawRuler(ctx, m, vMinX, vMaxX, list);
-            if (!ex) this._updateLegend(list, vMinX, vMaxX);
+            if (!ex) {
+                this._updateLegend(list, vMinX, vMaxX);
+                if (legendPlace(this.p).inside) placeInsideLegend(this._plotEl(), m, width, height, this._labelRoom);
+            }
         }
 
         _runs(st, gapAfter) {
@@ -784,7 +846,7 @@ export const lineChart = defineUI({
 
         _tracePath(ctx, st, a, b, s, toX, toY) {
             const X = (i) => toX(st.dx[i]), Y = (i) => toY(st.dy[i], s._key);
-            const variant = s.variant;
+            const variant = this._variantOf(s);
             ctx.moveTo(X(a), Y(a));
             if (variant === "step") {
                 const stepMode = s.step || "after";
@@ -820,7 +882,7 @@ export const lineChart = defineUI({
         _drawSeries(ctx, s, toX, toY, plotY, plotH) {
             const st = this._state(s);
             if (!st.n) return;
-            const variant = s.variant;
+            const variant = this._variantOf(s);
             const color = this.colorOf(s), axis = s._key, lw = numOr(s.width, 2);
             const runs = this._runs(st, numOr(s.gapAfter, 0)), base = plotY + plotH;
             ctx.save();
@@ -900,20 +962,107 @@ export const lineChart = defineUI({
             ctx.textBaseline = "bottom";
             for (const t of list) {
                 const v = numOr(t && t.value, NaN), on = this._thresholdOf(t);
-                // on the scale of its series (not drawn while that series is hidden)
-                if (!Number.isFinite(v) || !on || !this._scale.yr[on._key]) continue;
-                const y = Math.round(toY(v, on._key)) + 0.5;
-                ctx.strokeStyle = (t && t.color) || this.statusColor("error");
+                // on the scale of its series (not drawn while that series is hidden); a band: _drawBands
+                if (!t || t.kind === "band" || !Number.isFinite(v) || !on || !this._scale.yr[on._key]) continue;
+                const y = Math.round(toY(v, on._key)) + 0.5, color = this._thresholdColor(t);
+                ctx.strokeStyle = color;
                 ctx.lineWidth = 1;
-                ctx.setLineDash(DASHES[t && t.dash] || DASHES.dashed);
+                ctx.setLineDash(DASHES[t.dash] || DASHES.dashed);
                 ctx.beginPath();
                 ctx.moveTo(plotX, y);
                 ctx.lineTo(plotX + plotW, y);
                 ctx.stroke();
-                if (t && t.label) { ctx.fillStyle = (t && t.color) || this.statusColor("error"); ctx.fillText(String(t.label), plotX + plotW - 4, y - 2); }
+                if (t.label) { ctx.fillStyle = color; ctx.fillText(String(t.label), plotX + plotW - 4 - (this._labelRoom || 0), y - 2); }
             }
             ctx.setLineDash([]);
             ctx.restore();
+        }
+
+        // under the series: bands (a zone from Value to To) and the tint past a limit (Shade past the limit)
+        _drawBands(ctx, toY, plotX, plotY, plotW, plotH) {
+            const list = Array.isArray(this.p.thresholds) ? this.p.thresholds : [];
+            ctx.save();
+            ctx.font = "10px " + this._colors().font;
+            ctx.textAlign = "right";
+            ctx.textBaseline = "top";
+            for (const t of list) {
+                if (!t || !(t.kind === "band" || (t.shade && (t.kind === "upper" || t.kind === "lower")))) continue;
+                const on = this._thresholdOf(t), v = numOr(t.value, NaN);
+                if (!on || !this._scale.yr[on._key] || !Number.isFinite(v)) continue;
+                const y0 = toY(v, on._key);
+                let y1;
+                if (t.kind === "band") { const w = numOr(t.to, NaN); if (!Number.isFinite(w)) continue; y1 = toY(w, on._key); }
+                else y1 = t.kind === "upper" ? plotY : plotY + plotH;
+                const top = Math.max(plotY, Math.min(y0, y1)), bottom = Math.min(plotY + plotH, Math.max(y0, y1));
+                if (bottom <= top) continue;
+                const color = this._thresholdColor(t);
+                ctx.fillStyle = this.hexToRgba(color, t.kind === "band" ? 0.14 : 0.08);
+                ctx.fillRect(plotX, top, plotW, bottom - top);
+                if (t.kind === "band") {
+                    // its edges, faint; its label in the band's top right corner
+                    ctx.strokeStyle = this.hexToRgba(color, 0.5);
+                    ctx.lineWidth = 1;
+                    ctx.setLineDash(DASHES[t.dash] || DASHES.dashed);
+                    ctx.beginPath();
+                    for (const y of [Math.round(top) + 0.5, Math.round(bottom) - 0.5]) { ctx.moveTo(plotX, y); ctx.lineTo(plotX + plotW, y); }
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+                    if (t.label && bottom - top >= 12) { ctx.fillStyle = this._colors().text; ctx.fillText(String(t.label), plotX + plotW - 4 - (this._labelRoom || 0), top + 2); }
+                }
+            }
+            ctx.restore();
+        }
+
+        // the newest value of each series at the plot's right edge, in its colour; labels that would
+        // overlap move apart (never off the plot). -> { items, room } (room: the widest label)
+        _lastValueItems(ctx, list, toX, toY, m, vMaxX) {
+            const items = [];
+            ctx.save();
+            ctx.font = "600 10.5px " + this._colors().font;
+            for (const s of list) {
+                const buf = this._state(s).buf;
+                if (!buf.count) continue;
+                const x = buf.getX(buf.count - 1) + s._shift, y = buf.getY(buf.count - 1);
+                // only while the newest point is in view (a chart panned to the past shows no "last")
+                if (x > vMaxX || toX(x) < m.plotX) continue;
+                const text = this.fmtValue(s, y);
+                items.push({ s, y: toY(y, s._key), text, w: ctx.measureText(text).width + 10 });
+            }
+            // (below the ⋮ export menu in the top right corner)
+            const h = 16, top = m.plotY + (this.p.exportButton !== false ? 20 : 0), bottom = m.plotY + m.plotH;
+            items.sort((a, b) => a.y - b.y);
+            // top down: each below the one before; then, past the bottom, the column moves up
+            let prev = -Infinity;
+            for (const it of items) { it.at = Math.max(it.y - h / 2, prev + 1, top); prev = it.at + h; }
+            let limit = bottom;
+            for (let i = items.length - 1; i >= 0; i--) { if (items[i].at + h > limit) items[i].at = Math.max(top, limit - h); limit = items[i].at - 1; }
+            ctx.restore();
+            return { items, room: items.reduce((a, it) => Math.max(a, it.w + 2), 0) };
+        }
+
+        _drawLastValues(ctx, items, m) {
+            const h = 16;
+            ctx.save();
+            ctx.font = "600 10.5px " + this._colors().font;
+            ctx.textAlign = "left";
+            ctx.textBaseline = "middle";
+            for (const it of items) {
+                const color = this.colorOf(it.s), x = m.plotX + m.plotW - it.w - 2;
+                ctx.fillStyle = color;
+                ctx.beginPath();
+                if (ctx.roundRect) ctx.roundRect(x, it.at, it.w, h, 3); else ctx.rect(x, it.at, it.w, h);
+                ctx.fill();
+                ctx.fillStyle = this._onColor(color);
+                ctx.fillText(it.text, x + 5, it.at + h / 2 + 0.5);
+            }
+            ctx.restore();
+        }
+
+        // black or white text on a colour (whichever reads better)
+        _onColor(color) {
+            const m = /rgba?\(([^)]+)\)/.exec(this.hexToRgba(color, 1));
+            const [r, g, b] = m ? m[1].split(",").map((x) => Number(x)) : [0, 0, 0];
+            return (0.299 * r + 0.587 * g + 0.114 * b) / 255 > 0.6 ? "#161616" : "#ffffff";
         }
 
         _drawHover(ctx, toX, toY, plotY, plotH) {
@@ -1039,19 +1188,21 @@ export const lineChart = defineUI({
             return { min: mn, max: mx, avg: st.n ? sum / st.n : NaN };
         }
 
+        // a series' legend value: its last point, or min / max / avg over the time shown
+        _legendStat(s, k) {
+            const buf = this._state(s).buf;
+            const y = k === "last" ? (buf.count ? buf.getY(buf.count - 1) : NaN) : this._statsOf(s)[k];
+            if (!Number.isFinite(y)) return "";
+            // an average of Off / Run is a number, not a text
+            if (k !== "avg") return this.fmtValue(s, y);
+            const spec = this._seriesSpec(s);
+            return formatValue(y, spec.decimals === "auto" ? Object.assign(spec, { decimals: "2" }) : spec, s.unit || "");
+        }
+
         _updateLegend(list) {
-            const el = this.renderRoot && this.renderRoot.querySelector(".legend");
-            if (!el || !list) return;
-            const mode = this.p.legendValue || "last";
-            for (const s of list) {
-                const v = el.querySelector(`.lg-item[data-key="${CSS.escape(s._key)}"] .lg-val`);
-                if (!v) continue;
-                const buf = this._state(s).buf;
-                let y = NaN;
-                if (mode === "last" && buf.count) y = buf.getY(buf.count - 1);
-                else if (mode !== "none") y = this._statsOf(s)[mode];
-                v.textContent = mode === "none" || !Number.isFinite(y) ? "" : this.fmtValue(s, y);
-            }
+            if (!list || !this.renderRoot) return;
+            const byKey = new Map(list.map((s) => [s._key, s]));
+            fillLegend(this.renderRoot, (key, k) => { const s = byKey.get(key); return s ? this._legendStat(s, k) : ""; });
         }
 
         _toggle(s, e) {
@@ -1108,9 +1259,11 @@ export const lineChart = defineUI({
                 }, { format: this._seriesSpec(s) });
                 return v === null || v === undefined ? (s.name || s.id) + ": —" : String(v);
             }
+            const label = s.tooltipLabel || s.name || "Value";
+            if (s._map && s._map.has(hit.y)) return label + ": " + (s.prefix || "") + s._map.get(hit.y) + (s.suffix || "");
             // the unit as shown (engineering notation scales it: 1 500 kW -> 1.5 MW)
             const f = formatParts(hit.y, this._seriesSpec(s), s.unit || "");
-            return (s.tooltipLabel || s.name || "Value") + ": " + (s.prefix || "") + f.text + (s.suffix || "") + (f.unit ? " " + f.unit : "");
+            return label + ": " + (s.prefix || "") + f.text + (s.suffix || "") + (f.unit ? " " + f.unit : "");
         }
 
         _values(hits) {
@@ -1124,13 +1277,10 @@ export const lineChart = defineUI({
         _hasData() { return this._visible().length > 0; }
 
         _pngLegend(span) {
-            const mode = this.p.legendValue || "last";
+            const mode = this.p.legendMode === "table" ? "last" : this.p.legendValue || "last";
             return span.list.filter((s) => s.legend !== false).map((s) => {
-                const buf = this._state(s).buf;
-                let y = NaN;
-                if (mode === "last" && buf.count) y = buf.getY(buf.count - 1);
-                else if (mode !== "none") y = this._statsOf(s)[mode];
-                return { color: this.colorOf(s), text: (s.name || s.id) + (mode !== "none" && Number.isFinite(y) ? "  " + this.fmtValue(s, y) : "") };
+                const v = mode === "none" ? "" : this._legendStat(s, mode);
+                return { color: this.colorOf(s), text: (s.name || s.id) + (v ? "  " + v : "") };
             });
         }
 
@@ -1213,45 +1363,45 @@ export const lineChart = defineUI({
         render() {
             const all = this.seriesList();
             const hasData = all.some((s) => this._state(s).buf.count > 0);
-            const legendAt = this.p.legend || "bottom";
-            const legendList = all.filter((s) => s.legend !== false);
-            const legend = legendAt === "none" || !legendList.length ? "" : html`
-                <div class="legend" part="legend">
-                    ${legendList.map((s) => html`
-                        <button type="button" class="lg-item ${this._hidden.has(s._key) || s.visible === false ? "off" : ""}" data-key="${s._key}"
-                            title="Click: show / hide. Alt+click: only this one." @click=${(e) => this._toggle(s, e)}>
-                            <span class="lg-swatch" style="background:${this.colorOf(s)}"></span>
-                            <span class="lg-name">${s.name || "Series " + (s._i + 1)}</span>
-                            <span class="lg-val"></span>
-                        </button>`)}
-                </div>`;
+            const { at, inside } = legendPlace(this.p);
+            const legend = legendTemplate(this.p, all.filter((s) => s.legend !== false).map((s) => ({
+                key: s._key, name: s.name || "Series " + (s._i + 1), color: this.colorOf(s), off: this._hidden.has(s._key) || s.visible === false,
+                swatch: s.variant === "bars" ? "square" : s.variant === "points" ? "dot" : "line"
+            })), (e, ev) => { const s = all.find((x) => x._key === e.key); if (s) this._toggle(s, ev); });
+            const bar = this._renderRangeBar();
             return html`
                 <div class="chart-container" part="chart">
-                    ${legendAt === "top" ? legend : ""}
-                    <div class="plot"
-                        @wheel=${(e) => this.onWheel(e)}
-                        @pointerdown=${(e) => this.onPointerDown(e)}
-                        @pointermove=${(e) => this.onPointerMove(e)}
-                        @pointerup=${(e) => this.onPointerUp(e)}
-                        @pointercancel=${(e) => this.onPointerCancel(e)}
-                        @pointerleave=${(e) => this.onPointerLeave(e)}
-                        @dblclick=${() => this.followLive()}>
-                        <canvas></canvas>
-                        <div class="corner" style="right:${this._scale && this._scale.m ? this._scale.m.padRight + 6 : (this._usesRight() ? 60 : 20)}px">
-                            ${this.viewRange ? html`
-                                <button class="btn-chip btn-reset-zoom" @click=${() => this.followLive()} title="Follow the newest data again (or double click the chart)">
-                                    <span class="live-dot"></span> Reset Zoom
-                                </button>` : ""}
-                            ${this._renderMenu()}
+                    ${bar}
+                    ${at === "top" ? legend : ""}
+                    <div class="c-main">
+                        ${at === "left" ? legend : ""}
+                        <div class="plot"
+                            @wheel=${(e) => this.onWheel(e)}
+                            @pointerdown=${(e) => this.onPointerDown(e)}
+                            @pointermove=${(e) => this.onPointerMove(e)}
+                            @pointerup=${(e) => this.onPointerUp(e)}
+                            @pointercancel=${(e) => this.onPointerCancel(e)}
+                            @pointerleave=${(e) => this.onPointerLeave(e)}
+                            @dblclick=${() => this.followLive()}>
+                            <canvas></canvas>
+                            <div class="corner" style="right:${this._scale && this._scale.m ? this._scale.m.padRight + 6 : (this._usesRight() ? 60 : 20)}px">
+                                ${this.viewRange && !bar ? html`
+                                    <button class="btn-chip btn-reset-zoom" @click=${() => this.followLive()} title="Follow the newest data again (or double click the chart)">
+                                        <span class="live-dot"></span> Reset Zoom
+                                    </button>` : ""}
+                                ${this._renderMenu()}
+                            </div>
+                            <div class="tooltip"><div class="tooltip-time"></div><div class="tooltip-rows"></div></div>
+                            ${inside ? legend : ""}
+                            ${!hasData ? html`
+                                <div class="empty">
+                                    <i class="fa fa-line-chart" style="font-size: 24px; opacity: 0.4;"></i>
+                                    <span>No data received</span>
+                                </div>` : ""}
                         </div>
-                        <div class="tooltip"><div class="tooltip-time"></div><div class="tooltip-rows"></div></div>
-                        ${!hasData ? html`
-                            <div class="empty">
-                                <i class="fa fa-line-chart" style="font-size: 24px; opacity: 0.4;"></i>
-                                <span>No data received</span>
-                            </div>` : ""}
+                        ${at === "right" ? legend : ""}
                     </div>
-                    ${legendAt !== "top" ? legend : ""}
+                    ${at === "bottom" ? legend : ""}
                 </div>
             `;
         }

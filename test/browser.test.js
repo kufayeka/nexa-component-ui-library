@@ -760,7 +760,7 @@ withHarness({
         assert.ok(r[0].hi >= 10);
         assert.ok(r[1].lo > 0, 'another series: its own range');
         const kinds = await js(`NEXA.getComponent("${P}line-chart").nexa.props.thresholds.item.fields.kind.options.map(function (o) { return o.value; })`);
-        assert.deepStrictEqual(kinds, ['line', 'upper', 'lower']);
+        assert.deepStrictEqual(kinds, ['line', 'upper', 'lower', 'band']);
     });
 
     await ok('Line Chart: Export menu — 3-dots panel menu (CSV, Excel, PNG) and exportFilename expression', async () => {
@@ -1028,6 +1028,87 @@ withHarness({
         await js(`NexaTest.invoke("lc-thr", "appendPoints", { x: ${T0 + 2000}, y: 7 }, { list: "series", id: "a" })`);
         const ev = await js(`NexaTest.item("lc-thr").events.filter(function (e) { return e[0] === "thresholdCross"; }).map(function (e) { return e[2].id + ":" + e[1].threshold; })`);
         assert.deepStrictEqual(ev, ['b:5'], 'b crossed 5 on its scale; a (7 < 50) did not');
+    });
+
+    await ok('Line Chart: range buttons above the plot — a span, live; Now after a zoom; Show the last from Logic', async () => {
+        const pts = Array.from({ length: 720 }, (_, i) => ({ x: T0 + i * 10000, y: 50 + Math.sin(i / 30) * 10 }));
+        await mount('lc-rb', 'line-chart', { series: [S('a', { live: pts })], rangeBar: true }, { width: 600, height: 280 });
+        const span = () => js(`(function () { var w = ${series('lc-rb')}; w.draw(); return w._scale.vMaxX - w._scale.vMinX; })()`);
+        assert.deepStrictEqual(await js(`Array.from(${root('lc-rb')}.querySelectorAll(".rb-group .rb-btn")).map(function (b) { return b.textContent.trim(); })`), ['15m', '1h', '8h', '24h', '7d']);
+        assert.strictEqual(await js(`!!${root('lc-rb')}.querySelector(".rb-live")`), true, 'live: a Live mark, no Now');
+        await clickAt(`${root('lc-rb')}.querySelectorAll(".rb-group .rb-btn")[1]`);
+        assert.strictEqual(await span(), 3600000, '1h: the last hour');
+        assert.strictEqual(await js(`${root('lc-rb')}.querySelector(".rb-btn.on").textContent.trim()`), '1h');
+        const ev = await js(`NexaTest.item("lc-rb").events.filter(function (e) { return e[0] === "rangeChange"; }).map(function (e) { return e[1].cause + ":" + e[1].live; })`);
+        assert.ok(ev.includes('preset:true'), JSON.stringify(ev));
+        await js(`NexaTest.invoke("lc-rb", "setRange", { from: ${T0}, to: ${T0 + 600000} })`); await settle();
+        assert.deepStrictEqual(await js(`[!!${root('lc-rb')}.querySelector(".rb-now"), !!${root('lc-rb')}.querySelector(".btn-reset-zoom"), !!${root('lc-rb')}.querySelector(".rb-btn.on")]`), [true, false, false], 'paused: Now (no Reset Zoom chip), no button on');
+        await clickAt(`${root('lc-rb')}.querySelector(".rb-now")`);
+        assert.deepStrictEqual([await js(`${series('lc-rb')}.viewRange`), await span()], [null, 3600000], 'Now: live again, the span chosen');
+        await js(`NexaTest.invoke("lc-rb", "showLast", { span: "15m" })`); await settle();
+        assert.strictEqual(await span(), 900000, 'Show the last (Logic)');
+    });
+
+    await ok('Line Chart: the legend — around the plot or inside it, a table (Last / Min / Max / Average), a row toggles its series', async () => {
+        const two = [S('a', { name: 'A', live: [{ x: T0, y: 1 }, { x: T0 + 1000, y: 3 }, { x: T0 + 2000, y: 2 }] }), S('b', { name: 'B', live: [{ x: T0, y: 10 }, { x: T0 + 1000, y: 30 }, { x: T0 + 2000, y: 20 }] })];
+        await mount('lc-lgt', 'line-chart', { series: two, legend: 'right', legendMode: 'table' }, { width: 600, height: 260 });
+        const t = await js(`(function () { var r = ${root('lc-lgt')}; r.host.draw(); return { head: Array.from(r.querySelectorAll(".lg-table th")).map(function (e) { return e.textContent.trim(); }),
+            a: Array.from(r.querySelectorAll(".lg-row")[0].querySelectorAll(".lg-val")).map(function (e) { return e.textContent; }),
+            right: r.querySelector(".c-main").lastElementChild.classList.contains("legend") }; })()`);
+        assert.deepStrictEqual(t.head, ['Series', 'Last', 'Min', 'Max', 'Avg']);
+        assert.deepStrictEqual(t.a.slice(0, 3), ['2', '1', '3']);
+        assert.ok(/^2(\.00)?$/.test(t.a[3]), 'average: ' + t.a[3]);
+        assert.strictEqual(t.right, true, 'right of the plot');
+        await js(`NexaTest.setProps("lc-lgt", { legendMin: false, legendAvg: false })`); await settle();
+        assert.deepStrictEqual(await js(`Array.from(${root('lc-lgt')}.querySelectorAll(".lg-table th")).map(function (e) { return e.textContent.trim(); })`), ['Series', 'Last', 'Max'], 'columns chosen');
+        await js(`${root('lc-lgt')}.querySelectorAll(".lg-row")[0].click()`); await settle();
+        assert.deepStrictEqual(await js(`${series('lc-lgt')}._visible().map(function (s) { return s.id; })`), ['b'], 'a row click hides its series');
+        await mount('lc-lgi', 'line-chart', { series: two, legend: 'inside-tr', legendValue: 'max' }, { width: 600, height: 260 });
+        const i = await js(`(function () { var w = ${series('lc-lgi')}; w.draw(); var p = w.renderRoot.querySelector(".plot"), l = p.querySelector(".legend.inside.tr");
+            return { inside: !!l, vals: Array.from(l.querySelectorAll(".lg-val")).map(function (e) { return e.textContent; }), right: p.style.getPropertyValue("--lg-r"), padRight: Math.round(w._scale.m.padRight) }; })()`);
+        assert.strictEqual(i.inside, true);
+        assert.deepStrictEqual(i.vals, ['3', '30']);
+        assert.strictEqual(i.right, (i.padRight + 8) + 'px', 'it keeps to the plot');
+    });
+
+    await ok('Line Chart: thresholds — a band, a shaded limit, the theme\'s status colours when none is set; a band\'s edges fire On Threshold Crossed', async () => {
+        await mount('lc-band', 'line-chart', {
+            series: [S('a', { min: 0, max: 100, live: [{ x: T0, y: 10 }, { x: T0 + 60000, y: 10 }] })], showGrid: false,
+            thresholds: [{ kind: 'band', value: 40, to: 60, label: 'Normal' }, { kind: 'upper', value: 80, shade: true }, { kind: 'line', value: 30 }, { kind: 'line', value: 20, color: '{token:colors.green.solid}' }]
+        }, { width: 500, height: 260 });
+        const r = await js(`(function () { var w = ${series('lc-band')}; w.draw(); var sc = w._scale, m = sc.m, k = w.seriesList()[0]._key, c = w.canvas, ctx = c.getContext("2d"), d = w._lastDpr || 1;
+            function row(v) { var y = Math.round(sc.toY(v, k) * d), data = ctx.getImageData(Math.round((m.plotX + 20) * d), y, Math.round((m.plotW - 140) * d), 1).data, n = 0; for (var i = 3; i < data.length; i += 4) if (data[i]) n++; return n; }
+            var t = w.p.thresholds;
+            return { band: row(50), empty: row(70), shaded: row(90), colors: t.map(function (x) { return w._thresholdColor(x); }), status: [w.statusColor("warning"), w.statusColor("error"), w.statusColor("info"), w._tok("{token:colors.green.solid}")] }; })()`);
+        assert.ok(r.band > 100 && r.shaded > 100, 'the band and the shade are painted: ' + JSON.stringify(r));
+        assert.strictEqual(r.empty, 0, 'nothing between them');
+        assert.deepStrictEqual(r.colors, r.status, 'band: warning, limit: error, setpoint: info, a token: the theme\'s');
+        assert.ok(/^#|^rgb/.test(r.colors[3]), r.colors[3]);
+        await js(`NexaTest.invoke("lc-band", "appendPoints", { x: ${T0 + 120000}, y: 45 }, { list: "series", id: "a" })`);
+        await js(`NexaTest.invoke("lc-band", "appendPoints", { x: ${T0 + 180000}, y: 65 }, { list: "series", id: "a" })`);
+        const ev = await js(`NexaTest.item("lc-band").events.filter(function (e) { return e[0] === "thresholdCross"; }).map(function (e) { return e[1].direction + ":" + e[1].threshold; })`);
+        assert.deepStrictEqual(ev, ['up:40', 'up:30', 'up:20', 'up:60'], 'into the band (and past both lines), then out of its top');
+    });
+
+    await ok('Line Chart: Automatic interpolation is a step while the values are whole numbers; value texts (0=Off, 1=Run) on the axis, in the tooltip and the legend', async () => {
+        await mount('lc-auto', 'line-chart', { series: [S('p', { name: 'Pump', variant: 'auto', valueMap: '0=Off, 1=Run', live: [{ x: T0, y: 0 }, { x: T0 + 1000, y: 1 }, { x: T0 + 2000, y: 1 }] })], legendValue: 'last' }, { width: 500, height: 240 });
+        const r = await js(`(function () { var w = ${series('lc-auto')}; w.draw(); var s = w.seriesList()[0];
+            return { v: w._variantOf(s), ticks: w._scale.layout.left[0].labels, legend: w.renderRoot.querySelector(".lg-val").textContent, tip: w.tooltipText({ s: s, y: 0, x: ${T0}, idx: 0 }, []) }; })()`);
+        assert.deepStrictEqual(r, { v: 'step', ticks: ['Off', 'Run'], legend: 'Run', tip: 'Pump: Off' });
+        await js(`NexaTest.invoke("lc-auto", "appendPoints", { x: ${T0 + 3000}, y: 0.5 }, { list: "series", id: "p" })`);
+        assert.strictEqual(await js(`${series('lc-auto')}._variantOf(${series('lc-auto')}.seriesList()[0])`), 'line', 'a fraction: linear');
+        await js(`NexaTest.invoke("lc-auto", "replacePoints", [{ x: ${T0}, y: 2 }, { x: ${T0 + 1000}, y: 3 }], { list: "series", id: "p" })`);
+        assert.strictEqual(await js(`${series('lc-auto')}._variantOf(${series('lc-auto')}.seriesList()[0])`), 'step', 'replaced by whole numbers: step again');
+    });
+
+    await ok('Line Chart: the last value at the end of each line — apart when they meet, below the ⋮ menu, only while the newest point is in view', async () => {
+        await mount('lc-last', 'line-chart', { series: [S('a', { live: [{ x: T0, y: 5 }, { x: T0 + 60000, y: 7 }, { x: T0 + 600000, y: 50 }] }), S('b', { live: [{ x: T0, y: 9 }, { x: T0 + 60000, y: 8 }, { x: T0 + 600000, y: 50 }] })], lastValue: true }, { width: 500, height: 240 });
+        const items = () => js(`(function () { var w = ${series('lc-last')}; w.draw(); var sc = w._scale; return w._lastValueItems(w.ctx, w._visible(), sc.toX, sc.toY, sc.m, sc.vMaxX).items.map(function (i) { return { t: i.text, at: Math.round(i.at) }; }).concat([{ top: Math.round(sc.m.plotY) }]); })()`);
+        const a = await items();
+        assert.deepStrictEqual(a.slice(0, 2).map((i) => i.t), ['50', '50']);
+        assert.ok(Math.abs(a[1].at - a[0].at) >= 16, 'apart: ' + JSON.stringify(a));
+        await js(`NexaTest.invoke("lc-last", "setRange", { from: ${T0}, to: ${T0 + 120000} })`); await settle();
+        assert.strictEqual((await items()).length, 1, 'panned to the past: no last value');
     });
 
     await ok('Line Chart: v3 charts (chart-level axis settings, a scale / group, a threshold by side) become v4', async () => {

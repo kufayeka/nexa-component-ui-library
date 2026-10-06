@@ -124,6 +124,7 @@ A time-series chart driven by Logic.
 **In Logic** (the Events tab), a chart is:
 - **One "Update chart" node.** It covers the chart's own props (time range, time axis, axes, tooltip, legend, thresholds, annotations, zoom & pan, export) and its actions:
   - **Follow live**;
+  - **Show the last …** (`{span: "8h"}`): live, that span (as a range button);
   - **Show a time range** (`{from, to}`);
   - **Clear every series**;
   - **Add annotation** (`addAnnotation({ time, label, color })`);
@@ -153,7 +154,8 @@ A time-series chart driven by Logic.
 **A series:**
 - **Live value**: a tag or a variable; every new value is a point.
 - **Data settings:** points kept, break the line after N ms, stale after N ms, and a **time shift** (yesterday over today).
-- **Look:** variant / interpolation (line / step / smooth / bars / points), step mode (after / before / center), colour, width, dash, opacity, fill, points.
+- **Look:** interpolation (linear / smooth / step / **automatic** / bars / points), step mode (after / before / center), colour (a hex or a theme token), width, dash, opacity, fill, points.
+- **Value texts** (its Axis › Numbers): `0=Off, 1=Run, 2=Fault`: the tooltip, the legend and the last value show the text, and the axis ticks are those values (Off / Run), not round numbers.
 - **Its own Y axis:** position (left / right / hidden), title, unit; Range (soft / hard min / max, **zero in the middle** for − and +); Numbers; Spine (line, ticks).
 - **Tooltip:** simple (label, text before / after the value) or an **expression**:
   - `{value} {delta} {min} {max} {avg} {name} {unit} {time}`;
@@ -192,7 +194,10 @@ A time-series chart driven by Logic.
 - `line`: Direct linear segment between points;
 - `step`: Digital square staircase wave (ideal for discrete signals, machine ON/OFF, alarms, recipe stages) with configurable transition point: `after` (standard), `before`, or `center`;
 - `smooth`: Monotone cubic spline curve through points;
+- `auto` (Automatic): a step while every value of the series is a whole number (on / off, counters, modes), else linear;
 - Can be set per series (`variant` / `interpolation`) or chart-wide as default (`defaultInterpolation`).
+
+**Range buttons** (Zoom & pan › *Range buttons above the chart*): a row of spans above the plot (`15m, 1h, 8h, 24h, 7d` by default, any list in *Buttons*); one click shows that span live. Zoomed or panned, a **Now** button brings the newest data back (live: a *Live* mark). The viewer's choice is not saved; Logic does the same with **Show the last …**.
 
 **Zoom & pan:** zoom in / out to at most N, move only where there is data (or within the last N, or anywhere), room after the newest point.
 
@@ -200,9 +205,19 @@ A time-series chart driven by Logic.
 - **Page first** (default): the mouse wheel and one finger scroll the page, also over a chart. **Ctrl / ⌘ + wheel** (or a trackpad pinch) zooms, a mouse drag pans. On a touchscreen **two fingers** pinch-zoom and pan, a **tap** shows the tooltip (a tap elsewhere hides it). A short hint says so when a plain wheel or one finger moved the page instead. The same rule as a Zoom frame in Nexa Dashboard.
 - **Chart first**: the wheel zooms and one finger pans (the page does not scroll through the chart). For a chart that fills an HMI screen. Y axes have **soft** min / max (they grow with the data) and **hard** min / max (fixed).
 
+**Legend** (a part every chart shares, `legend.js`):
+- **where**: below, above, right, left, or **inside** the plot in a corner (it keeps to the plot, clear of the axes, the ruler, the ⋮ menu and the last values);
+- **a list** (the name and one value: last / min / max / average) or **a table** (a row per series, columns Last / Min / Max / Average, each column on or off);
+- min / max / average are over the time shown; click hides a series, Alt+click shows it alone; text size.
+
+**Thresholds** (on the scale of the series each names):
+- a **line** (a setpoint), an **upper** or a **lower limit** (a limit colours the values past it in Excel; *Shade past the limit* tints the area beyond it), a **band** from Value to To (a normal range, a target zone);
+- the colour is a hex or a theme token; empty: the theme's status colour (limit: error, band: warning, setpoint: info);
+- a series crossing a line, a limit or a band's edge fires its **On Threshold Crossed**.
+
+**Last value** (Style › *Last value at the end of each line*): the newest value of each series in a label of its colour at the plot's right edge (ISA-101: the value is always readable); labels that meet move apart; only while the newest point is in view.
+
 **Also:**
-- legend: click hides a series, Alt+click shows it alone; it shows the last / min / max / average value;
-- thresholds: a line, an **upper limit** or a **lower limit** (a limit colours the values past it in Excel), on the scale of the series it names;
 - **export** (the ⋮ menu, or Logic's Export action `{ format: "csv" | "xlsx" | "png", range: "visible" | "all", annotations, thresholds }`; each option left out comes from the Properties' Export group):
   - *what is shown* (zoom / pan applied) or *everything it holds*; hidden series are never exported;
   - CSV / Excel: a row per time (to the millisecond), a column per series, an **Annotation** column (each annotation its own row at its exact time);
