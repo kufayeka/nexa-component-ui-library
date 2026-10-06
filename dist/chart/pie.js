@@ -1,937 +1,427 @@
-// Nexa UI — Pie & Donut Chart
-// Categorical proportions of a whole, designed to avoid the classic pitfalls of industrial pie charts:
-//   - Smart anti-collision labels (inside, outside with clean leader lines, or legend-only; auto-hides for tiny slices)
-//   - Automatic "Others" grouping (collapses slices < X% or beyond top N into a single expandable category)
-//   - Donut center metric / KPI (Total sum, average, count, or custom text)
-//   - Responsive legend with interactive toggle (mute/solo slices)
-//   - HMI drilldown: On Slice Click event { id, name, value, percent, index, isOther } and Logic slice targeting
-//   - Robust zero / negative handling with elegant empty states
-//   - Direct flat payload ingestion (array of objects, tuples, or key-value map)
-//   - Full export to CSV, Excel (.xlsx), and PNG
-import { html, css } from "../../../nexa-sdk/nexa-component-sdk.js";
-import { PREFIX, defineUI } from "../core.js";
-import { chartCommon, opt, NOTATIONS, DECIMALS, notationOf, numOr } from "./core.js";
+// Nexa UI — Pie / Donut: parts of a whole (downtime by reason, energy by area, output by product).
+//
+// The rules of a good pie are its defaults (each can be turned off): it starts at 12 o'clock and runs clockwise, the
+// largest slice first; past the top N (or below a %) the rest is ONE grey "Others" slice, always last (a click opens it);
+// a donut's centre says the total (or a slice, or a text; the slice under the pointer while hovered); a slice is never
+// left without its label: inside when it fits, else outside on a leader line, the labels on each side moved apart so they
+// never overlap (a radius made room for them first: the labels are measured, then the pie is sized).
+// DATA: SLICES, the items of the shared value model (readout.js: a Logic target each, a live tag, the figure over a
+// window, stale), and/or ROWS from a query ([{ reason, minutes }]) mapped to a name and a value, split into several pies
+// side by side by a field (small multiples). A listed slice styles the row of the same name (its colour, its status).
+import { html, css, formatValue } from "../../../nexa-sdk/nexa-component-sdk.js";
+import { PREFIX, part, defineUI } from "../core.js";
+import { chartCommon } from "./core.js";
+import { exportProps } from "./props.js";
+import { legendProps, legendTemplate, legendPlace, fillLegend } from "./legend.js";
+import { ReadoutElement, STATUSES, readoutFields, itemsProp, itemDefaults, opt, numOr } from "./readout.js";
 import { xlsxBlob } from "./export.js";
-import { ChartElement } from "./core.js";
 
-const common = chartCommon;
-
-const PIE_CSS = css`
-    .chart-container.legend-right {
-        flex-direction: row;
-    }
-    .chart-container.legend-right .plot {
-        flex: 1 1 auto;
-    }
-    .chart-container.legend-right .legend {
-        flex: 0 0 auto;
-        flex-direction: column;
-        flex-wrap: nowrap;
-        max-height: 100%;
-        max-width: 42%;
-        padding: 12px 14px;
-        overflow-y: auto;
-        justify-content: center;
-        gap: 6px;
-    }
-    .chart-container.legend-top {
-        flex-direction: column-reverse;
-    }
-    .chart-container.legend-top .legend {
-        padding: 6px 12px 2px 12px;
-    }
-    .legend {
-        justify-content: center;
-        padding: 4px 10px 8px 10px;
-    }
-    .lg-pct {
-        font-family: var(--nexa-fonts-body, "IBM Plex Sans", system-ui, sans-serif);
-        opacity: 0.75;
-        font-size: 10px;
-        margin-left: 2px;
-    }
-    .lg-swatch {
-        width: 10px;
-        height: 10px;
-        border-radius: 50%;
-    }
-    .plot {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        cursor: default;
-    }
-    .plot.hovering {
-        cursor: pointer;
-    }
-    .tooltip-pct {
-        font-weight: 600;
-        color: var(--accent, #3b82f6);
-        margin-left: 4px;
-    }
-    .tooltip-others {
-        margin-top: 4px;
-        padding-top: 4px;
-        border-top: 1px dashed rgba(255, 255, 255, 0.18);
-        font-size: 10px;
-        color: #94a3b8;
-    }
-    .tooltip-other-row {
-        display: flex;
-        justify-content: space-between;
-        gap: 8px;
-        line-height: 1.3;
-    }
-`;
-
-const SLICE_FIELDS = {
-    name: { type: "string", label: "Name", default: "Slice" },
-    id: { type: "string", label: "Id", default: "", bindable: false, help: "Fixed id for Logic targeting." },
-    value: { type: "number", label: "Value", default: 10 },
-    color: { type: "color", label: "Colour", default: "", help: "Empty: picks next colour from palette." },
-    visible: { type: "boolean", label: "Visible", default: true },
-    inLegend: { type: "boolean", label: "In legend", default: true },
-    live: { type: "tag", access: "read", section: "Data", label: "Live value" }
-};
-
-function sliceDefaults() {
-    const o = {};
-    Object.keys(SLICE_FIELDS).forEach((k) => { o[k] = SLICE_FIELDS[k].default; });
-    delete o.live;
-    return o;
-}
-
-export class PieChartElement extends ChartElement {
-    static styles = [...ChartElement.styles, PIE_CSS];
-
-    _hiddenSlices = new Set();
-    _dynamicSlices = null;
-    _hoverIndex = null;
-    _hitSlices = [];
-    _preparedSlices = [];
-    _totalValue = 0;
-    _lastHoverEmit = 0;
-
-    sliceList() {
-        if (this._dynamicSlices) return this._dynamicSlices;
-        const raw = Array.isArray(this.p && this.p.slices) ? this.p.slices : [];
-        const d = sliceDefaults();
-        return raw.map((s, i) => {
-            const o = Object.assign({}, d, s && typeof s === "object" ? s : {});
-            o._i = i;
-            o._key = String(o.id || "#" + i);
-            return o;
-        });
-    }
-
-    _seriesSpec() {
-        return {
-            notation: notationOf(this.p && this.p.notation),
-            decimals: this.p && this.p.decimals === "auto" ? undefined : numOr(this.p && this.p.decimals, 0)
-        };
-    }
-
-    _fmtVal(val) {
-        if (!Number.isFinite(val)) return "0";
-        const spec = this._seriesSpec();
-        let s;
-        if (spec.notation === "compact") {
-            s = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: spec.decimals !== undefined ? spec.decimals : 1 }).format(val);
-        } else if (spec.notation === "scientific") {
-            s = val.toExponential(spec.decimals !== undefined ? spec.decimals : 2);
-        } else if (spec.decimals !== undefined) {
-            s = val.toFixed(spec.decimals);
-        } else {
-            s = String(Math.round(val * 100) / 100);
-        }
-        const unit = (this.p && this.p.valueUnit ? " " + this.p.valueUnit : "");
-        return s + unit;
-    }
-
-    colorOf(slice, index) {
-        if (slice.color && typeof slice.color === "string" && slice.color.trim()) return slice.color.trim();
-        return this.seriesColor(index);
-    }
-
-    prepareData() {
-        const rawList = this.sliceList();
-        const active = [];
-
-        // 1. Gather positive and visible slices
-        rawList.forEach((s, idx) => {
-            const val = numOr(s.value, 0);
-            const key = s._key || String(s.id || "#" + idx);
-            if (s.visible === false || this._hiddenSlices.has(key)) return;
-            if (val <= 0) return; // Ignore negative or zero values
-            active.push({
-                _key: key,
-                _origIndex: idx,
-                id: s.id || key,
-                name: String(s.name || "Slice " + (idx + 1)),
-                value: val,
-                color: this.colorOf(s, idx),
-                inLegend: s.inLegend !== false,
-                isOther: false
-            });
-        });
-
-        const total = active.reduce((sum, s) => sum + s.value, 0);
-        this._totalValue = total;
-
-        if (total <= 0 || !active.length) {
-            this._preparedSlices = [];
-            return;
-        }
-
-        // 2. Sorting
-        const sortMode = (this.p && this.p.sort) || "descending";
-        if (sortMode === "descending") {
-            active.sort((a, b) => b.value - a.value);
-        } else if (sortMode === "ascending") {
-            active.sort((a, b) => a.value - b.value);
-        }
-
-        // 3. "Others" Grouping (Threshold & Max Slices)
-        const thresholdPct = numOr(this.p && this.p.groupThresholdPercent, 0);
-        const maxSlices = numOr(this.p && this.p.maxSlices, 0);
-        let finalSlices = [];
-        const toGroup = [];
-
-        active.forEach((s, i) => {
-            const pct = (s.value / total) * 100;
-            const exceedsMax = maxSlices > 0 && i >= (maxSlices - 1);
-            const belowThreshold = thresholdPct > 0 && pct < thresholdPct;
-
-            if (exceedsMax || belowThreshold) {
-                toGroup.push(s);
-            } else {
-                finalSlices.push(s);
-            }
-        });
-
-        // Combine into "Others" if 2 or more slices qualify, or if maxSlices mandated it
-        if (toGroup.length >= 2 || (maxSlices > 0 && toGroup.length >= 1 && finalSlices.length >= maxSlices - 1)) {
-            const othersVal = toGroup.reduce((sum, s) => sum + s.value, 0);
-            if (othersVal > 0) {
-                finalSlices.push({
-                    _key: "_others",
-                    id: "others",
-                    name: (this.p && this.p.othersLabel) || "Others",
-                    value: othersVal,
-                    color: (this.p && this.p.othersColor) || "#64748b",
-                    inLegend: true,
-                    isOther: true,
-                    subSlices: toGroup
-                });
-            }
-        } else {
-            // Keep original slices unbundled if not enough for a group
-            finalSlices = active;
-        }
-
-        // 4. Calculate angles and percentages
-        let currentAngle = (numOr(this.p && this.p.startAngle, -90) * Math.PI) / 180;
-        const padDeg = numOr(this.p && this.p.padAngle, 1.5);
-        const padRad = (padDeg * Math.PI) / 180;
-
-        finalSlices.forEach((s) => {
-            const frac = s.value / total;
-            const span = frac * Math.PI * 2;
-            s.pct = frac * 100;
-            s.start = currentAngle;
-            s.span = span;
-            s.effectiveSpan = finalSlices.length > 1 ? Math.max(0.005, span - padRad) : span;
-            s.end = s.start + s.effectiveSpan;
-            s.mid = s.start + span / 2;
-            currentAngle += span;
-        });
-
-        this._preparedSlices = finalSlices;
-    }
-
-    draw() {
-        if (!this.ctx || !this.canvas) return;
-        const { w, h } = this._layoutSize();
-        if (w <= 0 || h <= 0) return;
-
-        const ctx = this.ctx;
-        this._clearCanvas(ctx, w, h);
-
-        const colors = this._colors();
-        const slices = this._preparedSlices;
-        const total = this._totalValue;
-        const cx = w / 2, cy = h / 2;
-        const isDonut = ((this.p && this.p.mode) || "donut") === "donut";
-
-        // Layout margins: leave room for outside leader labels if active
-        const labelsPos = (this.p && this.p.labelsPosition) || "outside";
-        const margin = labelsPos === "outside" ? Math.min(64, Math.max(34, Math.min(w, h) * 0.16)) : 16;
-        const R = Math.max(20, Math.min(cx, cy) - margin);
-        const rInner = isDonut ? Math.round(R * Math.min(0.9, Math.max(0.1, numOr(this.p && this.p.innerRadius, 0.6)))) : 0;
-
-        this._hitSlices = [];
-
-        // Empty state check
-        if (total <= 0 || !slices.length) {
-            ctx.save();
-            ctx.beginPath();
-            ctx.arc(cx, cy, R, 0, Math.PI * 2);
-            if (rInner > 0) ctx.arc(cx, cy, rInner, 0, Math.PI * 2, true);
-            ctx.strokeStyle = colors.grid;
-            ctx.setLineDash([4, 4]);
-            ctx.lineWidth = 1.5;
-            ctx.stroke();
-            ctx.restore();
-            return;
-        }
-
-        // Draw slices
-        slices.forEach((s, idx) => {
-            const isHovered = this._hoverIndex === idx;
-            const explodeDist = isHovered ? 6 : 0;
-            const dx = explodeDist * Math.cos(s.mid);
-            const dy = explodeDist * Math.sin(s.mid);
-
-            ctx.save();
-            ctx.beginPath();
-            ctx.arc(cx + dx, cy + dy, R, s.start, s.end);
-            if (rInner > 0) {
-                ctx.arc(cx + dx, cy + dy, rInner, s.end, s.start, true);
-            } else {
-                ctx.lineTo(cx + dx, cy + dy);
-            }
-            ctx.closePath();
-
-            ctx.fillStyle = s.color;
-            ctx.fill();
-            ctx.strokeStyle = colors.band || "rgba(0,0,0,0.25)";
-            ctx.lineWidth = 1.5;
-            ctx.stroke();
-            ctx.restore();
-
-            this._hitSlices.push({
-                index: idx,
-                slice: s,
-                cx, cy,
-                R, rInner,
-                start: s.start,
-                end: s.start + s.span, // full span for hit testing
-                mid: s.mid,
-                pct: s.pct,
-                dx, dy
-            });
-        });
-
-        // Draw Donut Center KPI
-        if (isDonut && rInner >= 26) {
-            const statMode = (this.p && this.p.centerStat) || "total";
-            if (statMode !== "none") {
-                let statVal = "";
-                if (statMode === "total") statVal = this._fmtVal(total);
-                else if (statMode === "average") statVal = this._fmtVal(total / (slices.length || 1));
-                else if (statMode === "count") statVal = String(slices.length);
-                else if (statMode === "custom") statVal = String((this.p && this.p.centerValue) || "");
-
-                const statLabel = String((this.p && this.p.centerLabel) || "Total");
-
-                ctx.save();
-                ctx.textAlign = "center";
-                ctx.textBaseline = "middle";
-
-                // Number
-                const numFontSize = Math.min(24, Math.max(12, Math.round(rInner * 0.38)));
-                ctx.font = `600 ${numFontSize}px ${colors.font || "sans-serif"}`;
-                ctx.fillStyle = colors.strong;
-                ctx.fillText(statVal, cx, cy - (statLabel ? 6 : 0));
-
-                // Label
-                if (statLabel) {
-                    const lblFontSize = Math.min(11, Math.max(9, Math.round(rInner * 0.2)));
-                    ctx.font = `500 ${lblFontSize}px var(--nexa-fonts-body, sans-serif)`;
-                    ctx.fillStyle = colors.text;
-                    ctx.fillText(statLabel, cx, cy + numFontSize * 0.6);
-                }
-                ctx.restore();
-            }
-        }
-
-        // Draw Data Labels
-        if (labelsPos === "inside" || labelsPos === "outside") {
-            const minAngleDeg = numOr(this.p && this.p.minAngleForLabel, 10);
-            const minAngleRad = (minAngleDeg * Math.PI) / 180;
-            const contentMode = (this.p && this.p.labelContent) || "namePercent";
-
-            slices.forEach((s) => {
-                if (s.span < minAngleRad) return; // Smart anti-collision: hide label for tiny slices
-
-                let labelText = "";
-                const pctStr = (Math.round(s.pct * 10) / 10) + "%";
-                const valStr = this._fmtVal(s.value);
-                if (contentMode === "namePercent") labelText = `${s.name} ${pctStr}`;
-                else if (contentMode === "percent") labelText = pctStr;
-                else if (contentMode === "value") labelText = valStr;
-                else if (contentMode === "name") labelText = s.name;
-                else if (contentMode === "both") labelText = `${s.name}: ${valStr} (${pctStr})`;
-
-                if (!labelText) return;
-
-                if (labelsPos === "inside") {
-                    const rMid = (R + rInner) / 2;
-                    const lx = cx + Math.cos(s.mid) * rMid;
-                    const ly = cy + Math.sin(s.mid) * rMid;
-
-                    ctx.save();
-                    ctx.font = `600 11px ${colors.font || "sans-serif"}`;
-                    ctx.fillStyle = "#ffffff";
-                    ctx.textAlign = "center";
-                    ctx.textBaseline = "middle";
-                    ctx.shadowColor = "rgba(0,0,0,0.6)";
-                    ctx.shadowBlur = 3;
-                    ctx.fillText(labelText, lx, ly);
-                    ctx.restore();
-                } else if (labelsPos === "outside") {
-                    const p0x = cx + Math.cos(s.mid) * R;
-                    const p0y = cy + Math.sin(s.mid) * R;
-                    const p1x = cx + Math.cos(s.mid) * (R + 10);
-                    const p1y = cy + Math.sin(s.mid) * (R + 10);
-                    const isRight = Math.cos(s.mid) >= 0;
-                    const p2x = p1x + (isRight ? 12 : -12);
-                    const p2y = p1y;
-
-                    ctx.save();
-                    // Leader line
-                    ctx.beginPath();
-                    ctx.moveTo(p0x, p0y);
-                    ctx.lineTo(p1x, p1y);
-                    ctx.lineTo(p2x, p2y);
-                    ctx.strokeStyle = colors.text;
-                    ctx.lineWidth = 1;
-                    ctx.stroke();
-
-                    // Text
-                    ctx.font = `11px ${colors.font || "sans-serif"}`;
-                    ctx.fillStyle = colors.strong;
-                    ctx.textAlign = isRight ? "left" : "right";
-                    ctx.textBaseline = "middle";
-                    ctx.fillText(labelText, p2x + (isRight ? 4 : -4), p2y);
-                    ctx.restore();
-                }
-            });
-        }
-    }
-
-    _findHit(px, py) {
-        if (!this._hitSlices.length) return null;
-        const { w, h } = this._layoutSize();
-        const cx = w / 2, cy = h / 2;
-        const dx = px - cx, dy = py - cy;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-
-        const first = this._hitSlices[0];
-        if (dist < (first.rInner - 3) || dist > (first.R + 14)) return null;
-
-        let angle = Math.atan2(dy, dx);
-        // Normalize angle to match startAngle domain
-        const startDeg = numOr(this.p && this.p.startAngle, -90);
-        const startRad = (startDeg * Math.PI) / 180;
-        let norm = angle - startRad;
-        while (norm < 0) norm += Math.PI * 2;
-        while (norm >= Math.PI * 2) norm -= Math.PI * 2;
-        const target = startRad + norm;
-
-        return this._hitSlices.find((h) => {
-            let sStart = h.start;
-            let sEnd = h.end;
-            while (sStart < 0) { sStart += Math.PI * 2; sEnd += Math.PI * 2; }
-            let testAngle = target;
-            while (testAngle < sStart) testAngle += Math.PI * 2;
-            return testAngle >= sStart && testAngle <= sEnd;
-        }) || null;
-    }
-
-    _showTooltipFor(hit, px, py, plotRect) {
-        const tip = this.renderRoot?.querySelector(".tooltip");
-        if (!tip) return;
-        if (this.p.showTooltip === false || !hit) {
-            tip.style.display = "none";
-            return;
-        }
-
-        const s = hit.slice;
-        const timeHeader = tip.querySelector(".tooltip-time");
-        if (timeHeader) timeHeader.textContent = s.name;
-
-        const body = tip.querySelector(".tooltip-rows");
-        if (body) {
-            const valStr = this._fmtVal(s.value);
-            const pctStr = (Math.round(hit.pct * 10) / 10) + "%";
-            let htmlContent = `
-                <div class="tooltip-row">
-                    <span class="tooltip-dot" style="background:${s.color}"></span>
-                    <span class="tooltip-name">${s.name}:</span>
-                    <span class="tooltip-val">${valStr}</span>
-                    <span class="tooltip-pct">(${pctStr})</span>
-                </div>
-            `;
-
-            if (s.isOther && Array.isArray(s.subSlices) && s.subSlices.length) {
-                htmlContent += `<div class="tooltip-others"><span>Grouped items:</span>`;
-                s.subSlices.forEach((sub) => {
-                    const subPct = ((sub.value / this._totalValue) * 100).toFixed(1) + "%";
-                    htmlContent += `
-                        <div class="tooltip-other-row">
-                            <span>${sub.name}</span>
-                            <span>${this._fmtVal(sub.value)} (${subPct})</span>
-                        </div>
-                    `;
-                });
-                htmlContent += `</div>`;
-            }
-
-            body.innerHTML = htmlContent;
-        }
-
-        const flip = px > (plotRect ? plotRect.width - 200 : 200);
-        tip.style.display = "block";
-        tip.style.left = `${Math.round(flip ? px - 12 : px + 12)}px`;
-        tip.style.top = `${Math.round(py)}px`;
-        tip.style.transform = flip ? "translate(-100%, -50%)" : "translate(0, -50%)";
-    }
-
-    onPointerMove(e) {
-        const plot = this._plotEl();
-        if (!plot) return;
-        const rect = plot.getBoundingClientRect();
-        const px = e.clientX - rect.left;
-        const py = e.clientY - rect.top;
-
-        const hit = this._findHit(px, py);
-        if (hit) {
-            plot.classList.add("hovering");
-            if (this._hoverIndex !== hit.index) {
-                this._hoverIndex = hit.index;
-                this.draw();
-                const now = Date.now();
-                if (now - this._lastHoverEmit > 100) {
-                    this._lastHoverEmit = now;
-                    this.emit("hover", {
-                        id: hit.slice.id,
-                        name: hit.slice.name,
-                        value: hit.slice.value,
-                        percent: Math.round(hit.pct * 10) / 10,
-                        index: hit.index
-                    });
-                }
-            }
-            this._showTooltipFor(hit, px, py, rect);
-        } else {
-            plot.classList.remove("hovering");
-            if (this._hoverIndex !== null) {
-                this._hoverIndex = null;
-                this.draw();
-                this.emit("hoverEnd", {});
-            }
-            const tip = this.renderRoot?.querySelector(".tooltip");
-            if (tip) tip.style.display = "none";
-        }
-    }
-
-    onPointerLeave() {
-        const plot = this._plotEl();
-        if (plot) plot.classList.remove("hovering");
-        if (this._hoverIndex !== null) {
-            this._hoverIndex = null;
-            this.draw();
-            this.emit("hoverEnd", {});
-        }
-        const tip = this.renderRoot?.querySelector(".tooltip");
-        if (tip) tip.style.display = "none";
-    }
-
-    onPlotClick(e) {
-        const plot = this._plotEl();
-        if (!plot) return;
-        const rect = plot.getBoundingClientRect();
-        const px = e.clientX - rect.left;
-        const py = e.clientY - rect.top;
-
-        const hit = this._findHit(px, py);
-        if (hit) {
-            const payload = {
-                id: hit.slice.id,
-                name: hit.slice.name,
-                value: hit.slice.value,
-                percent: Math.round(hit.pct * 10) / 10,
-                index: hit.index,
-                isOther: !!hit.slice.isOther
-            };
-            this.emit("sliceClick", payload);
-            if (hit.slice.id) {
-                this.emitTarget({ list: "slices", id: hit.slice.id }, "click", payload);
-            }
-        }
-    }
-
-    _toggleSlice(slice, e) {
-        const key = slice._key;
-        if (e && e.altKey) {
-            // Solo this slice: hide all others
-            const all = this.sliceList();
-            this._hiddenSlices.clear();
-            all.forEach((s) => {
-                if (s._key !== key) this._hiddenSlices.add(s._key);
-            });
-        } else {
-            if (this._hiddenSlices.has(key)) {
-                this._hiddenSlices.delete(key);
-            } else {
-                this._hiddenSlices.add(key);
-            }
-        }
-        this.prepareData();
-        this.draw();
-        this.requestUpdate();
-        this.emit("legendToggle", { id: slice.id, name: slice.name, visible: !this._hiddenSlices.has(key) });
-    }
-
-    // ---- Logic Actions ---------------------------------------------------------------------
-    setChartData(data) {
-        if (!data) return;
-        let list = [];
-        if (Array.isArray(data)) {
-            list = data.map((item, idx) => {
-                if (Array.isArray(item)) {
-                    // [name, value]
-                    return { id: "s" + idx, name: String(item[0]), value: numOr(item[1], 0) };
-                }
-                if (item && typeof item === "object") {
-                    return {
-                        id: item.id || "s" + idx,
-                        name: String(item.name || item.label || item.category || "Slice " + (idx + 1)),
-                        value: numOr(item.value !== undefined ? item.value : (item.val !== undefined ? item.val : item.y), 0),
-                        color: item.color || ""
-                    };
-                }
-                if (typeof item === "number") {
-                    return { id: "s" + idx, name: "Slice " + (idx + 1), value: item };
-                }
-                return null;
-            }).filter(Boolean);
-        } else if (typeof data === "object") {
-            // Check if wrapper { payload: ... }
-            if (data.payload) {
-                return this.setChartData(data.payload);
-            }
-            // Key-value map: { "Running": 100, "Idle": 40 }
-            let i = 0;
-            for (const [k, v] of Object.entries(data)) {
-                list.push({ id: "s" + i, name: k, value: numOr(v, 0) });
-                i++;
-            }
-        }
-
-        const d = sliceDefaults();
-        this._dynamicSlices = list.map((s, idx) => {
-            const o = Object.assign({}, d, s);
-            o._i = idx;
-            o._key = String(o.id || "#" + idx);
-            return o;
-        });
-
-        this.prepareData();
-        if (this.resizeCanvas()) this.draw();
-        this.requestUpdate();
-    }
-
-    setSliceValue(params) {
-        if (!params || typeof params !== "object") return;
-        const targetId = String(params.id || params.name || "");
-        const val = numOr(params.value, 0);
-        const list = this.sliceList();
-        const s = list.find((x) => x.id === targetId || x.name === targetId || x._key === targetId);
-        if (s) {
-            s.value = val;
-            this.prepareData();
-            if (this.resizeCanvas()) this.draw();
-            this.requestUpdate();
-        }
-    }
-
-    clearAll() {
-        this._dynamicSlices = null;
-        if (Array.isArray(this.p && this.p.slices)) {
-            this.p.slices.forEach((s) => { s.value = 0; });
-        }
-        this._hiddenSlices.clear();
-        this.prepareData();
-        if (this.resizeCanvas()) this.draw();
-        this.requestUpdate();
-    }
-
-    exportData(format) {
-        const fmt = (format || "csv").toLowerCase();
-        const header = ["Name", "Value", "Percentage"];
-        const rows = this._preparedSlices.map((s) => [
-            s.name,
-            s.value,
-            (Math.round(s.pct * 10) / 10) + "%"
-        ]);
-
-        let blob;
-        if (fmt === "xlsx") {
-            blob = xlsxBlob(header, rows, false, { textCols: [0, 2] });
-        } else if (fmt === "png") {
-            if (this.canvas) {
-                this.canvas.toBlob((b) => {
-                    const name = this._getExportFileName("png", "all");
-                    this._download(b, name);
-                    this._lastExport = { name, blob: b, rows: rows.length };
-                });
-                return rows.length;
-            }
-        } else {
-            const q = (t) => '"' + String(t).replace(/"/g, '""') + '"';
-            const lines = [header.map(q).join(",")];
-            rows.forEach((r) => lines.push(r.map(q).join(",")));
-            blob = new Blob(["\ufeff" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
-        }
-
-        const name = this._getExportFileName(fmt, "all");
-        if (blob) {
-            this._download(blob, name);
-            this._lastExport = { name, blob, rows: rows.length };
-        }
-        return rows.length;
-    }
-
-    render() {
-        const all = this.sliceList();
-        const legendAt = (this.p && this.p.legend) || "bottom";
-        const legendList = all.filter((s) => s.inLegend !== false);
-        const showVal = this.p && this.p.legendShowValue !== false;
-        const showPct = this.p && this.p.legendShowPercent !== false;
-        const total = this._totalValue;
-
-        const legend = legendAt === "none" || !legendList.length ? "" : html`
-            <div class="legend" part="legend">
-                ${legendList.map((s, idx) => {
-                    const key = s._key || String(s.id || "#" + idx);
-                    const isOff = this._hiddenSlices.has(key) || s.visible === false;
-                    const pctStr = total > 0 ? ` (${((numOr(s.value, 0) / total) * 100).toFixed(1)}%)` : "";
-                    return html`
-                        <button type="button" class="lg-item ${isOff ? "off" : ""}" data-key="${key}"
-                            title="Click: toggle slice. Alt+click: solo this slice."
-                            @click=${(e) => this._toggleSlice(s, e)}>
-                            <span class="lg-swatch" style="background:${this.colorOf(s, idx)}"></span>
-                            <span class="lg-name">${s.name || "Slice " + (idx + 1)}</span>
-                            ${showVal ? html`<span class="lg-val">${this._fmtVal(s.value)}</span>` : ""}
-                            ${showPct ? html`<span class="lg-pct">${pctStr}</span>` : ""}
-                        </button>
-                    `;
-                })}
-            </div>
-        `;
-
-        const hasData = total > 0 && this._preparedSlices.length > 0;
-        const containerClasses = `chart-container ${legendAt === "right" ? "legend-right" : (legendAt === "top" ? "legend-top" : "")}`;
-
-        return html`
-            <div class="${containerClasses}" part="chart">
-                ${legendAt === "top" ? legend : ""}
-                <div class="plot"
-                    @pointermove=${(e) => this.onPointerMove(e)}
-                    @pointerleave=${() => this.onPointerLeave()}
-                    @click=${(e) => this.onPlotClick(e)}>
-                    <canvas></canvas>
-                    <div class="corner" style="right: 14px; top: 10px;">
-                        ${this._renderMenu()}
-                    </div>
-                    <div class="tooltip"><div class="tooltip-time"></div><div class="tooltip-rows"></div></div>
-                    ${!hasData ? html`<div class="empty"><span>${(this.p && this.p.emptyText) || "No data to display"}</span></div>` : ""}
-                </div>
-                ${legendAt !== "top" ? legend : ""}
-            </div>
-        `;
-    }
-}
-
-export const pieChart = defineUI({
-    ...common,
-    id: PREFIX + "pie-chart",
-    label: "Pie / Donut Chart",
+const TAU = Math.PI * 2;
+const all = readoutFields("slice");
+// a slice: a name, its value (live / Logic / a row), its number format, its colour or status
+const SLICE_FIELDS = {};
+["name", "id", "visible", "live", "reduceBy", "window", "maxPoints", "staleAfter", "unit", "notation", "decimals", "color"].forEach((k) => { SLICE_FIELDS[k] = all[k]; });
+SLICE_FIELDS.status = { type: "enum", section: "Colour", label: "Or a status colour", default: "", options: opt([["", "None (the colour above / the palette)"]].concat(STATUSES.filter((s) => s[0] !== "custom"))), help: "Running green, Stopped red: the theme's status colours." };
+const PIE_STATS = [["value", "Value", "Value"], ["percent", "% of the whole", "%"]];
+
+const slicesProp = itemsProp({ group: "Slices", label: "Slices", noun: "slice", prefix: "s", fields: SLICE_FIELDS, click: "click",
+    help: "Each slice its own Update node, live value and events; or leave them out and give Rows. A slice whose name (or Id) is a row's name styles that row (its colour, its status)." });
+slicesProp.default = ["Running", "Idle", "Stopped", "Setup"].map((n, i) => Object.assign(itemDefaults(SLICE_FIELDS), { id: "s" + (i + 1), name: n }));
+
+export const pie = defineUI({
+    ...chartCommon,
+    id: PREFIX + "pie",
+    label: "Pie / Donut",
     icon: "fa fa-pie-chart",
-    size: { w: 480, h: 320 },
-    help: "Pie and Donut chart for categorical proportions with smart anti-collision labels, automatic 'Others' small-slice grouping, center KPI metric, interactive slice click events for HMI drilldowns, and full export.",
+    size: { w: 420, h: 280 },
+    help: "Parts of a whole: from the top clockwise, the largest first, the small ones as Others (a click opens it), a label for every slice (outside on a leader when it does not fit), a donut's centre for the total. Slices from Logic or rows from a query; several pies side by side.",
     version: 1,
 
-    groups: ["Chart", "Center KPI", "Others Grouping", "Labels", "Legend", "Slices", "Value & Unit", "Tooltip", "Export", "Style", "Behaviour"],
+    groups: ["Slices", "Data", "Order", "Shape", "Labels", "Centre", "Legend", "Colour", "General", "Export"],
 
     properties: {
-        mode: {
-            type: "enum", group: "Chart", label: "Type / Mode", default: "donut",
-            options: opt([["donut", "Donut (hollow center)"], ["pie", "Pie (solid)"]]),
-            help: "Donut shows a center cutout for KPI metrics. Pie is a classic solid circle."
-        },
-        innerRadius: {
-            type: "number", group: "Chart", label: "Donut inner radius", default: 0.6,
-            min: 0.1, max: 0.9, step: 0.05, unit: "ratio",
-            visibleWhen: (p) => (p.mode || "donut") === "donut",
-            help: "Ratio of inner hole relative to outer radius (0.6 = 60%)."
-        },
-        padAngle: {
-            type: "number", group: "Chart", label: "Slice gap (pad angle)", default: 1.5,
-            min: 0, max: 10, step: 0.5, unit: "°",
-            help: "Subtle gap between slices for visual separation."
-        },
-        startAngle: {
-            type: "number", group: "Chart", label: "Start angle", default: -90,
-            min: -360, max: 360, step: 15, unit: "°",
-            help: "Start angle in degrees (-90° starts at top / 12 o'clock)."
-        },
-        sort: {
-            type: "enum", group: "Chart", label: "Sort slices", default: "descending",
-            options: opt([["descending", "Descending (largest first)"], ["ascending", "Ascending (smallest first)"], ["none", "As defined (no sort)"]]),
-            help: "Sorting largest slices first improves visual comprehension."
-        },
+        slices: slicesProp,
 
-        // ---- Center KPI (Donut) ----
-        centerStat: {
-            type: "enum", group: "Center KPI", label: "Center statistic", default: "total",
-            options: opt([["total", "Total Sum (∑)"], ["average", "Average (mean)"], ["count", "Count of slices"], ["custom", "Custom value"], ["none", "None (blank)"]]),
-            visibleWhen: (p) => (p.mode || "donut") === "donut"
-        },
-        centerLabel: {
-            type: "string", group: "Center KPI", label: "Center subtitle label", default: "Total",
-            visibleWhen: (p) => (p.mode || "donut") === "donut" && p.centerStat !== "none"
-        },
-        centerValue: {
-            type: "string", group: "Center KPI", label: "Custom center text", default: "",
-            visibleWhen: (p) => (p.mode || "donut") === "donut" && p.centerStat === "custom"
-        },
+        rows: { type: "json", group: "Data", label: "Rows", default: [], help: "An array of objects from a query or a variable: [{ \"reason\": \"Jam\", \"minutes\": 42 }]. Logic's Set rows does the same." },
+        nameField: { type: "string", group: "Data", label: "Name field", default: "name", bindable: false },
+        valueField: { type: "string", group: "Data", label: "Value field", default: "value", bindable: false },
+        groupField: { type: "string", group: "Data", label: "A pie per (field)", default: "", bindable: false, help: "Several pies side by side, one per value of this field (the downtime of each machine)." },
+        aggregate: { type: "enum", group: "Data", label: "Rows with the same name", default: "sum", options: opt([["sum", "Add up"], ["avg", "Average"], ["max", "Maximum"], ["last", "The last"], ["count", "Count"]]) },
 
-        // ---- "Others" Grouping ----
-        groupThresholdPercent: {
-            type: "number", group: "Others Grouping", label: "Threshold percentage", default: 0,
-            min: 0, max: 25, step: 0.5, unit: "%",
-            help: "Automatically bundles slices smaller than this percentage into an 'Others' category (0 = disabled)."
-        },
-        maxSlices: {
-            type: "number", group: "Others Grouping", label: "Max top slices", default: 0,
-            min: 0, max: 30, step: 1,
-            help: "Keeps top N slices and groups remaining slices into 'Others' (0 = unlimited)."
-        },
-        othersLabel: {
-            type: "string", group: "Others Grouping", label: "Others slice label", default: "Others",
-            visibleWhen: (p) => (p.groupThresholdPercent > 0 || p.maxSlices > 0)
-        },
-        othersColor: {
-            type: "color", group: "Others Grouping", label: "Others slice colour", default: "#64748b",
-            visibleWhen: (p) => (p.groupThresholdPercent > 0 || p.maxSlices > 0)
-        },
+        sort: { type: "enum", group: "Order", label: "Order", default: "desc", options: opt([["desc", "Largest first (recommended)"], ["asc", "Smallest first"], ["none", "As they come"]]) },
+        startAngle: { type: "number", group: "Order", label: "Start at", default: 0, min: -180, max: 360, step: 5, unit: "°", help: "0 = 12 o'clock (recommended); clockwise." },
+        topN: { type: "number", group: "Order", label: "Slices shown (the rest: Others)", default: 6, min: 0, max: 100, step: 1, help: "0 = every slice. 5 – 7 read well." },
+        othersBelow: { type: "number", group: "Order", label: "Also into Others: below", default: 0, min: 0, max: 50, step: 0.5, unit: "%", help: "A slice smaller than this share joins Others too. 0 = none." },
+        othersName: { type: "string", group: "Order", label: "Its name", default: "Others" },
+        othersColor: { type: "color", group: "Order", label: "Its colour", default: "", tokens: "colors", help: "Empty: the theme's neutral grey." },
+        othersOpen: { type: "boolean", group: "Order", label: "A click on Others shows what is in it", default: true },
 
-        // ---- Labels & Anti-Collision ----
-        labelsPosition: {
-            type: "enum", group: "Labels", label: "Data labels", default: "outside",
-            options: opt([["outside", "Outside (leader lines)"], ["inside", "Inside slices"], ["legend", "Legend only"], ["none", "Hidden"]]),
-            help: "Where to render numeric / name labels."
-        },
-        labelContent: {
-            type: "enum", group: "Labels", label: "Label content", default: "namePercent",
-            options: opt([["namePercent", "Name & Percent (e.g. Running 45%)"], ["percent", "Percent only (45%)"], ["value", "Value only (150)"], ["name", "Name only"], ["both", "Name, Value & %"]]),
-            visibleWhen: (p) => p.labelsPosition === "outside" || p.labelsPosition === "inside"
-        },
-        minAngleForLabel: {
-            type: "number", group: "Labels", label: "Min slice angle for label", default: 10,
-            min: 0, max: 45, step: 1, unit: "°",
-            visibleWhen: (p) => p.labelsPosition === "outside" || p.labelsPosition === "inside",
-            help: "Prevents text collision: slices smaller than this angle will not draw crowded canvas labels."
-        },
+        kind: { type: "enum", group: "Shape", label: "Shape", default: "donut", options: opt([["donut", "Donut"], ["pie", "Pie"]]) },
+        ringWidth: { type: "number", group: "Shape", label: "Ring width", default: 34, min: 8, max: 90, unit: "% of the radius", visibleWhen: (p) => p.kind !== "pie" },
+        half: { type: "boolean", group: "Shape", label: "A half (180°, opening down)", default: false },
+        padAngle: { type: "number", group: "Shape", label: "Space between slices", default: 1, min: 0, max: 10, step: 0.5, unit: "°" },
+        radius: { type: "number", group: "Shape", label: "Corner radius", default: 2, min: 0, max: 20, unit: "px" },
+        hoverLift: { type: "boolean", group: "Shape", label: "A hovered slice moves out a little", default: true },
+        columns: { type: "number", group: "Shape", label: "Pies side by side: columns", default: 0, min: 0, max: 12, step: 1, help: "0 = as many as fit.", visibleWhen: (p) => !!p.groupField },
 
-        // ---- Legend ----
-        legend: {
-            type: "enum", group: "Legend", label: "Legend position", default: "bottom",
-            options: opt([["bottom", "Bottom"], ["right", "Right side"], ["top", "Top"], ["none", "Hidden"]])
+        labelShow: {
+            type: "enum", group: "Labels", label: "A label shows", default: "name-percent",
+            options: opt([["name-percent", "The name and the %"], ["percent", "The %"], ["value", "The value"], ["percent-value", "The % and the value"], ["name", "The name"], ["all", "The name, the % and the value"], ["none", "Nothing"]])
         },
-        legendShowValue: {
-            type: "boolean", group: "Legend", label: "Show numeric value in legend", default: true,
-            visibleWhen: (p) => p.legend !== "none"
-        },
-        legendShowPercent: {
-            type: "boolean", group: "Legend", label: "Show percentage (%) in legend", default: true,
-            visibleWhen: (p) => p.legend !== "none"
-        },
+        labelPlace: { type: "enum", group: "Labels", label: "Where", default: "auto", options: opt([["auto", "Inside when it fits, else outside on a line"], ["outside", "Outside on a line"], ["inside", "Inside (only where it fits)"]]) },
+        labelSize: { type: "number", group: "Labels", label: "Size", default: 11, min: 7, max: 24, unit: "px" },
+        percentDecimals: { type: "enum", group: "Labels", label: "% decimals", default: "1", options: opt([["0", "0"], ["1", "1"], ["2", "2"]]) },
 
-        // ---- Slices list ----
-        slices: {
-            type: "list", group: "Slices", label: "Configured slices", noun: "slice",
-            help: "Predefined slices. Can also be populated dynamically via setChartData or tag binding.",
-            default: [
-                { id: "s1", name: "Category A", value: 45, color: "#3b82f6", visible: true, inLegend: true },
-                { id: "s2", name: "Category B", value: 30, color: "#10b981", visible: true, inLegend: true },
-                { id: "s3", name: "Category C", value: 25, color: "#f59e0b", visible: true, inLegend: true }
-            ],
-            item: {
-                noun: "slice",
-                target: true,
-                fields: SLICE_FIELDS
-            }
-        },
+        center: { type: "enum", group: "Centre", label: "The donut's centre", default: "total", options: opt([["total", "The total"], ["slice", "A slice (its %)"], ["text", "A text"], ["none", "Nothing"]]), visibleWhen: (p) => p.kind !== "pie" },
+        centerSlice: { type: "string", group: "Centre", label: "The slice (name or Id)", default: "", bindable: false, visibleWhen: (p) => p.kind !== "pie" && p.center === "slice" },
+        centerText: { type: "string", group: "Centre", label: "The text", default: "", visibleWhen: (p) => p.kind !== "pie" && p.center === "text" },
+        centerLabel: { type: "string", group: "Centre", label: "A line under it", default: "Total", visibleWhen: (p) => p.kind !== "pie" && p.center !== "none" },
+        centerHover: { type: "boolean", group: "Centre", label: "The slice under the pointer while hovered", default: true, visibleWhen: (p) => p.kind !== "pie" },
+        unit: { type: "string", group: "Centre", label: "Unit (rows)", default: "", help: "The values' unit when they come from rows (a slice has its own)." },
 
-        // ---- Value & Unit ----
-        valueUnit: { type: "string", group: "Value & Unit", label: "Unit", default: "", help: "Unit displayed alongside numbers (e.g. kW, %, pcs)." },
-        notation: { type: "enum", group: "Value & Unit", label: "Notation", default: "standard", options: opt(NOTATIONS) },
-        decimals: { type: "enum", group: "Value & Unit", label: "Decimals", default: "auto", options: opt(DECIMALS) },
+        ...legendProps({ at: "right", value: "percent", stats: PIE_STATS, what: "slice" }),
 
-        // ---- Tooltip & Empty ----
-        showTooltip: { type: "boolean", group: "Tooltip", label: "Show tooltip", default: true },
-        emptyText: { type: "string", group: "Chart", label: "Empty text", default: "No data to display" },
+        tooltip: { type: "boolean", group: "Colour", label: "Tooltip", default: true },
 
-        // ---- Export ----
-        exportButton: { type: "boolean", group: "Export", label: "Export menu on the chart (⋮)", default: true },
-        exportCsv: { type: "boolean", group: "Export", label: "Menu: CSV", default: true, visibleWhen: (p) => p.exportButton !== false },
-        exportXlsx: { type: "boolean", group: "Export", label: "Menu: Excel", default: true, visibleWhen: (p) => p.exportButton !== false },
-        exportPng: { type: "boolean", group: "Export", label: "Menu: PNG", default: true, visibleWhen: (p) => p.exportButton !== false },
-        exportTitle: { type: "string", group: "Export", label: "Title", default: "", help: "Title in export files; {title} in filename." },
-        exportFilename: { type: "string", group: "Export", label: "File name expression", default: "", bindable: false }
+        background: { type: "color", group: "General", label: "Background", default: "", tokens: "colors", help: "Empty: the theme's panel." },
+        border: { type: "boolean", group: "General", label: "Border", default: true },
+        title: { type: "string", group: "General", label: "Title", default: "" },
+        ...exportProps({ thresholds: false })
     },
 
-    actions: {
-        setChartData: {
-            label: "Set chart data (bulk)",
-            help: "Sets slices dynamically from array of objects, array of [name, value] tuples, or key-value object.",
-            example: "[\n  { \"name\": \"Running\", \"value\": 45 },\n  { \"name\": \"Idle\", \"value\": 30 },\n  { \"name\": \"Fault\", \"value\": 15 }\n]"
-        },
-        setSliceValue: {
-            label: "Set slice value",
-            help: "Updates a single slice value by id or name.",
-            example: "{\n  \"id\": \"s1\",\n  \"value\": 120\n}"
-        },
-        clearAll: { label: "Clear all", help: "Clears all slice data." },
-        exportData: {
-            label: "Export",
-            help: "Downloads data in CSV, Excel (.xlsx) or PNG format.",
-            example: "{\n  \"format\": \"csv\"\n}"
-        }
-    },
+    parts: { chart: part("Chart container", "chart"), legend: part("Legend", "legend") },
 
     events: {
-        sliceClick: {
-            label: "On Slice Click",
-            payload: { id: "string", name: "string", value: "number", percent: "number", index: "number", isOther: "boolean" },
-            help: "Fired when user clicks any slice or legend item. Ideal for HMI drilldowns and filters."
-        },
-        hover: {
-            label: "On Hover",
-            payload: { id: "string", name: "string", value: "number", percent: "number", index: "number" },
-            help: "Fired when pointer hovers over a slice."
-        },
-        hoverEnd: { label: "On Hover End", help: "Fired when pointer leaves the slice." },
-        legendToggle: {
-            label: "On Legend Toggle",
-            payload: { id: "string", name: "string", visible: "boolean" },
-            help: "Fired when a slice is shown or hidden via legend."
-        }
+        sliceClick: { label: "On Slice Click", payload: { name: "string", value: "number", percent: "number", group: "string", id: "string" }, help: "A click on any slice (a listed one also fires its own On Click): drill down to that reason, that area." },
+        sliceToggle: { label: "On Slice Toggle", payload: { name: "string", visible: "boolean" }, help: "The viewer hid / showed a slice in the legend." }
+    },
+    actions: {
+        setRows: { label: "Set rows", help: "Replaces the rows: [{ name, value }] (the Data fields map them).", example: "[{ \"name\": \"Jam\", \"value\": 42 }, { \"name\": \"Setup\", \"value\": 18 }]" },
+        clearAll: { label: "Clear every slice" },
+        exportData: { label: "Export (download)", params: { format: "string" }, example: "{ \"format\": \"xlsx\" }  (csv | xlsx | png)" }
     },
 
-    view: PieChartElement
+    view: class extends ReadoutElement {
+        static styles = [...ReadoutElement.styles, css`
+            .pie-wrap { position: relative; display: flex; flex-direction: column; width: 100%; height: 100%; box-sizing: border-box; overflow: hidden;
+                border-radius: var(--r, 4px); background: var(--panel, #181b1f); border: 1px solid var(--bd, #2c3235); }
+            .pie-wrap.borderless { border-color: transparent; }
+            .pie-head { flex: 0 0 auto; padding: 10px 14px 0; font-size: 14px; font-weight: 600; color: var(--fg); }
+            .pie-wrap .plot { cursor: default; }
+            .pie-wrap .plot.over-item { cursor: pointer; }
+            .back-chip { position: absolute; right: 34px; top: 6px; z-index: 5; }
+            .pie-tip { position: absolute; pointer-events: none; z-index: 6; display: none; padding: 6px 9px; border-radius: 4px; background: var(--panel, #181b1f); border: 1px solid var(--bd, #2c3235);
+                color: var(--fg, #fff); font: 12px/1.4 var(--nexa-fonts-body, sans-serif); box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25); white-space: nowrap; }
+            .pie-tip b { font-weight: 600; }
+        `];
+
+        _rowsData = null;       // rows from Set rows (else the Rows prop)
+        _hiddenSlices = new Set();
+        _hover = null;          // { pie, key }
+        _open = null;           // a pie's Others opened: its group
+        _pies = [];             // drawn: [{ group, cx, cy, r, ri, slices: [{ key, a0, a1, … }] }]
+
+        get itemsKey() { return "slices"; }
+        get itemFields() { return SLICE_FIELDS; }
+        get clickEvent() { return "click"; }
+
+        setRows(params) { const r = Array.isArray(params) ? params : params && Array.isArray(params.rows) ? params.rows : null; if (r) { this._rowsData = r; this.scheduleDraw(); this.requestUpdate(); } }
+        clearAll() { super.clearAll(); this._rowsData = []; this.scheduleDraw(); this.requestUpdate(); }
+
+        _rows() { const r = this._rowsData || this.p.rows; return Array.isArray(r) ? r : []; }
+        _hasData() { return super._hasData() || this._rows().length > 0; }
+
+        // the item a name styles (by Id or name)
+        _itemFor(name) { return this.itemList().find((t) => t.id === name || t.name === name) || null; }
+
+        // the pies: [{ group, slices: [{ key, name, value, t }] }], from the rows (grouped) or else the slices' values
+        _groups() {
+            const rows = this._rows(), p = this.p;
+            if (rows.length) {
+                const nf = p.nameField || "name", vf = p.valueField || "value", gf = p.groupField || "", how = p.aggregate || "sum";
+                const groups = new Map();
+                for (const r of rows) {
+                    if (!r || typeof r !== "object") continue;
+                    const g = gf ? String(r[gf] === undefined || r[gf] === null ? "" : r[gf]) : "", n = String(r[nf] === undefined || r[nf] === null ? "" : r[nf]), v = Number(r[vf]);
+                    if (!n || (how !== "count" && !Number.isFinite(v))) continue;
+                    if (!groups.has(g)) groups.set(g, new Map());
+                    const m = groups.get(g), e = m.get(n) || { sum: 0, n: 0, max: -Infinity, last: NaN };
+                    if (Number.isFinite(v)) { e.sum += v; e.max = Math.max(e.max, v); e.last = v; }
+                    e.n++;
+                    m.set(n, e);
+                }
+                return Array.from(groups.entries()).map(([group, m]) => ({ group, slices: Array.from(m.entries()).map(([name, e]) => {
+                    const t = this._itemFor(name);
+                    return { key: name, name: t && t.name ? t.name : name, value: how === "avg" ? e.sum / e.n : how === "max" ? e.max : how === "last" ? e.last : how === "count" ? e.n : e.sum, t };
+                }) }));
+            }
+            const slices = this.itemList().filter((t) => t.visible !== false).map((t) => ({ key: t._key, name: t.name || t.id, value: this._figure(t, this._state(t)).v, t }));
+            return [{ group: "", slices }];
+        }
+
+        // a slice's colour: its own (hex / token), its status, else the palette by its place in the list (a listed slice keeps its own place)
+        _sliceColor(s, i) {
+            if (s.others) return this._tok(this.p.othersColor) || this.statusColor("neutral");
+            const t = s.t;
+            if (t && this._tok(t.color)) return this._tok(t.color);
+            if (t && t.status) return this.statusColor(t.status);
+            return this.seriesColor(t ? t._i : i);
+        }
+
+        // what a pie shows: positive values, sorted, the top N and below a % folded into Others (last); hidden ones out
+        _plan(group) {
+            const p = this.p;
+            let list = group.slices.filter((s) => Number.isFinite(s.value) && s.value > 0 && !this._hiddenSlices.has(s.key));
+            const order = new Map(group.slices.map((s, i) => [s.key, i]));
+            if (p.sort === "desc") list.sort((a, b) => b.value - a.value);
+            else if (p.sort === "asc") list.sort((a, b) => a.value - b.value);
+            const total = list.reduce((a, s) => a + s.value, 0);
+            if (this._open !== group.group) {
+                const N = Math.floor(numOr(p.topN, 6)), below = numOr(p.othersBelow, 0) / 100;
+                const keep = [], rest = [];
+                // the largest N stay (in the order chosen); a share below the limit joins Others
+                const big = new Set(list.slice().sort((a, b) => b.value - a.value).slice(0, N > 0 ? N : list.length).map((s) => s.key));
+                list.forEach((s) => ((big.has(s.key) && !(below > 0 && total > 0 && s.value / total < below)) ? keep : rest).push(s));
+                if (rest.length > 1 || (rest.length === 1 && N > 0 && list.length > N)) list = keep.concat([{ key: "\u0000others", name: p.othersName || "Others", value: rest.reduce((a, s) => a + s.value, 0), others: rest }]);
+                else list = keep.concat(rest);
+            }
+            list.forEach((s) => { s.color = this._sliceColor(s, order.has(s.key) ? order.get(s.key) : 0); s.percent = total > 0 ? s.value / total : 0; });
+            return { list, total };
+        }
+
+        _fmtValue(s) { const t = s.t; return formatValue(s.value, t ? this._spec(t) : {}, (t && t.unit) || this.p.unit || ""); }
+        _fmtPct(x) { return formatValue(x * 100, { decimals: this.p.percentDecimals || "1" }, "") + " %"; }
+
+        // a slice's label (as Labels › A label shows)
+        _labelOf(s) {
+            const how = this.p.labelShow || "name-percent", pc = this._fmtPct(s.percent), v = this._fmtValue(s);
+            return how === "none" ? "" : how === "name" ? s.name : how === "percent" ? pc : how === "value" ? v : how === "percent-value" ? pc + " · " + v : how === "all" ? s.name + " · " + pc + " · " + v : s.name + " " + pc;
+        }
+
+        _drawInto(ctx, w, h) {
+            this._fresh(ctx, w, h);
+            const groups = this._groups().filter((g) => g.slices.length);
+            this._pies = [];
+            this._rects = [];
+            if (!groups.length) return;
+            const boxes = this._grid(groups.length, w, h, this.p.columns, 12, 200);
+            groups.forEach((g, i) => this._drawPie(ctx, g, boxes[i]));
+            if (!this._exporting) {
+                const first = this._pies[0];
+                fillLegend(this.renderRoot, (key, k) => {
+                    const list = first ? first.plan.list : [], inOthers = list.filter((x) => x.others).reduce((a, x) => a.concat(x.others), []);
+                    const s = list.find((x) => x.key === key) || inOthers.find((x) => x.key === key);
+                    if (s && !Number.isFinite(s.percent)) s.percent = first.plan.total > 0 ? s.value / first.plan.total : 0;
+                    return !s ? "" : k === "percent" ? this._fmtPct(s.percent) : this._fmtValue(s);
+                });
+            }
+        }
+
+        _drawPie(ctx, g, b) {
+            const p = this.p, c = this._colors(), font = c.font, plan = this._plan(g), list = plan.list;
+            const ls = numOr(p.labelSize, 11), lineH = ls + 4, multi = !!(p.groupField && this._rows().length);
+            const titleH = multi ? ls + 8 : 0;
+            if (multi) { ctx.font = "600 " + (ls + 1) + "px " + font; ctx.fillStyle = c.strong; ctx.textAlign = "center"; ctx.textBaseline = "top"; ctx.fillText(this._fit(ctx, g.group || "—", b.w), b.x + b.w / 2, b.y + 2); }
+            if (!list.length || !(plan.total > 0)) return;
+            // the labels first: the widest outside label sets the room around the pie
+            ctx.font = "500 " + ls + "px " + font;
+            const labels = list.map((s) => this._labelOf(s)), place = p.labelPlace || "auto";
+            const half = !!p.half, start = (numOr(p.startAngle, 0) - 90) * Math.PI / 180, sweep = half ? Math.PI : TAU;
+            const a0 = half ? Math.PI : start;
+            const outW = place === "inside" || p.labelShow === "none" ? 0 : Math.min(b.w * 0.32, Math.max(0, ...labels.map((l) => ctx.measureText(l).width)) + 22);
+            const availW = b.w - outW * 2 - 8, availH = (b.h - titleH - (outW ? lineH * 2 : 8)) / (half ? 1 : 2);
+            const r = Math.max(10, Math.min(availW / 2, half ? availH : availH));
+            const cx = b.x + b.w / 2, cy = half ? b.y + titleH + (b.h - titleH) / 2 + r / 2 : b.y + titleH + (b.h - titleH) / 2;
+            const donut = p.kind !== "pie", ri = donut ? r * (1 - Math.max(0.08, Math.min(0.9, numOr(p.ringWidth, 34) / 100))) : 0;
+            const pad = (numOr(p.padAngle, 1) * Math.PI) / 180, rad = numOr(p.radius, 2);
+            const pie = { group: g.group, cx, cy, r, ri, plan, slices: [] };
+            this._pies.push(pie);
+            // the slices
+            let a = a0;
+            list.forEach((s, i) => {
+                const span = s.percent * sweep, s0 = a, s1 = a + span;
+                a = s1;
+                const hov = this._hover && this._hover.pie === g.group && this._hover.key === s.key;
+                const lift = hov && p.hoverLift !== false ? Math.min(8, r * 0.05) : 0, mid = (s0 + s1) / 2;
+                const ox = Math.cos(mid) * lift, oy = Math.sin(mid) * lift;
+                const p0 = s0 + Math.min(pad / 2, span / 4), p1 = s1 - Math.min(pad / 2, span / 4);
+                ctx.save();
+                ctx.fillStyle = s.color;
+                if (this._hover && !hov) ctx.globalAlpha = 0.75;
+                this._sector(ctx, cx + ox, cy + oy, r, ri, p0, Math.max(p0 + 0.002, p1), rad);
+                ctx.fill();
+                ctx.restore();
+                pie.slices.push({ key: s.key, s, a0: s0, a1: s1 });
+            });
+            // the labels: inside where they fit; else outside on a leader, each side moved apart
+            if (p.labelShow !== "none") {
+                const outside = [];
+                ctx.font = "500 " + ls + "px " + font;
+                pie.slices.forEach((q, i) => {
+                    const text = labels[i];
+                    if (!text) return;
+                    const mid = (q.a0 + q.a1) / 2, rm = donut ? (r + ri) / 2 : r * 0.62, arc = (q.a1 - q.a0) * rm, tw = ctx.measureText(text).width;
+                    const band = donut ? r - ri : r * 0.55;
+                    const fits = arc > tw + 6 && band > ls + 4 && tw + 6 < band * 1.9 * Math.max(0.55, Math.abs(Math.sin(mid)) + (donut ? 0 : 0.6));
+                    if (place === "inside" ? fits : place === "auto" && fits) {
+                        ctx.fillStyle = this._onColor(q.s.color); ctx.textAlign = "center"; ctx.textBaseline = "middle";
+                        ctx.fillText(text, cx + Math.cos(mid) * rm, cy + Math.sin(mid) * rm);
+                    } else if (place !== "inside") outside.push({ q, text, mid, side: Math.cos(mid) >= 0 ? 1 : -1, y: cy + Math.sin(mid) * (r + 12) });
+                });
+                [1, -1].forEach((side) => {
+                    const mine = outside.filter((o) => o.side === side).sort((x, y) => x.y - y.y);
+                    // apart: each at least a line under the one before, then the column moved up when it runs past the box
+                    const top = b.y + titleH + lineH / 2 + 2;
+                    let prev = top - lineH;
+                    mine.forEach((o) => { o.ly = Math.max(o.y, prev + lineH); prev = o.ly; });
+                    const bottom = b.y + b.h - lineH / 2;
+                    let over = prev - bottom;
+                    for (let k = mine.length - 1; k >= 0 && over > 0; k--) { mine[k].ly = Math.max(top, mine[k].ly - over); over = k > 0 ? mine[k - 1].ly + lineH - mine[k].ly : 0; }
+                    mine.forEach((o) => {
+                        const ax = cx + Math.cos(o.mid) * (r + 2), ay = cy + Math.sin(o.mid) * (r + 2), ex = cx + side * (r + 12), lx = cx + side * (r + 16);
+                        ctx.strokeStyle = this.hexToRgba(o.q.s.color, 0.9); ctx.lineWidth = 1;
+                        ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(ex, o.ly); ctx.lineTo(lx, o.ly); ctx.stroke();
+                        ctx.fillStyle = c.strong; ctx.textAlign = side > 0 ? "left" : "right"; ctx.textBaseline = "middle";
+                        ctx.fillText(this._fit(ctx, o.text, outW - 20), lx + side * 3, o.ly);
+                    });
+                });
+            }
+            // the donut's centre: the total, a slice, a text; the hovered slice while hovered
+            if (donut && p.center !== "none" && ri > 20) {
+                let big = "", small = "";
+                const hov = p.centerHover !== false && this._hover && this._hover.pie === g.group ? list.find((s) => s.key === this._hover.key) : null;
+                if (hov) { big = this._fmtPct(hov.percent); small = hov.name + " · " + this._fmtValue(hov); }
+                else if (p.center === "slice") { const s = list.find((x) => x.key === p.centerSlice || x.name === p.centerSlice) || list[0]; big = this._fmtPct(s.percent); small = p.centerLabel || s.name; }
+                else if (p.center === "text") { big = p.centerText || ""; small = p.centerLabel || ""; }
+                else { const t0 = list.find((s) => s.t) ; big = formatValue(plan.total, t0 && t0.t ? this._spec(t0.t) : {}, (t0 && t0.t && t0.t.unit) || p.unit || ""); small = p.centerLabel || ""; }
+                const boxW = ri * 1.6, size = this._fitSize(ctx, big, boxW, ri * (small ? 0.55 : 0.8), "600", font, 9, 64);
+                const cyy = half ? cy - size * 0.6 : cy - (small ? size * 0.25 : 0);
+                ctx.textAlign = "center"; ctx.textBaseline = "middle";
+                ctx.font = "600 " + size + "px " + font; ctx.fillStyle = c.strong; ctx.fillText(big, cx, cyy);
+                if (small) { ctx.font = "500 " + Math.max(9, Math.round(size * 0.36)) + "px " + font; ctx.fillStyle = c.text; ctx.fillText(this._fit(ctx, small, boxW), cx, cyy + size * 0.62); }
+            }
+            this._rects.push({ t: null, x: b.x, y: b.y, w: b.w, h: b.h, pie });
+        }
+
+        // a ring sector (a pie slice when ri = 0), the outer corners rounded a little
+        _sector(ctx, cx, cy, r, ri, a0, a1, rad) {
+            ctx.beginPath();
+            const cr = Math.min(rad, (a1 - a0) * r / 3, (r - ri) / 3);
+            if (cr > 0.5 && ctx.arcTo) {
+                ctx.moveTo(cx + Math.cos(a0) * (ri || 0), cy + Math.sin(a0) * (ri || 0));
+                const o0x = cx + Math.cos(a0) * r, o0y = cy + Math.sin(a0) * r;
+                const aIn = a0 + cr / r, aOut = a1 - cr / r;
+                ctx.lineTo(cx + Math.cos(a0) * (r - cr), cy + Math.sin(a0) * (r - cr));
+                ctx.arcTo(o0x, o0y, cx + Math.cos(aIn) * r, cy + Math.sin(aIn) * r, cr);
+                ctx.arc(cx, cy, r, aIn, Math.max(aIn, aOut));
+                const o1x = cx + Math.cos(a1) * r, o1y = cy + Math.sin(a1) * r;
+                ctx.arcTo(o1x, o1y, cx + Math.cos(a1) * (r - cr), cy + Math.sin(a1) * (r - cr), cr);
+            } else {
+                ctx.moveTo(cx + Math.cos(a0) * (ri || 0), cy + Math.sin(a0) * (ri || 0));
+                ctx.arc(cx, cy, r, a0, a1);
+            }
+            if (ri > 0) ctx.arc(cx, cy, ri, a1, a0, true); else ctx.lineTo(cx, cy);
+            ctx.closePath();
+        }
+
+        // the slice under a point: { pie, slice }
+        _sliceAt(e) {
+            const plot = this._plotEl();
+            if (!plot) return null;
+            const rr = plot.getBoundingClientRect(), k = rr.width / (plot.clientWidth || 1) || 1;
+            const x = (e.clientX - rr.left) / k, y = (e.clientY - rr.top) / k;
+            for (const pie of this._pies) {
+                const dx = x - pie.cx, dy = y - pie.cy, d = Math.hypot(dx, dy);
+                if (d > pie.r + 6 || d < pie.ri - 2) continue;
+                let a = Math.atan2(dy, dx);
+                for (const q of pie.slices) { let t = a; while (t < q.a0) t += TAU; while (t > q.a0 + TAU) t -= TAU; if (t >= q.a0 && t <= q.a1) return { pie, q }; }
+            }
+            return null;
+        }
+
+        _move(e) {
+            const hit = this._sliceAt(e), plot = this._plotEl(), key = hit ? hit.pie.group + "\u0001" + hit.q.key : "";
+            if (plot) plot.classList.toggle("over-item", !!hit && !this.isEditor);
+            if (key !== (this._hover ? this._hover.pie + "\u0001" + this._hover.key : "")) { this._hover = hit ? { pie: hit.pie.group, key: hit.q.key } : null; this.draw(); }
+            const tip = this.renderRoot.querySelector(".pie-tip");
+            if (!tip) return;
+            if (!hit || this.p.tooltip === false) { tip.style.display = "none"; return; }
+            const s = hit.q.s, rank = hit.pie.plan.list.filter((x) => !x.others).indexOf(s) + 1;
+            const inside = s.others ? "<br>" + s.others.slice(0, 8).map((o) => this._esc(o.name) + ": " + this._esc(this._fmtValue(o))).join("<br>") + (s.others.length > 8 ? "<br>…" : "") : "";
+            tip.innerHTML = "<b>" + this._esc(s.name) + "</b> · " + this._esc(this._fmtPct(s.percent)) + "<br>" + this._esc(this._fmtValue(s)) + (rank > 0 ? "  (#" + rank + ")" : "") + inside;
+            const plotR = plot.getBoundingClientRect(), k = plotR.width / (plot.clientWidth || 1) || 1;
+            tip.style.display = "block";
+            tip.style.left = Math.min(plot.clientWidth - tip.offsetWidth - 4, (e.clientX - plotR.left) / k + 12) + "px";
+            tip.style.top = Math.max(4, (e.clientY - plotR.top) / k - tip.offsetHeight - 8) + "px";
+        }
+        _leave() { if (this._hover) { this._hover = null; this.draw(); } const tip = this.renderRoot.querySelector(".pie-tip"); if (tip) tip.style.display = "none"; }
+        _esc(t) { return String(t === undefined || t === null ? "" : t).replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[ch]); }
+
+        _click(e) {
+            const hit = this._sliceAt(e);
+            if (!hit) return;
+            const s = hit.q.s;
+            // Others: opened (its slices shown), even in the editor
+            if (s.others && this.p.othersOpen !== false) { this._open = hit.pie.group; this._hover = null; this.draw(); this.requestUpdate(); return; }
+            if (this.isEditor) return;
+            const payload = { name: s.name, value: s.value, percent: Math.round(s.percent * 10000) / 100, group: hit.pie.group, id: s.t ? s.t.id || "" : "" };
+            this.emit("sliceClick", payload);
+            if (s.t) this.emit("click", { value: s.value, name: s.name }, this._target(s.t));
+        }
+        _closeOthers() { this._open = null; this.draw(); this.requestUpdate(); }
+
+        _toggleSlice(key, ev) {
+            const first = this._groups()[0], names = first ? first.slices.map((s) => s.key) : [];
+            if (ev && (ev.altKey || ev.metaKey)) {
+                const alone = names.every((k) => k === key || this._hiddenSlices.has(k)) && !this._hiddenSlices.has(key);
+                names.forEach((k) => { if (k !== key) { if (alone) this._hiddenSlices.delete(k); else this._hiddenSlices.add(k); } });
+                this._hiddenSlices.delete(key);
+            } else if (this._hiddenSlices.has(key)) this._hiddenSlices.delete(key); else this._hiddenSlices.add(key);
+            if (!this.isEditor) this.emit("sliceToggle", { name: key, visible: !this._hiddenSlices.has(key) });
+            this.draw(); this.requestUpdate();
+        }
+
+        exportData(params) {
+            const o = this._exportOpts(params);
+            if (o.format === "png") return this.exportPNG();
+            const head = ["Group", "Slice", "Value", "%"], rows = [];
+            for (const g of this._groups()) { const plan = this._plan(g); for (const s of plan.list) rows.push([g.group, s.name, s.value, Math.round(s.percent * 10000) / 100]); }
+            let blob;
+            if (o.format === "xlsx") blob = xlsxBlob(head, rows, false, { textCols: [0, 1] });
+            else {
+                const q = (x) => '"' + String(x).replace(/"/g, '""') + '"';
+                blob = new Blob(["﻿" + [head.map(q).join(",")].concat(rows.map((r) => r.map((x) => (typeof x === "number" ? String(x) : q(x))).join(","))).join("\r\n")], { type: "text/csv;charset=utf-8" });
+            }
+            const name = this._getExportFileName(o.format, "all");
+            this._download(blob, name);
+            this._lastExport = { name, blob, rows: rows.length };
+            return rows.length;
+        }
+
+        render() {
+            const p = this.p, bg = this._tok(p.background), demo = this.itemList().some((t) => this._state(t).demo) && !this._rows().length;
+            const first = this._groups()[0];
+            const entries = first ? first.slices.map((s, i) => ({ key: s.key, name: s.name, color: this._sliceColor(s, i), off: this._hiddenSlices.has(s.key), swatch: "square" })) : [];
+            const { at, inside } = legendPlace(p);
+            const legend = legendTemplate(p, entries, (e, ev) => this._toggleSlice(e.key, ev), { stats: PIE_STATS, head: "Slice" });
+            return html`
+                <div class="pie-wrap ${p.border === false ? "borderless" : ""}" part="chart" style=${bg ? "background:" + bg : ""}>
+                    ${p.title ? html`<div class="pie-head">${p.title}</div>` : ""}
+                    ${at === "top" ? legend : ""}
+                    <div class="c-main">
+                        ${at === "left" ? legend : ""}
+                        <div class="plot" @pointermove=${(e) => this._move(e)} @pointerleave=${() => this._leave()} @click=${(e) => this._click(e)}>
+                            <canvas></canvas>
+                            ${this._open !== null ? html`<button class="btn-chip back-chip" @click=${(e) => { e.stopPropagation(); this._closeOthers(); }}>‹ ${p.othersName || "Others"}</button>` : ""}
+                            <div class="corner" style="right:8px">${this._renderMenu()}</div>
+                            <div class="pie-tip"></div>
+                            ${inside ? legend : ""}
+                            ${this._renderSampleBadge(demo)}
+                        </div>
+                        ${at === "right" ? legend : ""}
+                    </div>
+                    ${at === "bottom" ? legend : ""}
+                </div>`;
+        }
+    }
 });

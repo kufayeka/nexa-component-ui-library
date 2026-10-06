@@ -315,113 +315,19 @@ Columns (or horizontal bars), lines and target markers over categories, numbers 
 
 Colours are a hex or a theme token; empty: the theme's chart palette. The editor shows sample data on an empty chart. It replaces the old Bar Chart and the layered Chart (2026-10-06, no migration: they were new); a Pareto chart comes later on the same engine.
 
-### Pie & Donut Chart (`nexa-ui-pie-chart`)
+### Pie / Donut (`nexa-ui-pie`)
 
-Pie and Donut chart for categorical proportions of a whole, designed to solve the common pain points found in industrial SCADA and monitoring platforms (Ignition label truncation, Grafana missing "Others" grouping, Optix rigid bindings):
+Parts of a whole: downtime by reason, energy by area, output by product. **The rules of a good pie are its defaults** (each can be turned off):
+- it starts at **12 o'clock** and runs clockwise, **the largest slice first**;
+- past **the top N** (6 by default; 5 – 7 read well), and below **a share** you set, the rest is **one grey "Others" slice, always last**; a click on it **opens it** (its slices shown, a chip closes it); its tooltip lists what is in it;
+- **a slice is never left without its label**: inside when it fits (the arc *and* the ring's thickness), else **outside on a leader line**; the labels are measured first and the pie sized to leave them room; on each side they move apart so they never overlap (the complaint about Power BI and Ignition pies);
+- a **donut's centre** says **the total** (or a slice's %, or a text, with a line under it); **the slice under the pointer** while hovered.
 
-**Key Features**:
-- **Modes (`mode`)**:
-  - **Donut (`donut`)**: hollow center with configurable inner radius (`innerRadius: 0.6`).
-  - **Pie (`pie`)**: classic solid circular chart.
-- **Center KPI / Metric**:
-  - Displays large bold metric inside the donut hole: **Total Sum (∑)**, **Average (mean)**, **Count of slices**, or **Custom value**.
-  - Subtitle label beneath the number (e.g. `"Total"`, `"Active Power"`, `"Total Units"`).
-- **Auto "Others" Grouping** *(Solves Grafana & Ignition limitations)*:
-  - `groupThresholdPercent`: automatically bundles slices below a certain percentage (e.g. `< 3%` or `< 5%`) into an `"Others"` category slice.
-  - `maxSlices`: keeps the top $N$ slices and collapses remaining slices into `"Others"`.
-  - Rich tooltip displays a nested breakdown list of the sub-slices contained within the "Others" slice!
-- **Smart Anti-Collision Labels** *(Solves Ignition clipping issues)*:
-  - Positions: `outside` (clean leader lines with elbow hooks), `inside` (centered in slice), or `legend-only`.
-  - `minAngleForLabel`: automatically hides labels for narrow slices (e.g. `< 10°`) so text never collides or overlaps.
-- **Micro-Animations & Visuals**:
-  - Slice gap (`padAngle`): clean 1.5° separation between slices.
-  - Hover Explosion: hovered slice smoothly pushes radially outward by 6px with highlight.
-- **Interactive Legend & Logic Targeting**:
-  - Slices can be defined in properties (`slices` prop) and targeted in Logic (`{ list: "slices", id: slice.id }`).
-  - Clicking a legend item toggles/mutes that slice; Alt+click solos that slice.
-  - Fires **On Slice Click** `{ id, name, value, percent, index, isOther }` for instant HMI drilldowns and page navigation.
-- **Export**:
-  - Direct download to CSV, formatted Excel (`.xlsx` with auto column types), and PNG 2× sharp snapshot.
+**Data:** **slices**, the items of the shared value model (a Logic target each: Set value, a live tag, the figure over a window, stale; its colour, or a **status** colour: Running green, Stopped red), and/or **rows** from a query (`[{ reason, minutes }]`: the name and value fields, rows of one name added up / averaged / …); **a pie per (field)**: several pies side by side (the downtime of each machine). A listed slice styles the row of its name. **Set rows** from Logic.
 
----
+**Look:** donut or pie, the ring width, **a half** (180°, opening down), the space between slices, rounded corners, a hovered slice moving out; labels: name / % / value (any mix), auto / outside / inside, size, % decimals.
 
-#### Node-RED Function Node Examples for Testing
-
-Copy and paste these scripts into a Node-RED **Function Node** connected to `nexa-ui-pie-chart`:
-
-##### 1. Basic Object Array (with Custom Colours)
-```js
-// Sends machine status breakdown
-msg.payload = [
-    { name: "Running", value: 145, color: "#10b981" },
-    { name: "Idle", value: 65, color: "#f59e0b" },
-    { name: "Maintenance", value: 25, color: "#3b82f6" },
-    { name: "Fault", value: 15, color: "#ef4444" },
-    { name: "Offline", value: 8, color: "#6b7280" }
-];
-return msg;
-```
-
-##### 2. Key-Value Object / Map (Direct Production Lines)
-```js
-// Directly feeds a dictionary/map of line totals
-msg.payload = {
-    "Line 1 (Packaging)": 350,
-    "Line 2 (Bottling)": 280,
-    "Line 3 (Assembly)": 190,
-    "Line 4 (Quality Check)": 45
-};
-return msg;
-```
-
-##### 3. 2D Array / Tuples (Energy Breakdown)
-```js
-// Feeds [name, value] pairs
-msg.payload = [
-    ["Chiller Plant", 54.2],
-    ["Air Compressor", 38.5],
-    ["Cooling Tower", 21.0],
-    ["Pumps", 12.8],
-    ["Lighting", 6.5]
-];
-return msg;
-```
-
-##### 4. Testing Auto "Others" Grouping (Threshold < 5%)
-```js
-// Notice small items (< 5%) will automatically collapse into "Others"
-msg.payload = [
-    { name: "Extruder Main", value: 120 },
-    { name: "Hydraulic Pump", value: 95 },
-    { name: "Cooling Fan", value: 70 },
-    { name: "Feeder", value: 50 },
-    { name: "Valve A", value: 4 },    // < 5% -> auto grouped into Others!
-    { name: "Sensor B", value: 2 },   // < 5% -> auto grouped into Others!
-    { name: "Auxiliary", value: 1 }   // < 5% -> auto grouped into Others!
-];
-return msg;
-```
-
-##### 5. Handling Slice Clicks for HMI Drilldown
-Connect a Function Node to the output of `nexa-ui-pie-chart` (wired to the `On Slice Click` event):
-```js
-// Event payload: { id, name, value, percent, index, isOther }
-const slice = msg.payload;
-node.warn(`Operator clicked: ${slice.name} (${slice.percent}% of total)`);
-
-if (slice.name === "Fault") {
-    // Navigate to alarm page or open modal
-    msg.action = "navigate";
-    msg.url = "/alarms";
-    return msg;
-}
-
-// Or filter an active table / query
-msg.filter = { status: slice.name };
-return msg;
-```
-
----
+**Legend** (the shared part): any position, a list (the % or the value) or a **table** (Value, %); a click hides a slice and the % are of the rest (**On Slice Toggle**). **On Slice Click** `{ name, value, percent, group, id }` (a listed slice also fires its own On Click). Export CSV / Excel (a row per slice) / PNG. In the editor: sample slices (*Sample data*). It replaces the old Pie & Donut Chart (2026-10-06, no migration).
 
 ### Gauge (`nexa-ui-gauge`)
 

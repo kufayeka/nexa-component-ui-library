@@ -19,7 +19,7 @@ async function ok(label, fn) { if (only && !only.test(label)) return; await fn()
 const P = 'nexa-ui-';
 const ALL = ['button', 'input', 'textarea', 'number-input', 'password-input', 'checkbox', 'switch', 'radio-group', 'segmented', 'select', 'combobox', 'slider', 'tags-input', 'pin-input', 'rating',
     'text', 'heading', 'badge', 'tag', 'card', 'avatar', 'stat', 'alert', 'progress', 'spinner', 'skeleton', 'separator', 'empty-state', 'timeline', 'fieldset',
-    'tabs', 'iframe', 'datetime', 'daterange', 'pagination', 'line-chart', 'state-timeline', 'column-chart', 'pie-chart', 'gauge', 'bar-gauge', 'area-chart', 'kpi', 'histogram'];
+    'tabs', 'iframe', 'datetime', 'daterange', 'pagination', 'line-chart', 'state-timeline', 'column-chart', 'pie', 'gauge', 'bar-gauge', 'area-chart', 'kpi', 'histogram'];
 const TAG = '{sparkplug:Plant::Line1::Mixer::Speed}';
 
 withHarness({
@@ -1374,120 +1374,52 @@ withHarness({
         assert.strictEqual(z[0], z[1], 'the same plot height at 50 %');
     });
 
-    // ---- Pie Chart --------------------------------------------------------------------------
-    const pcw = (name) => `NexaTest.wc(${JSON.stringify(name)})`;
+    // ---- Pie / Donut ----------------------------------------------------------------------------
+    const pw = (name) => `NexaTest.wc(${JSON.stringify(name)})`;
+    const REASONS = [['Jam', 142], ['Changeover', 96], ['No material', 61], ['Maintenance', 44], ['Quality hold', 18], ['Operator break', 9], ['Sensor fault', 4], ['Label printer', 3]].map(([name, value]) => ({ name, value }));
 
-    await ok('Pie Chart: donut mode, center KPI total calculation, slice percentages, and canvas drawing', async () => {
-        await mount('pc-donut', 'pie-chart', {
-            mode: 'donut',
-            innerRadius: 0.6,
-            centerStat: 'total',
-            centerLabel: 'Active kW',
-            slices: [
-                { id: 's1', name: 'Running', value: 60, color: '#10b981' },
-                { id: 's2', name: 'Idle', value: 30, color: '#f59e0b' },
-                { id: 's3', name: 'Fault', value: 10, color: '#ef4444' }
-            ]
-        }, { width: 400, height: 300 });
-
-        const info = await js(`(function () {
-            var w = ${pcw('pc-donut')};
-            w.draw();
-            return {
-                slicesCount: w._preparedSlices.length,
-                totalVal: w._totalValue,
-                firstPct: Math.round(w._preparedSlices[0].pct),
-                hitCount: w._hitSlices.length
-            };
-        })()`);
-        assert.strictEqual(info.slicesCount, 3);
-        assert.strictEqual(info.totalVal, 100);
-        assert.strictEqual(info.firstPct, 60);
-        assert.strictEqual(info.hitCount, 3);
+    await ok('Pie: from the top, clockwise, the largest first; past the top N one grey Others, always last (a click opens it); the percents add up to 100', async () => {
+        await mount('pi1', 'pie', { rows: REASONS, topN: 4, slices: [] }, { width: 480, height: 280 });
+        const r = await js(`(function () { var w = ${pw('pi1')}; w.draw(); var pie = w._pies[0], l = pie.plan.list;
+            return { names: l.map(function (s) { return s.name; }), others: l[l.length - 1].others.map(function (o) { return o.name; }), sum: Math.round(l.reduce(function (a, s) { return a + s.percent; }, 0) * 1000) / 1000,
+                start: Math.round(pie.slices[0].a0 * 180 / Math.PI), grey: l[l.length - 1].color === w.statusColor("neutral") }; })()`);
+        assert.deepStrictEqual(r.names, ['Jam', 'Changeover', 'No material', 'Maintenance', 'Others']);
+        assert.deepStrictEqual(r.others, ['Quality hold', 'Operator break', 'Sensor fault', 'Label printer']);
+        assert.strictEqual(r.sum, 1);
+        assert.strictEqual(r.start, -90, '12 o\u2019clock');
+        assert.strictEqual(r.grey, true, 'Others: the theme\u2019s neutral');
+        // a click on Others opens it (its slices shown), the chip closes it
+        await js(`(function () { var w = ${pw('pi1')}, pie = w._pies[0], q = pie.slices[pie.slices.length - 1], m = (q.a0 + q.a1) / 2, rr = (pie.r + pie.ri) / 2, pl = w.renderRoot.querySelector(".plot"), b = pl.getBoundingClientRect();
+            pl.dispatchEvent(new MouseEvent("click", { bubbles: true, clientX: b.left + pie.cx + Math.cos(m) * rr, clientY: b.top + pie.cy + Math.sin(m) * rr })); return 1; })()`); await settle();
+        assert.strictEqual(await js(`(function () { var w = ${pw('pi1')}; w.draw(); return w._pies[0].plan.list.length; })()`), 8, 'Others opened: every slice');
+        await js(`${pw('pi1')}.renderRoot.querySelector(".back-chip").click()`); await settle();
+        assert.strictEqual(await js(`(function () { var w = ${pw('pi1')}; w.draw(); return w._pies[0].plan.list.length; })()`), 5, 'closed again');
+        await js(`NexaTest.setProps("pi1", { othersBelow: 10, topN: 0 })`); await settle();
+        assert.deepStrictEqual(await js(`(function () { var w = ${pw('pi1')}; w.draw(); return w._pies[0].plan.list.map(function (s) { return s.name; }); })()`), ['Jam', 'Changeover', 'No material', 'Maintenance', 'Others'], 'below 10 %: into Others');
     });
 
-    await ok('Pie Chart: auto "Others" grouping by threshold percentage and maxSlices', async () => {
-        await mount('pc-others', 'pie-chart', {
-            mode: 'donut',
-            groupThresholdPercent: 5,
-            slices: [
-                { name: 'Motor 1', value: 50 },
-                { name: 'Motor 2', value: 40 },
-                { name: 'Pump A', value: 2 },
-                { name: 'Pump B', value: 1 }
-            ]
-        }, { width: 400, height: 300 });
-
-        const others = await js(`(function () {
-            var w = ${pcw('pc-others')};
-            w.draw();
-            var last = w._preparedSlices[w._preparedSlices.length - 1];
-            return {
-                count: w._preparedSlices.length,
-                lastIsOther: !!last.isOther,
-                otherVal: last.value,
-                subCount: last.subSlices ? last.subSlices.length : 0
-            };
-        })()`);
-        assert.strictEqual(others.count, 3, '4 slices reduced to 3 (2 main + Others)');
-        assert.strictEqual(others.lastIsOther, true, 'last slice is Others');
-        assert.strictEqual(others.otherVal, 3, 'others value is 2 + 1 = 3');
-        assert.strictEqual(others.subCount, 2, '2 sub-slices in Others');
-    });
-
-    await ok('Pie Chart: setChartData accepts direct array of objects, tuples, and key-value maps', async () => {
-        await mount('pc-data', 'pie-chart', {}, { width: 400, height: 300 });
-
-        // 1. Key-value object
-        await js(`(function () {
-            var w = ${pcw('pc-data')};
-            w.setChartData({ "Alpha": 100, "Beta": 200, "Gamma": 300 });
-        })()`);
-        const mapTotal = await js(`${pcw('pc-data')}._totalValue`);
-        assert.strictEqual(mapTotal, 600);
-
-        // 2. Tuples array
-        await js(`(function () {
-            var w = ${pcw('pc-data')};
-            w.setChartData([["Zone 1", 75], ["Zone 2", 25]]);
-        })()`);
-        const tupleTotal = await js(`${pcw('pc-data')}._totalValue`);
-        const tupleCount = await js(`${pcw('pc-data')}._preparedSlices.length`);
-        assert.strictEqual(tupleTotal, 100);
-        assert.strictEqual(tupleCount, 2);
-    });
-
-    await ok('Pie Chart: On Slice Click event fired on plot click and export CSV/XLSX works', async () => {
-        await mount('pc-click', 'pie-chart', {
-            slices: [
-                { id: 's1', name: 'Primary', value: 80 },
-                { id: 's2', name: 'Secondary', value: 20 }
-            ]
-        }, { width: 400, height: 300 });
-
-        await js(`(function () {
-            var w = ${pcw('pc-click')};
-            w.draw();
-            var h = w._hitSlices[0];
-            w.emit("sliceClick", { id: h.slice.id, name: h.slice.name, value: h.slice.value, percent: 80, index: 0, isOther: false });
-        })()`);
-
-        const it = await item('pc-click');
-        const clickEv = it.events.find((e) => e[0] === 'sliceClick');
-        assert.ok(clickEv, 'sliceClick emitted');
-        assert.strictEqual(clickEv[1].name, 'Primary');
-        assert.strictEqual(clickEv[1].percent, 80);
-
-        // Test export
-        const exp = await js(`(function () {
-            var w = ${pcw('pc-click')};
-            var csv = w.exportData('csv');
-            var xlsx = w.exportData('xlsx');
-            return { csv: csv, xlsx: xlsx, name: w._lastExport.name };
-        })()`);
-        assert.strictEqual(exp.csv, 2);
-        assert.strictEqual(exp.xlsx, 2);
-        assert.ok(/\.xlsx$/.test(exp.name));
+    await ok('Pie: slices as Logic targets (status colours, Set value), a click fires On Slice Click and the slice\u2019s own On Click, the legend hides a slice (the % of the rest), a pie per group, the export', async () => {
+        await mount('pi2', 'pie', { kind: 'pie', slices: [{ id: 'r', name: 'Running', status: 'success' }, { id: 's', name: 'Stopped', status: 'error' }] }, { width: 480, height: 280 });
+        await js(`${pw('pi2')}.setValue(75, { list: "slices", id: "r" })`);
+        await js(`${pw('pi2')}.setValue(25, { list: "slices", id: "s" })`); await settle();
+        const r = await js(`(function () { var w = ${pw('pi2')}; w.draw(); var l = w._pies[0].plan.list; return { c: l.map(function (s) { return s.color; }), ok: w.statusColor("success"), err: w.statusColor("error"), pc: l.map(function (s) { return s.percent; }) }; })()`);
+        assert.deepStrictEqual(r.c, [r.ok, r.err], 'the theme\u2019s status colours');
+        assert.deepStrictEqual(r.pc, [0.75, 0.25]);
+        await js(`(function () { var w = ${pw('pi2')}; window.__pev = []; var old = w.emit.bind(w); w.emit = function (n, p, t) { window.__pev.push([n, p, t && t.id]); return old(n, p, t); };
+            var pie = w._pies[0], q = pie.slices[1], m = (q.a0 + q.a1) / 2, pl = w.renderRoot.querySelector(".plot"), b = pl.getBoundingClientRect();
+            pl.dispatchEvent(new MouseEvent("click", { bubbles: true, clientX: b.left + pie.cx + Math.cos(m) * pie.r * 0.6, clientY: b.top + pie.cy + Math.sin(m) * pie.r * 0.6 })); return 1; })()`);
+        assert.deepStrictEqual(await js('window.__pev.map(function (e) { return [e[0], e[1].name, e[2] || null]; })'), [['sliceClick', 'Stopped', null], ['click', 'Stopped', 's']]);
+        await js(`${pw('pi2')}.renderRoot.querySelectorAll(".lg-item")[1].click()`); await settle();
+        assert.deepStrictEqual(await js(`(function () { var w = ${pw('pi2')}; w.draw(); return w._pies[0].plan.list.map(function (s) { return [s.name, s.percent]; }); })()`), [['Running', 1]], 'Stopped hidden: Running is the whole');
+        const multi = [];
+        ['A', 'B', 'C'].forEach((m) => REASONS.slice(0, 3).forEach((x) => multi.push({ machine: m, name: x.name, value: x.value })));
+        await mount('pi3', 'pie', { rows: multi, groupField: 'machine', slices: [] }, { width: 800, height: 260 });
+        assert.deepStrictEqual(await js(`(function () { var w = ${pw('pi3')}; w.draw(); return w._pies.map(function (p) { return p.group; }); })()`), ['A', 'B', 'C'], 'a pie per machine');
+        assert.strictEqual(await js(`${pw('pi3')}.exportData({ format: "csv" })`), 9);
+        for (const look of [{ half: true }, { kind: 'pie', labelPlace: 'outside' }, { center: 'slice', centerSlice: 'Jam' }, { labelShow: 'all', legend: 'right', legendMode: 'table' }]) {
+            await js(`NexaTest.setProps("pi3", ${JSON.stringify(look)})`); await settle();
+            assert.ok(await pixels('pi3') > 3000, JSON.stringify(look));
+        }
     });
 
     // ---- Gauge / Bar Gauge (the shared value model: readout.js) -------------------------------
@@ -1792,7 +1724,7 @@ withHarness({
     });
 
     await ok('Print: every chart with a panel paints it in (Pie, Gauge, Area, Histogram clear through _clearCanvas, not clearRect)', async () => {
-        const kinds = { pie: ['pie-chart', { slices: [{ id: 'a', name: 'A', value: 3 }, { id: 'b', name: 'B', value: 1 }] }], gauge: ['gauge', {}], bargauge: ['bar-gauge', {}], area: ['area-chart', { series: [{ id: 's1', name: 'S' }] }],
+        const kinds = { pie: ['pie', { rows: [{ name: 'A', value: 3 }, { name: 'B', value: 1 }] }], gauge: ['gauge', {}], bargauge: ['bar-gauge', {}], area: ['area-chart', { series: [{ id: 's1', name: 'S' }] }],
             hist: ['histogram', {}], column: ['column-chart', {}] };       // (the Sparkline has no panel of its own: nothing to paint in)
         for (const name of Object.keys(kinds)) await mount('pr-' + name, kinds[name][0], kinds[name][1], { width: 300, height: 180 });
         const px = (name) => js(`(function () { var w = NexaTest.wc("pr-${name}"), cv = w.renderRoot.querySelector("canvas"); return Array.from(cv.getContext("2d").getImageData(1, 1, 1, 1).data); })()`);
@@ -2022,13 +1954,14 @@ withHarness({
         await js('delete window.__big; 1');
     });
 
-    await ok('Sample data (Line, State Timeline, Column, KPI, Gauge, Bar Gauge): only in the editor, for the user series, marked "Sample data"; on a page with no data the chart is empty; real data drops it', async () => {
+    await ok('Sample data (Line, State Timeline, Column, KPI, Gauge, Bar Gauge, Pie): only in the editor, for the user series, marked "Sample data"; on a page with no data the chart is empty; real data drops it', async () => {
         const kinds = [['line-chart', { series: [{ id: 's1', name: 'Speed' }] }, 'appendPoints', [{ x: 1727852400000, y: 3 }], { list: 'series', id: 's1' }],
             ['state-timeline', { rows: [{ id: 'r1', name: 'Filler' }] }, 'appendChange', { time: 1727852400000, state: 1 }, { list: 'rows', id: 'r1' }],
             ['column-chart', { series: [{ id: 's1', name: 'Load' }, { id: 's2', name: 'Temp', type: 'line' }] }, 'setData', { A: 3 }, { list: 'series', id: 's1' }],
             ['kpi', { tiles: [{ id: 'k1', name: 'Load' }] }, 'setValue', 21.5, { list: 'tiles', id: 'k1' }],
             ['gauge', { gauges: [{ id: 'g1', name: 'Load' }] }, 'setValue', 21.5, { list: 'gauges', id: 'g1' }],
-            ['bar-gauge', { bars: [{ id: 'b1', name: 'Load' }] }, 'setValue', 21.5, { list: 'bars', id: 'b1' }]];
+            ['bar-gauge', { bars: [{ id: 'b1', name: 'Load' }] }, 'setValue', 21.5, { list: 'bars', id: 'b1' }],
+            ['pie', { slices: [{ id: 's1', name: 'Load' }] }, 'setValue', 21.5, { list: 'slices', id: 's1' }]];
         for (const [id, props, action, payload, target] of kinds) {
             await mount('sd-ed-' + id, id, props, { width: 500, height: 220, design: true });
             await js('new Promise(function (r) { setTimeout(r, 150); })');
