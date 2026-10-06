@@ -42,7 +42,7 @@ This is a Nexa component plugin (`@kufayeka/nexa-component-ui-library`). Every c
     - legend.js (the legend part: props, list / table markup, placement around / inside the plot; its look is in core.js CHART_CSS);
     - time.js, buffer.js, export.js (the xlsx writer);
     - rows.js, stack.js, curves.js (pure: rows -> columns split by a field, stacking, nice ticks, monotone curves; test/chart-pure.test.js, no browser);
-    - line.js (Line Chart), state.js (State Timeline), column.js (Column / Bar Chart: columns, lines, targets; stack or side by side; the engine of the old layered Chart), pie.js (Pie / Donut Chart), gauge.js (Radial & Linear Gauge), area.js (Area & Stacked Area Chart), readout.js (ReadoutElement: the base of a value chart: reduce over a window, delta, threshold steps, auto-fit text, value texts), kpi.js (KPI / Stat: tiles; replaces the Sparkline), histogram.js (Histogram);
+    - line.js (Line Chart), state.js (State Timeline), column.js (Column / Bar Chart: columns, lines, targets; stack or side by side; the engine of the old layered Chart), pie.js (Pie / Donut Chart), gauge.js (Gauge: dials on ReadoutElement), bargauge.js (Bar Gauge: basic / gradient / LCD bars on ReadoutElement), area.js (Area & Stacked Area Chart), readout.js (ReadoutElement: the base of the value charts: items as Logic targets with their data, reduce over a window, delta, threshold steps, a scale with soft ends and ticks, auto-fit text, value texts, export), kpi.js (KPI / Stat: tiles; replaces the Sparkline), histogram.js (Histogram);
     - index.js (every chart).
 
     A new chart is its own file there, on ChartElement or TimeChartElement.

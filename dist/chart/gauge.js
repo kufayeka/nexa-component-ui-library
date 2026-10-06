@@ -1,718 +1,363 @@
-// Nexa UI — Radial & Linear Gauge
-// Industrial gauge and meter component inspired by Power BI and SCADA standards:
-//   - Dual Modes: Radial Dial (speedometer / arc meter) and Linear (horizontal / vertical bar)
-//   - Min / Max bounds (batas bawah & batas atas) with soft limits
-//   - Pointer / needle customization: sharp needle, filled progress track, marker notch, or combo
-//   - Threshold ranges / color zones (Normal, Warning, Critical) on track and pointer
-//   - Target goal marker (Power BI feature)
-//   - High-contrast IBM Carbon typography (Plex Mono readout + unit)
-//   - Logic binding, actions (setValue, setTarget), and On Threshold Crossed events
-//   - Export to CSV, Excel (.xlsx), and PNG
+// Nexa UI — Gauge: a dial per value (pressure, temperature, speed, load), several side by side.
+//
+// A GAUGE is an item of the shared value model (readout.js: a Logic target, its live value and history, the figure over a
+// window, value texts, delta, target / setpoint / normal band, threshold steps, stale, a soft min / max, the ghost of
+// the lowest / highest over the window). What the dial adds:
+//   - its shape: an arc of any sweep (180° half, 240°, 270°, a full 360° ring), its thickness, rounded ends;
+//   - the pointer, in any mix: a FILL running along the arc, a NEEDLE (a line, a tapered blade, an arrow) with its hub,
+//     a triangle MARKER running along the arc, outside or inside it;
+//   - the scale: major ticks (automatic, a step, or a list of values) and minor ticks between them, inside / outside /
+//     across the track, their length, width and colour, labels inside or outside (value texts too);
+//   - the threshold zones: colouring the track, or a ring outside / inside it, with their labels;
+//   - the value in the middle (auto-fit), its unit and its delta; the name above or below.
+// Everything on one canvas (sharp in print and PNG). It replaces the old Gauge & Meter (its linear mode: the Bar Gauge).
 import { html, css } from "../../../nexa-sdk/nexa-component-sdk.js";
-import { PREFIX, defineUI } from "../core.js";
-import { chartCommon, opt, NOTATIONS, DECIMALS, notationOf, numOr } from "./core.js";
-import { xlsxBlob } from "./export.js";
-import { ChartElement } from "./core.js";
+import { PREFIX, part, defineUI } from "../core.js";
+import { chartCommon, DASHES } from "./core.js";
+import { exportProps } from "./props.js";
+import { ReadoutElement, STATUSES, readoutFields, scaleFields, itemsProp, stepsProp, scaleTicks, opt, numOr } from "./readout.js";
+import { fmtDuration } from "./state.js";
 
-const common = chartCommon;
-
-const GAUGE_CSS = css`
-    .gauge-container {
-        position: relative;
-        display: flex;
-        flex-direction: column;
-        width: 100%;
-        height: 100%;
-        min-width: 0;
-        min-height: 0;
-        overflow: hidden;
-        background: var(--panel, #181b1f);
-        border: 1px solid var(--bd, #2c3235);
-        border-radius: var(--r, 4px);
-        box-sizing: border-box;
-    }
-    .plot {
-        position: relative;
-        flex: 1 1 auto;
-        min-height: 0;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-    }
-    .gauge-title {
-        position: absolute;
-        top: 8px;
-        left: 12px;
-        font-size: 11px;
-        font-weight: 500;
-        color: var(--fg-muted, #a0aec0);
-        letter-spacing: 0.02em;
-        pointer-events: none;
-        z-index: 2;
-    }
-`;
-
-const THRESHOLD_FIELDS = {
-    label: { type: "string", label: "Label", default: "Normal" },
-    value: { type: "number", label: "Upper value", default: 60 },
-    color: { type: "color", label: "Colour", default: "#10b981" }
-};
-
-function defaultThresholds() {
-    return [
-        { label: "Normal", value: 60, color: "#10b981" },
-        { label: "Warning", value: 85, color: "#f59e0b" },
-        { label: "Critical", value: 100, color: "#ef4444" }
-    ];
-}
-
-export class GaugeElement extends ChartElement {
-    static styles = [...ChartElement.styles, GAUGE_CSS];
-
-    _lastVal = 0;
-    _lastZoneIndex = -1;
-
-    _seriesSpec() {
-        return {
-            notation: notationOf(this.p && this.p.notation),
-            decimals: this.p && this.p.decimals === "auto" ? undefined : numOr(this.p && this.p.decimals, 0)
-        };
-    }
-
-    _fmtVal(val) {
-        if (!Number.isFinite(val)) return "0";
-        const spec = this._seriesSpec();
-        let s;
-        if (spec.notation === "compact") {
-            s = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: spec.decimals !== undefined ? spec.decimals : 1 }).format(val);
-        } else if (spec.notation === "scientific") {
-            s = val.toExponential(spec.decimals !== undefined ? spec.decimals : 2);
-        } else if (spec.decimals !== undefined) {
-            s = val.toFixed(spec.decimals);
-        } else {
-            s = String(Math.round(val * 100) / 100);
-        }
-        return s;
-    }
-
-    _thresholdList() {
-        const raw = Array.isArray(this.p && this.p.thresholds) ? this.p.thresholds : defaultThresholds();
-        return raw.slice().sort((a, b) => numOr(a.value, 0) - numOr(b.value, 0));
-    }
-
-    _activeZone(val) {
-        const list = this._thresholdList();
-        for (let i = 0; i < list.length; i++) {
-            if (val <= numOr(list[i].value, Infinity)) {
-                return { zone: list[i], index: i };
-            }
-        }
-        const last = list[list.length - 1];
-        return { zone: last || null, index: list.length - 1 };
-    }
-
-    prepareData() {
-        const v = numOr(this.p && this.p.value, 0);
-        const { zone, index } = this._activeZone(v);
-        if (this._lastZoneIndex !== -1 && this._lastZoneIndex !== index && zone) {
-            this.emit("thresholdCrossed", { value: v, threshold: zone.label, color: zone.color });
-        }
-        this._lastZoneIndex = index;
-        this._lastVal = v;
-    }
-
-    draw() {
-        if (!this.ctx || !this.canvas) return;
-        const { w, h } = this._layoutSize();
-        if (w <= 0 || h <= 0) return;
-
-        const ctx = this.ctx;
-        this._clearCanvas(ctx, w, h);
-
-        const mode = (this.p && this.p.mode) || "radial";
-        if (mode === "linear") {
-            this._drawLinear(w, h);
-        } else {
-            this._drawRadial(w, h);
-        }
-    }
-
-    _drawRadial(w, h) {
-        const ctx = this.ctx;
-        const colors = this._colors();
-
-        const min = numOr(this.p && this.p.min, 0);
-        const max = Math.max(min + 0.001, numOr(this.p && this.p.max, 100));
-        let val = numOr(this.p && this.p.value, 0);
-        if (this.p && this.p.softMax && val > max) val = max;
-        if (this.p && this.p.softMin && val < min) val = min;
-
-        const frac = Math.max(0, Math.min(1, (val - min) / (max - min)));
-
-        const arcDeg = numOr(this.p && this.p.arcAngle, 240);
-        const startDeg = numOr(this.p && this.p.startAngle, 150);
-        const startRad = (startDeg * Math.PI) / 180;
-        const arcRad = (arcDeg * Math.PI) / 180;
-        const endRad = startRad + arcRad;
-        const valRad = startRad + frac * arcRad;
-
-        const cx = w / 2;
-        // Position center slightly lower for half/wide gauges
-        const cy = arcDeg <= 200 ? h * 0.72 : (arcDeg <= 270 ? h * 0.55 : h / 2);
-        const pad = Math.min(w, h) * 0.12;
-        const R = Math.max(24, Math.min(cx, cy) - pad);
-        const thickness = Math.max(4, Math.min(36, numOr(this.p && this.p.thickness, 16)));
-
-        const thList = this._thresholdList();
-        const { zone } = this._activeZone(val);
-        const colorMode = (this.p && this.p.colorMode) || "zones";
-        const pointerType = (this.p && this.p.pointerType) || "needleAndArc";
-
-        // 1. Draw Background Track or Threshold Zones
-        if (colorMode === "zones" && thList.length) {
-            // Draw discrete colored zones on the track
-            let prevRad = startRad;
-            thList.forEach((th) => {
-                const thVal = Math.min(max, Math.max(min, numOr(th.value, max)));
-                const thFrac = (thVal - min) / (max - min);
-                const thEndRad = startRad + thFrac * arcRad;
-
-                if (thEndRad > prevRad) {
-                    ctx.save();
-                    ctx.beginPath();
-                    ctx.arc(cx, cy, R, prevRad, thEndRad);
-                    ctx.strokeStyle = this.hexToRgba(th.color, 0.28);
-                    ctx.lineWidth = thickness;
-                    ctx.lineCap = "butt";
-                    ctx.stroke();
-                    ctx.restore();
-                    prevRad = thEndRad;
-                }
-            });
-            // If zones didn't reach max
-            if (prevRad < endRad) {
-                ctx.save();
-                ctx.beginPath();
-                ctx.arc(cx, cy, R, prevRad, endRad);
-                ctx.strokeStyle = colors.grid;
-                ctx.lineWidth = thickness;
-                ctx.stroke();
-                ctx.restore();
-            }
-        } else {
-            // Solid subtle background track
-            ctx.save();
-            ctx.beginPath();
-            ctx.arc(cx, cy, R, startRad, endRad);
-            ctx.strokeStyle = colors.grid;
-            ctx.lineWidth = thickness;
-            ctx.lineCap = "round";
-            ctx.stroke();
-            ctx.restore();
-        }
-
-        // 2. Active Arc / Progress Bar Fill
-        if (pointerType === "arc" || pointerType === "needleAndArc") {
-            const activeColor = colorMode === "threshold" && zone ? zone.color : (this.p.needleColor || colors.accent);
-            ctx.save();
-            ctx.beginPath();
-            ctx.arc(cx, cy, R, startRad, valRad);
-            ctx.strokeStyle = activeColor;
-            ctx.lineWidth = thickness;
-            ctx.lineCap = "round";
-            ctx.stroke();
-            ctx.restore();
-        }
-
-        // 3. Ticks and Min/Max scale
-        if (this.p && this.p.showTicks !== false) {
-            const tickCount = Math.max(2, numOr(this.p && this.p.tickCount, 5));
-            for (let i = 0; i <= tickCount; i++) {
-                const tFrac = i / tickCount;
-                const tRad = startRad + tFrac * arcRad;
-                const innerR = R - thickness / 2 - 2;
-                const outerR = innerR - 6;
-                const x1 = cx + Math.cos(tRad) * innerR;
-                const y1 = cy + Math.sin(tRad) * innerR;
-                const x2 = cx + Math.cos(tRad) * outerR;
-                const y2 = cy + Math.sin(tRad) * outerR;
-
-                ctx.save();
-                ctx.beginPath();
-                ctx.moveTo(x1, y1);
-                ctx.lineTo(x2, y2);
-                ctx.strokeStyle = colors.text;
-                ctx.lineWidth = 1;
-                ctx.stroke();
-                ctx.restore();
-            }
-        }
-
-        // Min & Max Labels
-        if (this.p && this.p.showMinMax !== false) {
-            ctx.save();
-            ctx.font = `10px ${colors.font || "sans-serif"}`;
-            ctx.fillStyle = colors.text;
-
-            const startX = cx + Math.cos(startRad) * (R - thickness / 2 - 14);
-            const startY = cy + Math.sin(startRad) * (R - thickness / 2 - 14);
-            ctx.textAlign = Math.cos(startRad) >= 0 ? "left" : "right";
-            ctx.textBaseline = "middle";
-            ctx.fillText(this._fmtVal(min), startX, startY);
-
-            const endX = cx + Math.cos(endRad) * (R - thickness / 2 - 14);
-            const endY = cy + Math.sin(endRad) * (R - thickness / 2 - 14);
-            ctx.textAlign = Math.cos(endRad) >= 0 ? "left" : "right";
-            ctx.fillText(this._fmtVal(max), endX, endY);
-            ctx.restore();
-        }
-
-        // 4. Target Marker (Power BI Feature)
-        if (this.p && this.p.showTarget) {
-            const targetVal = numOr(this.p.targetValue, (min + max) / 2);
-            const tFrac = Math.max(0, Math.min(1, (targetVal - min) / (max - min)));
-            const tRad = startRad + tFrac * arcRad;
-            const tIn = R - thickness / 2 - 3;
-            const tOut = R + thickness / 2 + 5;
-
-            ctx.save();
-            ctx.beginPath();
-            ctx.moveTo(cx + Math.cos(tRad) * tIn, cy + Math.sin(tRad) * tIn);
-            ctx.lineTo(cx + Math.cos(tRad) * tOut, cy + Math.sin(tRad) * tOut);
-            ctx.strokeStyle = this.p.targetColor || "#3b82f6";
-            ctx.lineWidth = 2.5;
-            ctx.stroke();
-            ctx.restore();
-        }
-
-        // 5. Needle (Jarum Penunjuk)
-        if (pointerType === "needle" || pointerType === "needleAndArc") {
-            const needleColor = this.p && this.p.needleColor ? this.p.needleColor : (colorMode === "threshold" && zone ? zone.color : colors.strong);
-            const nLen = R * Math.min(1.0, Math.max(0.4, numOr(this.p && this.p.needleLength, 0.82)));
-            const nWidth = Math.max(1, numOr(this.p && this.p.needleWidth, 3));
-
-            const tipX = cx + Math.cos(valRad) * nLen;
-            const tipY = cy + Math.sin(valRad) * nLen;
-
-            const perpRad = valRad + Math.PI / 2;
-            const baseL_X = cx + Math.cos(perpRad) * nWidth;
-            const baseL_Y = cy + Math.sin(perpRad) * nWidth;
-            const baseR_X = cx - Math.cos(perpRad) * nWidth;
-            const baseR_Y = cy - Math.sin(perpRad) * nWidth;
-            const tailX = cx - Math.cos(valRad) * (nWidth * 3);
-            const tailY = cy - Math.sin(valRad) * (nWidth * 3);
-
-            ctx.save();
-            ctx.beginPath();
-            ctx.moveTo(tailX, tailY);
-            ctx.lineTo(baseL_X, baseL_Y);
-            ctx.lineTo(tipX, tipY);
-            ctx.lineTo(baseR_X, baseR_Y);
-            ctx.closePath();
-
-            ctx.fillStyle = needleColor;
-            ctx.shadowColor = "rgba(0,0,0,0.4)";
-            ctx.shadowBlur = 4;
-            ctx.fill();
-
-            // Center pivot cap
-            if (this.p && this.p.needleCap !== false) {
-                const capSize = Math.max(4, numOr(this.p.needleCapSize, 10));
-                ctx.beginPath();
-                ctx.arc(cx, cy, capSize / 2, 0, Math.PI * 2);
-                ctx.fillStyle = colors.band || "#2c3235";
-                ctx.fill();
-                ctx.strokeStyle = needleColor;
-                ctx.lineWidth = 1.5;
-                ctx.stroke();
-            }
-            ctx.restore();
-        }
-
-        // 6. Center / Bottom Digital Readout
-        if (this.p && this.p.showReadout !== false) {
-            ctx.save();
-            ctx.textAlign = "center";
-            ctx.textBaseline = "middle";
-
-            const valStr = this._fmtVal(val);
-            const unit = this.p && this.p.unit ? " " + this.p.unit : "";
-            const textToDraw = valStr + unit;
-
-            // Scaled font size
-            const fs = Math.min(32, Math.max(16, Math.round(R * 0.32)));
-            ctx.font = `600 ${fs}px ${colors.font || "sans-serif"}`;
-            ctx.fillStyle = colors.strong;
-
-            const textY = arcDeg <= 200 ? cy - R * 0.15 : cy + R * 0.45;
-            ctx.fillText(textToDraw, cx, Math.min(h - 14, textY));
-            ctx.restore();
-        }
-    }
-
-    _drawLinear(w, h) {
-        const ctx = this.ctx;
-        const colors = this._colors();
-        const orientation = (this.p && this.p.orientation) || "horizontal";
-        const isHoriz = orientation === "horizontal";
-
-        const min = numOr(this.p && this.p.min, 0);
-        const max = Math.max(min + 0.001, numOr(this.p && this.p.max, 100));
-        let val = numOr(this.p && this.p.value, 0);
-        if (this.p && this.p.softMax && val > max) val = max;
-        if (this.p && this.p.softMin && val < min) val = min;
-
-        const frac = Math.max(0, Math.min(1, (val - min) / (max - min)));
-
-        const thList = this._thresholdList();
-        const { zone } = this._activeZone(val);
-        const colorMode = (this.p && this.p.colorMode) || "zones";
-
-        if (isHoriz) {
-            // Horizontal Bar
-            const padX = 24, padY = h / 2;
-            const barW = Math.max(40, w - padX * 2);
-            const barH = Math.max(8, Math.min(32, numOr(this.p && this.p.thickness, 18)));
-            const barX = padX;
-            const barY = padY - barH / 2;
-
-            // 1. Background / Zones
-            if (colorMode === "zones" && thList.length) {
-                let curX = barX;
-                thList.forEach((th) => {
-                    const thVal = Math.min(max, Math.max(min, numOr(th.value, max)));
-                    const thFrac = (thVal - min) / (max - min);
-                    const thEndX = barX + thFrac * barW;
-                    const segW = thEndX - curX;
-                    if (segW > 0) {
-                        ctx.fillStyle = this.hexToRgba(th.color, 0.25);
-                        ctx.fillRect(curX, barY, segW, barH);
-                        curX = thEndX;
-                    }
-                });
-            } else {
-                ctx.fillStyle = colors.grid;
-                ctx.fillRect(barX, barY, barW, barH);
-            }
-
-            // 2. Active Fill
-            const fillW = frac * barW;
-            const activeColor = colorMode === "threshold" && zone ? zone.color : (this.p.needleColor || colors.accent);
-            ctx.fillStyle = activeColor;
-            ctx.fillRect(barX, barY, fillW, barH);
-
-            // Bar Border
-            ctx.strokeStyle = colors.band || "#3e444a";
-            ctx.lineWidth = 1;
-            ctx.strokeRect(barX, barY, barW, barH);
-
-            // 3. Target Line
-            if (this.p && this.p.showTarget) {
-                const targetVal = numOr(this.p.targetValue, (min + max) / 2);
-                const tFrac = Math.max(0, Math.min(1, (targetVal - min) / (max - min)));
-                const tx = barX + tFrac * barW;
-                ctx.strokeStyle = this.p.targetColor || "#3b82f6";
-                ctx.lineWidth = 2.5;
-                ctx.beginPath();
-                ctx.moveTo(tx, barY - 4);
-                ctx.lineTo(tx, barY + barH + 4);
-                ctx.stroke();
-            }
-
-            // 4. Pointer Marker (Notch)
-            const pointerX = barX + fillW;
-            ctx.fillStyle = activeColor;
-            ctx.beginPath();
-            ctx.moveTo(pointerX, barY + barH + 2);
-            ctx.lineTo(pointerX - 5, barY + barH + 9);
-            ctx.lineTo(pointerX + 5, barY + barH + 9);
-            ctx.closePath();
-            ctx.fill();
-
-            // 5. Min / Max / Readout
-            ctx.font = `11px ${colors.font || "sans-serif"}`;
-            ctx.fillStyle = colors.text;
-            ctx.textAlign = "left";
-            ctx.fillText(this._fmtVal(min), barX, barY - 8);
-            ctx.textAlign = "right";
-            ctx.fillText(this._fmtVal(max), barX + barW, barY - 8);
-
-            if (this.p && this.p.showReadout !== false) {
-                ctx.textAlign = "center";
-                ctx.font = `600 16px ${colors.font || "sans-serif"}`;
-                ctx.fillStyle = colors.strong;
-                ctx.fillText(this._fmtVal(val) + (this.p.unit ? " " + this.p.unit : ""), barX + barW / 2, barY - 8);
-            }
-        } else {
-            // Vertical Bar (Tank / Thermometer)
-            const padY = 24, padX = w / 2;
-            const barH = Math.max(40, h - padY * 2);
-            const barW = Math.max(8, Math.min(32, numOr(this.p && this.p.thickness, 18)));
-            const barX = padX - barW / 2;
-            const barY = padY;
-
-            // Background
-            ctx.fillStyle = colors.grid;
-            ctx.fillRect(barX, barY, barW, barH);
-
-            // Active fill from bottom up
-            const fillH = frac * barH;
-            const fillY = barY + barH - fillH;
-            const activeColor = colorMode === "threshold" && zone ? zone.color : (this.p.needleColor || colors.accent);
-            ctx.fillStyle = activeColor;
-            ctx.fillRect(barX, fillY, barW, fillH);
-
-            // Border
-            ctx.strokeStyle = colors.band || "#3e444a";
-            ctx.lineWidth = 1;
-            ctx.strokeRect(barX, barY, barW, barH);
-
-            // Readout
-            if (this.p && this.p.showReadout !== false) {
-                ctx.font = `600 13px ${colors.font || "sans-serif"}`;
-                ctx.fillStyle = colors.strong;
-                ctx.textAlign = "center";
-                ctx.fillText(this._fmtVal(val) + (this.p.unit ? " " + this.p.unit : ""), padX, h - 8);
-            }
-        }
-    }
-
-    // ---- Logic Actions ---------------------------------------------------------------------
-    setValue(params) {
-        let v = typeof params === "number" ? params : (params && typeof params === "object" ? params.value : 0);
-        v = numOr(v, 0);
-        if (this.p) this.p.value = v;
-        this.prepareData();
-        if (this.resizeCanvas()) this.draw();
-        this.requestUpdate();
-        this.emit("change", { value: v, unit: this.p && this.p.unit ? this.p.unit : "" });
-    }
-
-    setTarget(params) {
-        let t = typeof params === "number" ? params : (params && typeof params === "object" ? params.target : 0);
-        if (this.p) this.p.targetValue = numOr(t, 0);
-        this.scheduleDraw();
-        this.requestUpdate();
-    }
-
-    exportData(format) {
-        const fmt = (format || "csv").toLowerCase();
-        const min = numOr(this.p && this.p.min, 0);
-        const max = numOr(this.p && this.p.max, 100);
-        const val = numOr(this.p && this.p.value, 0);
-        const unit = this.p && this.p.unit ? this.p.unit : "";
-        const title = this._exportTitle() || "Gauge";
-        const { zone } = this._activeZone(val);
-
-        const header = ["Metric", "Value", "Unit", "Min", "Max", "Threshold", "Target"];
-        const rows = [
-            [title, val, unit, min, max, zone ? zone.label : "", this.p && this.p.showTarget ? this.p.targetValue : ""]
-        ];
-
-        let blob;
-        if (fmt === "xlsx") {
-            blob = xlsxBlob(header, rows, false, { textCols: [0, 2, 5] });
-        } else if (fmt === "png") {
-            if (this.canvas) {
-                this.canvas.toBlob((b) => {
-                    const name = this._getExportFileName("png", "all");
-                    this._download(b, name);
-                    this._lastExport = { name, blob: b, rows: 1 };
-                });
-                return 1;
-            }
-        } else {
-            const q = (t) => '"' + String(t).replace(/"/g, '""') + '"';
-            const lines = [header.map(q).join(",")];
-            rows.forEach((r) => lines.push(r.map(q).join(",")));
-            blob = new Blob(["\ufeff" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
-        }
-
-        const name = this._getExportFileName(fmt, "all");
-        if (blob) {
-            this._download(blob, name);
-            this._lastExport = { name, blob, rows: 1 };
-        }
-        return 1;
-    }
-
-    render() {
-        const title = this.p && this.p.title ? this.p.title : "";
-        return html`
-            <div class="gauge-container" part="gauge">
-                ${title ? html`<div class="gauge-title">${title}</div>` : ""}
-                <div class="plot">
-                    <canvas></canvas>
-                    <div class="corner" style="right: 10px; top: 8px;">
-                        ${this._renderMenu()}
-                    </div>
-                </div>
-            </div>
-        `;
-    }
-}
+const DEG = Math.PI / 180;
+const GAUGE_FIELDS = Object.assign({}, readoutFields("gauge"), scaleFields());
 
 export const gauge = defineUI({
-    ...common,
+    ...chartCommon,
     id: PREFIX + "gauge",
-    label: "Gauge & Meter",
+    label: "Gauge",
     icon: "fa fa-dashboard",
-    size: { w: 320, h: 240 },
-    help: "Industrial radial dial and linear bar gauge with customizable needle, min/max bounds, threshold warning zones, target goal marker, and live tag binding.",
-    version: 1,
+    size: { w: 280, h: 240 },
+    help: "A dial per value: an arc (half, 240°, a full ring), a fill / a needle / a triangle marker, ticks you set, threshold zones, a target and a normal band, the peak over a window. Each gauge has its own Update node and events.",
+    version: 2,
+    // v1 (the old Gauge & Meter: one value in flat props) is not carried over: a new chart (the user, 2026-10-06)
+    migrate(p) { return p; },
 
-    groups: ["Gauge", "Pointer & Needle", "Thresholds & Zones", "Target Goal", "Scale & Readout", "Export", "Style", "Behaviour"],
+    groups: ["Gauges", "Dial", "Pointer", "Scale", "Value", "Layout", "Thresholds", "General", "Export"],
 
     properties: {
-        mode: {
-            type: "enum", group: "Gauge", label: "Mode", default: "radial",
-            options: opt([["radial", "Radial (dial / speedometer)"], ["linear", "Linear (bar meter)"]]),
-            help: "Radial displays a circular dial; Linear displays a horizontal or vertical bar."
-        },
-        orientation: {
-            type: "enum", group: "Gauge", label: "Bar orientation", default: "horizontal",
-            options: opt([["horizontal", "Horizontal"], ["vertical", "Vertical"]]),
-            visibleWhen: (p) => p.mode === "linear"
-        },
-        arcAngle: {
-            type: "number", group: "Gauge", label: "Dial sweep angle", default: 240,
-            min: 90, max: 360, step: 15, unit: "°",
-            visibleWhen: (p) => (p.mode || "radial") === "radial",
-            help: "Total arc sweep in degrees: 180° = semi-circle, 240° = standard gauge, 270° = wide dial, 360° = full circle."
-        },
-        startAngle: {
-            type: "number", group: "Gauge", label: "Start angle", default: 150,
-            min: -360, max: 360, step: 15, unit: "°",
-            visibleWhen: (p) => (p.mode || "radial") === "radial",
-            help: "Start angle in degrees (150° with 240° sweep starts at bottom-left and ends at bottom-right)."
-        },
-        thickness: {
-            type: "number", group: "Gauge", label: "Track thickness", default: 16,
-            min: 4, max: 48, step: 2, unit: "px"
-        },
+        gauges: itemsProp({ group: "Gauges", label: "Gauges", noun: "gauge", prefix: "g", fields: GAUGE_FIELDS, click: "gaugeClick",
+            help: "One dial per value, side by side. Each has its own Update node, message and events in Logic." }),
 
-        // ---- Value & Bounds ----
-        value: {
-            type: "number", group: "Gauge", label: "Value", default: 0,
-            help: "Current gauge reading. Can be bound to a tag or variable."
+        // ---- the dial ----
+        sweep: { type: "number", group: "Dial", label: "Sweep", default: 240, min: 90, max: 360, step: 10, unit: "°", help: "180 = a half circle, 240 / 270 = a classic dial, 360 = a ring." },
+        thickness: { type: "number", group: "Dial", label: "Track thickness", default: 12, min: 2, max: 50, unit: "% of the radius" },
+        rounded: { type: "boolean", group: "Dial", label: "Rounded ends", default: true },
+        trackColor: { type: "color", group: "Dial", label: "Track colour", default: "", tokens: "colors", help: "Empty: the theme's subtle band." },
+        zones: {
+            type: "enum", group: "Dial", label: "Threshold zones", default: "ring",
+            options: opt([["ring", "A thin ring outside the track"], ["inner", "A thin ring inside the track"], ["track", "Colour the track itself"], ["none", "None"]])
         },
-        min: { type: "number", group: "Gauge", label: "Min (batas bawah)", default: 0 },
-        max: { type: "number", group: "Gauge", label: "Max (batas atas)", default: 100 },
-        softMin: { type: "boolean", group: "Gauge", label: "Soft min (auto-expand below)", default: false },
-        softMax: { type: "boolean", group: "Gauge", label: "Soft max (auto-expand above)", default: false },
-        unit: { type: "string", group: "Gauge", label: "Unit", default: "", help: "Unit displayed alongside the value (e.g. °C, bar, rpm, kW, %)." },
-        title: { type: "string", group: "Gauge", label: "Title", default: "", help: "Gauge header label." },
+        zoneWidth: { type: "number", group: "Dial", label: "Zone ring width", default: 4, min: 1, max: 20, unit: "px", visibleWhen: (p) => p.zones === "ring" || p.zones === "inner" },
+        zoneLabels: { type: "boolean", group: "Dial", label: "The steps' labels on the dial", default: false },
 
-        // ---- Pointer & Needle ----
-        pointerType: {
-            type: "enum", group: "Pointer & Needle", label: "Pointer style", default: "needleAndArc",
-            options: opt([
-                ["needleAndArc", "Needle + Filled track (Combo)"],
-                ["needle", "Needle only (classic dial)"],
-                ["arc", "Filled arc / progress only"]
-            ]),
-            help: "How the current value is indicated."
-        },
-        needleColor: {
-            type: "color", group: "Pointer & Needle", label: "Needle / pointer colour", default: "",
-            help: "Custom pointer colour. Leave empty to use theme accent or active threshold colour."
-        },
-        needleWidth: {
-            type: "number", group: "Pointer & Needle", label: "Needle thickness", default: 3,
-            min: 1, max: 10, step: 0.5, unit: "px",
-            visibleWhen: (p) => p.pointerType === "needle" || p.pointerType === "needleAndArc"
-        },
-        needleLength: {
-            type: "number", group: "Pointer & Needle", label: "Needle length ratio", default: 0.82,
-            min: 0.4, max: 1.0, step: 0.05,
-            visibleWhen: (p) => p.pointerType === "needle" || p.pointerType === "needleAndArc"
-        },
-        needleCap: {
-            type: "boolean", group: "Pointer & Needle", label: "Needle center pivot cap", default: true,
-            visibleWhen: (p) => (p.mode || "radial") === "radial" && (p.pointerType === "needle" || p.pointerType === "needleAndArc")
-        },
-        needleCapSize: {
-            type: "number", group: "Pointer & Needle", label: "Pivot cap size", default: 10,
-            min: 4, max: 24, step: 2, unit: "px",
-            visibleWhen: (p) => (p.mode || "radial") === "radial" && p.needleCap !== false
-        },
+        // ---- the pointer ----
+        fill: { type: "boolean", group: "Pointer", label: "Fill along the arc", default: true, help: "The arc filled from the start to the value." },
+        fillColor: { type: "color", group: "Pointer", label: "Fill colour", default: "", tokens: "colors", help: "Empty: the colour of the step the value is in (else the gauge's colour)." },
+        needle: { type: "enum", group: "Pointer", label: "Needle", default: "none", options: opt([["none", "None"], ["line", "A line"], ["tapered", "A tapered blade"], ["arrow", "An arrow"]]) },
+        needleLength: { type: "number", group: "Pointer", label: "Needle length", default: 85, min: 30, max: 110, unit: "% of the radius", visibleWhen: (p) => p.needle && p.needle !== "none" },
+        needleWidth: { type: "number", group: "Pointer", label: "Needle width", default: 4, min: 1, max: 20, unit: "px", visibleWhen: (p) => p.needle && p.needle !== "none" },
+        needleColor: { type: "color", group: "Pointer", label: "Needle colour", default: "", tokens: "colors", help: "Empty: the theme's text.", visibleWhen: (p) => p.needle && p.needle !== "none" },
+        hub: { type: "boolean", group: "Pointer", label: "Hub (the needle's centre)", default: true, visibleWhen: (p) => p.needle && p.needle !== "none" },
+        hubSize: { type: "number", group: "Pointer", label: "Hub size", default: 7, min: 2, max: 30, unit: "px", visibleWhen: (p) => p.needle && p.needle !== "none" && p.hub !== false },
+        marker: { type: "enum", group: "Pointer", label: "Triangle marker", default: "none", options: opt([["none", "None"], ["outside", "Outside the arc (pointing in)"], ["inside", "Inside the arc (pointing out)"]]), help: "A triangle that runs along the arc to the value." },
+        markerSize: { type: "number", group: "Pointer", label: "Marker size", default: 10, min: 4, max: 40, unit: "px", visibleWhen: (p) => p.marker && p.marker !== "none" },
+        markerColor: { type: "color", group: "Pointer", label: "Marker colour", default: "", tokens: "colors", help: "Empty: the colour of the step the value is in.", visibleWhen: (p) => p.marker && p.marker !== "none" },
 
-        // ---- Thresholds & Zones ----
-        colorMode: {
-            type: "enum", group: "Thresholds & Zones", label: "Colour mode", default: "zones",
-            options: opt([
-                ["zones", "Color zones on track (green / amber / red)"],
-                ["threshold", "Pointer adopts active threshold colour"],
-                ["solid", "Solid (theme accent)"]
-            ])
-        },
-        thresholds: {
-            type: "list", group: "Thresholds & Zones", label: "Threshold zones", noun: "zone",
-            default: defaultThresholds(),
-            item: {
-                noun: "zone",
-                fields: THRESHOLD_FIELDS
-            }
-        },
+        // ---- the scale ----
+        ticks: { type: "boolean", group: "Scale", label: "Ticks", default: true },
+        tickStep: { type: "number", group: "Scale", label: "Major tick every", default: 0, min: 0, help: "0 = automatic (about 5). A list below wins.", visibleWhen: (p) => p.ticks !== false },
+        tickList: { type: "string", group: "Scale", label: "Major ticks at (a list)", default: "", bindable: false, help: "0, 25, 50, 80, 100 — exactly these.", visibleWhen: (p) => p.ticks !== false },
+        minorTicks: { type: "number", group: "Scale", label: "Minor ticks between two majors", default: 4, min: 0, max: 20, visibleWhen: (p) => p.ticks !== false },
+        tickPlace: { type: "enum", group: "Scale", label: "Ticks", default: "inside", options: opt([["inside", "Inside the track"], ["outside", "Outside the track"], ["across", "Across the track"]]), visibleWhen: (p) => p.ticks !== false },
+        tickLength: { type: "number", group: "Scale", section: "Look", label: "Major length", default: 8, min: 2, max: 40, unit: "px", visibleWhen: (p) => p.ticks !== false },
+        minorLength: { type: "number", group: "Scale", section: "Look", label: "Minor length", default: 4, min: 1, max: 30, unit: "px", visibleWhen: (p) => p.ticks !== false },
+        tickWidth: { type: "number", group: "Scale", section: "Look", label: "Width", default: 1.5, min: 0.5, max: 6, step: 0.5, unit: "px", visibleWhen: (p) => p.ticks !== false },
+        tickColor: { type: "color", group: "Scale", section: "Look", label: "Colour", default: "", tokens: "colors", help: "Empty: the theme's muted text.", visibleWhen: (p) => p.ticks !== false },
+        labels: { type: "boolean", group: "Scale", label: "Tick labels", default: true },
+        labelPlace: { type: "enum", group: "Scale", label: "Labels", default: "inside", options: opt([["inside", "Inside"], ["outside", "Outside"]]), visibleWhen: (p) => p.labels !== false },
+        labelSize: { type: "number", group: "Scale", label: "Label size", default: 10, min: 7, max: 24, unit: "px", visibleWhen: (p) => p.labels !== false },
 
-        // ---- Target Goal (Power BI) ----
-        showTarget: { type: "boolean", group: "Target Goal", label: "Show target goal marker", default: false },
-        targetValue: {
-            type: "number", group: "Target Goal", label: "Target value", default: 75,
-            visibleWhen: (p) => p.showTarget === true
-        },
-        targetColor: {
-            type: "color", group: "Target Goal", label: "Target marker colour", default: "#3b82f6",
-            visibleWhen: (p) => p.showTarget === true
-        },
+        // ---- the value ----
+        showValue: { type: "boolean", group: "Value", label: "Show the value", default: true },
+        valueSize: { type: "number", group: "Value", label: "Value size", default: 0, min: 0, max: 150, unit: "px", help: "0 = as big as the dial allows." },
+        valueWeight: { type: "enum", group: "Value", label: "Weight", default: "600", options: opt([["400", "Normal"], ["600", "Semibold"], ["700", "Bold"]]) },
+        valueColor: { type: "enum", group: "Value", label: "Colour", default: "text", options: opt([["text", "The text colour"], ["state", "The step's colour"]]) },
+        showDelta: { type: "boolean", group: "Value", label: "The delta under it", default: true },
 
-        // ---- Scale & Readout ----
-        showReadout: { type: "boolean", group: "Scale & Readout", label: "Show digital readout", default: true },
-        showMinMax: { type: "boolean", group: "Scale & Readout", label: "Show min & max labels", default: true },
-        showTicks: { type: "boolean", group: "Scale & Readout", label: "Show tick marks", default: true },
-        tickCount: { type: "number", group: "Scale & Readout", label: "Major tick count", default: 5, min: 2, max: 20, step: 1 },
-        notation: { type: "enum", group: "Scale & Readout", label: "Notation", default: "standard", options: opt(NOTATIONS) },
-        decimals: { type: "enum", group: "Scale & Readout", label: "Decimals", default: "auto", options: opt(DECIMALS) },
+        // ---- the layout ----
+        columns: { type: "number", group: "Layout", label: "Columns", default: 0, min: 0, max: 12, step: 1, help: "0 = as many as fit (a gauge at least 160 px wide)." },
+        gap: { type: "number", group: "Layout", label: "Space between gauges", default: 8, min: 0, max: 40, unit: "px" },
+        showName: { type: "boolean", group: "Layout", label: "Show the name", default: true },
+        namePlace: { type: "enum", group: "Layout", label: "The name", default: "top", options: opt([["top", "Above the dial"], ["bottom", "Below the dial"]]) },
+        nameSize: { type: "number", group: "Layout", label: "Name size", default: 12, min: 8, max: 32, unit: "px" },
+        frame: { type: "boolean", group: "Layout", label: "A frame around each gauge", default: false },
 
-        // ---- Export ----
-        exportButton: { type: "boolean", group: "Export", label: "Export menu on the chart (⋮)", default: true },
-        exportCsv: { type: "boolean", group: "Export", label: "Menu: CSV", default: true, visibleWhen: (p) => p.exportButton !== false },
-        exportXlsx: { type: "boolean", group: "Export", label: "Menu: Excel", default: true, visibleWhen: (p) => p.exportButton !== false },
-        exportPng: { type: "boolean", group: "Export", label: "Menu: PNG", default: true, visibleWhen: (p) => p.exportButton !== false },
-        exportTitle: { type: "string", group: "Export", label: "Title", default: "", help: "Title in export files; {title} in filename." },
-        exportFilename: { type: "string", group: "Export", label: "File name expression", default: "", bindable: false }
+        thresholds: stepsProp("gauges", "gauge"),
+        baseStatus: { type: "enum", group: "Thresholds", label: "Below the first step", default: "neutral", options: opt([["neutral", "The gauge's colour"]].concat(STATUSES.filter((s) => s[0] !== "custom" && s[0] !== "neutral"))) },
+
+        background: { type: "color", group: "General", label: "Background", default: "", tokens: "colors", help: "Empty: transparent (the page)." },
+        ...exportProps({ thresholds: false })
     },
 
+    parts: { chart: part("Chart container", "chart") },
+    events: {},
     actions: {
-        setValue: {
-            label: "Set value",
-            help: "Sets the gauge value directly or from a payload object { value }.",
-            example: "{\n  \"value\": 78.5\n}"
-        },
-        setTarget: {
-            label: "Set target goal",
-            help: "Updates the target goal value.",
-            example: "{\n  \"target\": 80\n}"
-        },
-        exportData: {
-            label: "Export",
-            help: "Downloads data in CSV, Excel (.xlsx) or PNG format.",
-            example: "{\n  \"format\": \"csv\"\n}"
-        }
+        clearAll: { label: "Clear every gauge" },
+        exportData: { label: "Export (download)", params: { format: "string" }, example: "{ \"format\": \"xlsx\" }  (csv | xlsx | png)" }
     },
 
-    events: {
-        change: {
-            label: "On Value Change",
-            payload: { value: "number", unit: "string", threshold: "string" },
-            help: "Fired when the gauge value updates."
-        },
-        thresholdCrossed: {
-            label: "On Threshold Crossed",
-            payload: { value: "number", threshold: "string", color: "string" },
-            help: "Fired when the value enters a new warning or critical threshold zone."
-        }
-    },
+    view: class extends ReadoutElement {
+        static styles = [...ReadoutElement.styles, css`
+            .gauge-wrap { position: relative; width: 100%; height: 100%; box-sizing: border-box; overflow: hidden; border-radius: var(--r, 4px); }
+            .gauge-wrap .plot { position: absolute; inset: 0; cursor: default; }
+            .gauge-wrap .plot.over-item { cursor: pointer; }
+            .gauge-wrap .corner { top: 4px; right: 4px; opacity: 0; transition: opacity 0.15s; }
+            .gauge-wrap:hover .corner { opacity: 1; }
+        `];
 
-    view: GaugeElement
+        get itemsKey() { return "gauges"; }
+        get itemFields() { return GAUGE_FIELDS; }
+        get clickEvent() { return "gaugeClick"; }
+
+        _drawInto(ctx, w, h) {
+            this._fresh(ctx, w, h);
+            const list = this.itemList().filter((t) => t.visible !== false);
+            const boxes = this._grid(list.length, w, h, this.p.columns, this.p.gap, 160);
+            this._rects = [];
+            list.forEach((t, i) => { this._rects.push(Object.assign({ t }, boxes[i])); this._drawGauge(ctx, t, boxes[i]); });
+        }
+
+        // the arc's geometry in a box: { cx, cy, r, a0, a1 } (angles in radians, clockwise from east; the gap at the bottom)
+        _geometry(b, top, bottom, outerPad) {
+            const sweep = Math.max(90, Math.min(360, numOr(this.p.sweep, 240)));
+            // the gap at the bottom; a full ring starts at the top (12 o'clock)
+            const a0 = (sweep >= 360 ? -90 : 90 + (360 - sweep) / 2) * DEG, a1 = a0 + sweep * DEG;
+            // the arc's extent on a unit circle (and its centre, where the value sits)
+            let x0 = 0, x1 = 0, y0 = 0, y1 = 0;
+            for (let k = 0; k <= 64; k++) { const a = a0 + ((a1 - a0) * k) / 64; x0 = Math.min(x0, Math.cos(a)); x1 = Math.max(x1, Math.cos(a)); y0 = Math.min(y0, Math.sin(a)); y1 = Math.max(y1, Math.sin(a)); }
+            // a half dial: room under the centre for the value
+            if (sweep <= 200) y1 = Math.max(y1, this.p.needle && this.p.needle !== "none" && this.p.showValue !== false ? 0.5 : 0.32);
+            const aw = b.w - outerPad * 2, ah = b.h - top - bottom - outerPad * 2;
+            const r = Math.max(10, Math.min(aw / (x1 - x0), ah / (y1 - y0)));
+            // the drawn extent centred in the area
+            const cx = b.x + outerPad + (aw - r * (x1 - x0)) / 2 - x0 * r, cy = b.y + top + outerPad + (ah - r * (y1 - y0)) / 2 - y0 * r;
+            return { cx, cy, r, a0, a1, sweep };
+        }
+
+        _drawGauge(ctx, t, b) {
+            const c = this._colors(), p = this.p, font = c.font, st = this._state(t);
+            const fig = this._figure(t, st), v = fig.v, sc = this._range(t, st, v), state = this._stateColor(t, v);
+            const own = this._tok(t.color) || this.seriesColor(t._i), stale = st.stale && !st.demo;
+            const at = (x) => { const k = Math.max(0, Math.min(1, (x - sc.lo) / (sc.hi - sc.lo))); return g.a0 + (g.a1 - g.a0) * k; };
+            ctx.save();
+            if (p.frame) {
+                ctx.fillStyle = this._panel(); ctx.strokeStyle = c.grid; ctx.lineWidth = 1;
+                ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(b.x + 0.5, b.y + 0.5, b.w - 1, b.h - 1, 4); else ctx.rect(b.x + 0.5, b.y + 0.5, b.w - 1, b.h - 1);
+                ctx.fill(); ctx.stroke();
+            }
+            if (stale) ctx.globalAlpha = 0.5;
+            // the name's room, the room outside the arc (labels / ticks / markers / a zone ring outside)
+            const ns = numOr(p.nameSize, 12), nameH = p.showName !== false && t.name ? ns + 6 : 0;
+            const lab = p.labels !== false ? numOr(p.labelSize, 10) : 0;
+            // the widest text outside the arc (a tick label outside, a step's label) sets the room around it
+            ctx.font = "500 " + lab + "px " + font;
+            const wideOf = (texts) => texts.reduce((m, s) => Math.max(m, ctx.measureText(s).width), 0);
+            const scale0 = this._range(t, st, v);
+            const outLabels = p.labels !== false && p.labelPlace === "outside" ? wideOf(scaleTicks(scale0.lo, scale0.hi, numOr(p.tickStep, 0), p.tickList, 5).map((m) => this._valueText(m, this._spec(t), t._map))) + lab * 0.9 + 6 + (p.ticks !== false && p.tickPlace === "outside" ? numOr(p.tickLength, 8) : 0) : 0;
+            const outZones = p.zoneLabels ? wideOf(this._steps(t).map((s) => s.label || "")) + 6 : 0;
+            const outside = Math.max(outLabels, outZones, p.ticks !== false && p.tickPlace === "outside" ? numOr(p.tickLength, 8) + 2 : 0,
+                p.marker === "outside" ? numOr(p.markerSize, 10) + 2 : 0, p.zones === "ring" ? numOr(p.zoneWidth, 4) + 3 : 0, Number.isFinite(numOr(t.target, NaN)) ? 8 : 0) + 4;
+            const top = p.namePlace === "bottom" ? 0 : nameH, bottom = p.namePlace === "bottom" ? nameH : 0;
+            const g = this._geometry(b, top, bottom, outside + 2);
+            const r = g.r, thick = Math.max(2, (r * Math.max(2, Math.min(50, numOr(p.thickness, 12)))) / 100), rm = r - thick / 2;
+            ctx.lineCap = p.rounded !== false ? "round" : "butt";
+            // the track
+            const steps = this._steps(t);
+            const zoneOf = (s) => this._statusColor(s.status, s.color);
+            ctx.lineWidth = thick;
+            ctx.strokeStyle = this._tok(p.trackColor) || c.band;
+            ctx.beginPath(); ctx.arc(g.cx, g.cy, rm, g.a0, g.a1); ctx.stroke();
+            // the zones: the track coloured, or a thin ring outside / inside it
+            if (steps.length && p.zones !== "none") {
+                const zw = p.zones === "track" ? thick : Math.max(1, numOr(p.zoneWidth, 4)), zr = p.zones === "track" ? rm : p.zones === "inner" ? r - thick - zw / 2 - 2 : r + zw / 2 + 2;
+                ctx.save(); ctx.lineCap = "butt"; ctx.lineWidth = zw;
+                if (p.zones === "track") ctx.globalAlpha *= 0.35;
+                steps.forEach((s, i) => {
+                    const from = Math.max(sc.lo, s.from), to = i + 1 < steps.length ? Math.min(sc.hi, steps[i + 1].from) : sc.hi;
+                    if (to <= from) return;
+                    ctx.strokeStyle = zoneOf(s); ctx.beginPath(); ctx.arc(g.cx, g.cy, zr, at(from), at(to)); ctx.stroke();
+                });
+                ctx.restore();
+                if (p.zoneLabels) {
+                    ctx.save(); ctx.font = "500 " + Math.max(8, lab - 1) + "px " + font; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+                    steps.forEach((s, i) => {
+                        if (!s.label) return;
+                        const to = i + 1 < steps.length ? steps[i + 1].from : sc.hi, mid = at((Math.max(sc.lo, s.from) + Math.min(sc.hi, to)) / 2);
+                        const lr = r + (p.zones === "ring" ? numOr(p.zoneWidth, 4) + 4 : 4) + (p.labelPlace === "outside" ? lab * 1.6 : 0) + ctx.measureText(s.label).width / 2 + 2;
+                        ctx.fillStyle = zoneOf(s); ctx.fillText(s.label, g.cx + Math.cos(mid) * lr, g.cy + Math.sin(mid) * lr);
+                    });
+                    ctx.restore();
+                }
+            }
+            // the normal band: a faint ring just inside the track
+            const nl = numOr(t.normalLow, NaN), nh = numOr(t.normalHigh, NaN);
+            if (Number.isFinite(nl) || Number.isFinite(nh)) {
+                ctx.save(); ctx.lineCap = "butt"; ctx.lineWidth = 3; ctx.strokeStyle = this.hexToRgba(this.statusColor("success"), 0.6);
+                ctx.beginPath(); ctx.arc(g.cx, g.cy, r - thick - 3, at(Number.isFinite(nl) ? nl : sc.lo), at(Number.isFinite(nh) ? nh : sc.hi)); ctx.stroke(); ctx.restore();
+            }
+            // the ghost: the lowest .. highest over the window, faint on the track
+            if (t.showPeak && st.buf.count > 1) {
+                const pk = this._peak(t, st);
+                if (Number.isFinite(pk.lo) && Number.isFinite(pk.hi)) {
+                    ctx.save(); ctx.lineCap = "butt"; ctx.lineWidth = thick; ctx.strokeStyle = this.hexToRgba(state || own, 0.22);
+                    ctx.beginPath(); ctx.arc(g.cx, g.cy, rm, at(pk.lo), Math.max(at(pk.hi), at(pk.lo) + 0.01)); ctx.stroke();
+                    ctx.lineWidth = 2; ctx.strokeStyle = this.hexToRgba(state || own, 0.8);
+                    [pk.lo, pk.hi].forEach((q) => { const a = at(q); ctx.beginPath(); ctx.moveTo(g.cx + Math.cos(a) * (r - thick), g.cy + Math.sin(a) * (r - thick)); ctx.lineTo(g.cx + Math.cos(a) * r, g.cy + Math.sin(a) * r); ctx.stroke(); });
+                    ctx.restore();
+                }
+            }
+            // the fill along the arc
+            const fillColor = this._tok(p.fillColor) || state || own;
+            if (p.fill !== false && Number.isFinite(v)) {
+                ctx.lineWidth = thick; ctx.strokeStyle = fillColor;
+                ctx.beginPath(); ctx.arc(g.cx, g.cy, rm, g.a0, Math.max(at(v), g.a0 + 0.001)); ctx.stroke();
+            }
+            // the ticks and their labels
+            const tickColor = this._tok(p.tickColor) || c.text;
+            const majors = scaleTicks(sc.lo, sc.hi, numOr(p.tickStep, 0), p.tickList, Math.max(3, Math.round(g.sweep / 50)));
+            if (p.ticks !== false) {
+                const place = p.tickPlace || "inside", L = numOr(p.tickLength, 8), l = numOr(p.minorLength, 4), minor = Math.max(0, Math.floor(numOr(p.minorTicks, 4)));
+                const radial = (val, len) => {
+                    const a = at(val);
+                    const r0 = place === "outside" ? r + 2 : place === "across" ? r - thick - 1 : r - thick - 2 - len, r1 = place === "outside" ? r + 2 + len : place === "across" ? r + 1 : r - thick - 2;
+                    ctx.beginPath(); ctx.moveTo(g.cx + Math.cos(a) * r0, g.cy + Math.sin(a) * r0); ctx.lineTo(g.cx + Math.cos(a) * r1, g.cy + Math.sin(a) * r1); ctx.stroke();
+                };
+                ctx.save(); ctx.strokeStyle = tickColor; ctx.lineCap = "butt";
+                ctx.lineWidth = numOr(p.tickWidth, 1.5);
+                majors.forEach((m) => radial(m, place === "across" ? 0 : L));
+                ctx.lineWidth = Math.max(0.5, numOr(p.tickWidth, 1.5) * 0.6);
+                if (minor > 0) for (let k = 0; k + 1 < majors.length; k++) { const d = (majors[k + 1] - majors[k]) / (minor + 1); for (let j = 1; j <= minor; j++) radial(majors[k] + d * j, place === "across" ? 0 : l); }
+                ctx.restore();
+            }
+            if (p.labels !== false) {
+                ctx.save(); ctx.font = "500 " + lab + "px " + font; ctx.fillStyle = tickColor; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+                const inner = p.ticks !== false && (p.tickPlace || "inside") === "inside" ? numOr(p.tickLength, 8) + 2 : 0;
+                const lr = p.labelPlace === "outside" ? r + (p.tickPlace === "outside" && p.ticks !== false ? numOr(p.tickLength, 8) + 4 : 4) + lab * 0.9 : r - thick - inner - lab * 0.9 - 2;
+                // a label's centre moves out (or in) by half its width where the dial runs up and down (its sides)
+                const outward = p.labelPlace === "outside" ? 1 : -1;
+                majors.forEach((m) => {
+                    const a = at(m), txt = this._valueText(m, this._spec(t), t._map), rr = lr + outward * (ctx.measureText(txt).width / 2) * Math.abs(Math.cos(a));
+                    ctx.fillText(txt, g.cx + Math.cos(a) * rr, g.cy + Math.sin(a) * rr);
+                });
+                ctx.restore();
+            }
+            // the target (a bar across the track and a small triangle outside), the setpoint (dashed across the track)
+            const tgt = numOr(t.target, NaN), spv = numOr(t.setpoint, NaN);
+            if (Number.isFinite(tgt)) {
+                const a = at(tgt);
+                ctx.save(); ctx.strokeStyle = c.strong; ctx.fillStyle = c.strong; ctx.lineWidth = 2.5; ctx.lineCap = "butt";
+                ctx.beginPath(); ctx.moveTo(g.cx + Math.cos(a) * (r - thick - 2), g.cy + Math.sin(a) * (r - thick - 2)); ctx.lineTo(g.cx + Math.cos(a) * (r + 2), g.cy + Math.sin(a) * (r + 2)); ctx.stroke();
+                this._triangle(ctx, g, a, r + 3, 6, true);
+                ctx.restore();
+            }
+            if (Number.isFinite(spv)) {
+                const a = at(spv);
+                ctx.save(); ctx.strokeStyle = c.strong; ctx.lineWidth = 1.5; ctx.setLineDash(DASHES.dotted);
+                ctx.beginPath(); ctx.moveTo(g.cx + Math.cos(a) * (r - thick - 4), g.cy + Math.sin(a) * (r - thick - 4)); ctx.lineTo(g.cx + Math.cos(a) * (r + 3), g.cy + Math.sin(a) * (r + 3)); ctx.stroke();
+                ctx.restore();
+            }
+            // the triangle marker running along the arc
+            if (p.marker && p.marker !== "none" && Number.isFinite(v)) {
+                const a = at(v), ms = numOr(p.markerSize, 10);
+                ctx.save(); ctx.fillStyle = this._tok(p.markerColor) || state || c.strong;
+                if (p.marker === "outside") this._triangle(ctx, g, a, r + 2, ms, true); else this._triangle(ctx, g, a, r - thick - 2, ms, false);
+                ctx.restore();
+            }
+            // the value in the middle, its unit and delta (above the needle's hub when there is a needle)
+            const hasNeedle = p.needle && p.needle !== "none";
+            if (p.showValue !== false) {
+                const vt = this._valueText(v, this._spec(t), t._map), unit = t._map && t._map.has(v) ? "" : (t.unit || "");
+                const half = g.sweep <= 200;
+                const boxW = (r - thick) * (half ? 1.5 : 1.25), boxH = half ? r * 0.42 : (r - thick) * 0.55;
+                const weight = p.valueWeight || "600";
+                let size = numOr(p.valueSize, 0);
+                if (!(size > 0)) size = this._fitSize(ctx, vt + (unit ? "  " + unit : ""), boxW, boxH, weight, font, 9, 120);
+                const deltaRef = p.showDelta !== false && t.deltaFrom && t.deltaFrom !== "none" ? this._refValue(t, st) : NaN;
+                const delta = Number.isFinite(deltaRef) ? this._delta(v, deltaRef, t.deltaAs !== "value", t.upIsGood, this._spec(t), t.unit) : null;
+                // where: a half dial above its centre; a full dial in its middle (below the hub with a needle)
+                let vy = half ? g.cy - size * 0.15 : hasNeedle ? g.cy + r * 0.38 : g.cy - (delta ? size * 0.2 : 0);
+                // a half dial with a needle: the value under the hub
+                if (hasNeedle && half) { size = Math.min(size, r * 0.22); vy = g.cy + numOr(p.hubSize, 7) + 6 + size * 0.55; }
+                ctx.save();
+                ctx.textAlign = "left"; ctx.textBaseline = "middle";
+                ctx.font = weight + " " + size + "px " + font;
+                const vw = ctx.measureText(vt).width;
+                ctx.font = "500 " + Math.round(size * 0.45) + "px " + font;
+                const uw = unit ? ctx.measureText(" " + unit).width : 0;
+                const x0 = g.cx - (vw + uw) / 2;
+                ctx.font = weight + " " + size + "px " + font;
+                ctx.fillStyle = p.valueColor === "state" && state ? state : c.strong;
+                ctx.fillText(vt, x0, vy);
+                if (unit) { ctx.font = "500 " + Math.round(size * 0.45) + "px " + font; ctx.fillStyle = c.text; ctx.fillText(" " + unit, x0 + vw, vy + size * 0.12); }
+                if (delta) {
+                    ctx.font = "500 11px " + font; ctx.textAlign = "center";
+                    ctx.fillStyle = delta.flat ? c.text : this.statusColor(delta.good ? "success" : "error");
+                    ctx.fillText(delta.text, g.cx, vy + size * 0.5 + 9);
+                }
+                ctx.restore();
+            }
+            // the needle and its hub
+            if (hasNeedle && Number.isFinite(v)) {
+                const a = at(v), len = (r * Math.max(30, Math.min(110, numOr(p.needleLength, 85)))) / 100, nw = numOr(p.needleWidth, 4);
+                const col = this._tok(p.needleColor) || c.strong;
+                const tx = g.cx + Math.cos(a) * len, ty = g.cy + Math.sin(a) * len, px = -Math.sin(a), py = Math.cos(a);
+                ctx.save(); ctx.fillStyle = col; ctx.strokeStyle = col;
+                if (p.needle === "line") { ctx.lineWidth = nw; ctx.lineCap = "round"; ctx.beginPath(); ctx.moveTo(g.cx, g.cy); ctx.lineTo(tx, ty); ctx.stroke(); }
+                else if (p.needle === "tapered") {
+                    const tail = len * 0.12;
+                    ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(g.cx + px * nw, g.cy + py * nw); ctx.lineTo(g.cx - Math.cos(a) * tail, g.cy - Math.sin(a) * tail); ctx.lineTo(g.cx - px * nw, g.cy - py * nw); ctx.closePath(); ctx.fill();
+                } else {
+                    const head = Math.max(8, nw * 3), bx = g.cx + Math.cos(a) * (len - head), by = g.cy + Math.sin(a) * (len - head);
+                    ctx.lineWidth = Math.max(1.5, nw * 0.6); ctx.beginPath(); ctx.moveTo(g.cx, g.cy); ctx.lineTo(bx, by); ctx.stroke();
+                    ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(bx + px * head * 0.5, by + py * head * 0.5); ctx.lineTo(bx - px * head * 0.5, by - py * head * 0.5); ctx.closePath(); ctx.fill();
+                }
+                if (p.hub !== false) { ctx.beginPath(); ctx.arc(g.cx, g.cy, numOr(p.hubSize, 7), 0, Math.PI * 2); ctx.fill(); ctx.fillStyle = this._panel(); ctx.beginPath(); ctx.arc(g.cx, g.cy, Math.max(1, numOr(p.hubSize, 7) * 0.4), 0, Math.PI * 2); ctx.fill(); }
+                ctx.restore();
+            }
+            // the name
+            if (nameH) {
+                ctx.font = "500 " + ns + "px " + font; ctx.fillStyle = c.text; ctx.textAlign = "center"; ctx.textBaseline = "top";
+                ctx.fillText(this._fit(ctx, t.name, b.w - 8), b.x + b.w / 2, p.namePlace === "bottom" ? b.y + b.h - ns - 2 : b.y + 2);
+            }
+            ctx.restore();
+            if (stale) {
+                ctx.save(); ctx.font = "600 10px " + font;
+                const s = "Stale · " + fmtDuration(Date.now() - st.lastAt), sw = ctx.measureText(s).width + 10;
+                ctx.fillStyle = this.statusColor("neutral");
+                ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(b.x + b.w / 2 - sw / 2, b.y + b.h - 18, sw, 16, 8); else ctx.rect(b.x + b.w / 2 - sw / 2, b.y + b.h - 18, sw, 16); ctx.fill();
+                ctx.fillStyle = this._onColor(this.statusColor("neutral")); ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(s, b.x + b.w / 2, b.y + b.h - 10);
+                ctx.restore();
+            }
+        }
+
+        // a triangle at angle a on radius rr, pointing to the centre (inward) or away from it
+        _triangle(ctx, g, a, rr, size, inward) {
+            const tipR = inward ? rr : rr, baseR = inward ? rr + size : rr - size, half = size * 0.6;
+            const px = -Math.sin(a), py = Math.cos(a);
+            const tx = g.cx + Math.cos(a) * tipR, ty = g.cy + Math.sin(a) * tipR, bx = g.cx + Math.cos(a) * baseR, by = g.cy + Math.sin(a) * baseR;
+            ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(bx + px * half, by + py * half); ctx.lineTo(bx - px * half, by - py * half); ctx.closePath(); ctx.fill();
+        }
+
+        render() {
+            const p = this.p, bg = this._tok(p.background), demo = this.itemList().some((t) => this._state(t).demo);
+            return html`
+                <div class="gauge-wrap" part="chart" style=${bg ? "background:" + bg : ""}>
+                    <div class="plot" @pointermove=${(e) => this._move(e)} @click=${(e) => this._click(e)}>
+                        <canvas></canvas>
+                        <div class="corner">${this._renderMenu()}</div>
+                        ${this._renderSampleBadge(demo)}
+                    </div>
+                </div>`;
+        }
+    }
 });

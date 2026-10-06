@@ -589,7 +589,8 @@ export class ChartElement extends UIElement {
         _clearCanvas(ctx, w, h) {
             ctx.clearRect(0, 0, w, h);
             if (!this._printing || this._exporting) return;
-            const bg = this._backgroundColor();
+            // (a chart on a transparent page, e.g. a gauge with no frame: the theme's panel)
+            const bg = this._backgroundColor() || getComputedStyle(this).getPropertyValue("--panel").trim();
             if (bg) { ctx.fillStyle = bg; ctx.fillRect(0, 0, w, h); }
         }
 

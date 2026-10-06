@@ -423,65 +423,31 @@ return msg;
 
 ---
 
-### Radial & Linear Gauge (`nexa-ui-gauge`)
+### Gauge (`nexa-ui-gauge`)
 
-Industrial and dashboard gauge component inspired by Power BI, Ignition, and modern SCADA HMI meters. Supports both radial dial/speedometer and horizontal/vertical linear level bar modes.
+A dial per value (pressure, temperature, speed, load), several side by side. A **gauge** is an item of the shared value model, the same as a KPI tile (a Logic target: **Set value**, **Set history**, **Clear**; **On Gauge Click**, **On State Change**, **On Stale** / **On Resume**; a live tag; the figure over a window; value texts; a delta; a target, a setpoint, a normal band; threshold steps; stale), plus its **scale**: min / max, each **soft** (it grows with the data to a round number), and **the ghost**: the lowest .. highest over the window, faint on the track (the peak the value now hides).
 
-**Modes (`mode`)**:
-- **Radial (`radial`)**: circular dial/speedometer with configurable start angle (`startAngle: 135°`) and end angle (`endAngle: 45°`, covering a 270° sweep) or custom semicircular/horseshoe arcs.
-- **Linear (`linear`)**: rectangular level gauge with orientation (`orientation: "horizontal"` or `"vertical"`). Ideal for tank levels, temperature thermometers, or compact bar indicators.
+- **The dial:** any sweep (180° a half circle, 240° / 270° a classic dial, 360° a ring starting at the top), the track's thickness and colour, rounded ends.
+- **The pointer, in any mix:** a **fill** running along the arc (the step's colour, or its own), a **needle** (a line, a tapered blade, an arrow; its length, width, colour, a hub), a **triangle marker** running along the arc **outside** it (pointing in) or **inside** it (pointing out), its size and colour.
+- **The scale:** major ticks **automatic, every N, or a list** (`0, 25, 80, 100`), minor ticks between them, **inside / outside / across** the track, their length, width and colour; labels inside or outside (value texts too).
+- **The zones** (the threshold steps): a thin ring outside or inside the track, or the track itself coloured; the steps' labels on the dial.
+- **The target** (a bar across the track and a triangle), **the setpoint** (dotted across it), **the normal band** (a ring inside the track).
+- **The value** in the middle (auto-fit or a size, its weight, the text or the step's colour) with its unit and delta; under the hub on a half dial with a needle. The name above or below; a frame per gauge; columns and gaps.
+- Export CSV / Excel (a row per gauge), PNG. In the editor an empty gauge shows sample data (marked *Sample data*).
 
-**Pointer Styles (`pointerType`)**:
-- **Needle (`needle`)**: classic instrument pointer with center circular pivot boss, tapered needle blade, and customizable needle color (`needleColor: "#ef4444"`), width, and length.
-- **Track (`track`)**: progress arc/bar filled with color (theme palette, gradient, or dynamic threshold color).
-- **Combo (`combo`)**: both filled progress track and high-precision needle pointer rendered simultaneously.
+### Bar Gauge (`nexa-ui-bar-gauge`)
 
-**Bounds & Scale**:
-- **Lower bound (`min`)** and **Upper bound (`max`)**: strict bounds clamping with configurable tick intervals (`tickInterval`) and sub-ticks (`subTicks`).
-- Number formatting with unit display (e.g. `°C`, `bar`, `RPM`, `kW`, `%`).
+A bar per value, many at once: the level of 12 tanks, the load of every motor. A **bar** is an item of the same value model (above, with its min / max, soft ends and the peak).
 
-**Threshold Alert Zones (`thresholds`)**:
-- Array of zones: `[{ from: 0, to: 70, color: "#10b981", label: "Normal" }, { from: 70, to: 85, color: "#f59e0b", label: "Warning" }, { from: 85, to: 100, color: "#ef4444", label: "Critical" }]`.
-- Configurable zone style: `colorTrack` (colorizes the gauge track), `colorNeedle` (changes needle color to match current zone), or `outerBand` (colored boundary stripes along the outer bezel).
+- **Horizontal** (the name left, the value right) or **vertical** (a tank: the value above, the name under it).
+- **Modes:** **basic** (the bar in the colour of its step), **gradient** (the steps' colours blending along the bar), **LCD** (lit segments, each in the colour of the step it is in; segment size and gap).
+- **The track** (the part not reached) and its colour, a **zone strip** along each bar (the steps), the corner radius, the thickness, the gaps.
+- **Ticks** across the bars (automatic, every N, a list) and **a shared scale** under (or beside) them when every bar has the same min / max; else each bar's min and max at its ends.
+- **The target** (solid) and **the setpoint** (dotted) across a bar, **the normal band** beside it, **the peak** over the window (a faint reach and a mark).
+- The names (size, the column's width), the values (size; the step's or the text colour); **sorted** by value or name and **the top N**.
+- **On Bar Click** and the other events, export CSV / Excel / PNG, the editor's sample.
 
-**Target Setpoint Marker (Power BI style)**:
-- Optional `target` setpoint (e.g. `target: 80`): renders a crisp contrast marker tick and label indicating the target benchmark or alarm trip point.
-
-**Logic Actions**:
-- `setValue({ value })` or direct scalar `msg.payload = 78.5`.
-- `setTarget({ target })`.
-- `setThresholds([{ from, to, color, label }])`.
-- `export({ format: "csv" | "xlsx" | "png" })`.
-
-**Logic Events**:
-- **On Threshold Exceeded** `{ value, previousValue, zone: { from, to, color, label } }`: fires when entering an alarm or warning zone.
-- **On Click** `{ value, min, max, target }`.
-
-#### Gauge Function Node Examples
-
-##### 1. Simple Live Value Feed
-```js
-// Sends instantaneous temperature or pressure value
-msg.payload = 78.4;
-return msg;
-```
-
-##### 2. Dynamic Update with Target and Custom Thresholds
-```js
-// Updates reading along with dynamic setpoint and alarm bands
-msg.payload = {
-    value: 84.2,
-    target: 80.0,
-    thresholds: [
-        { from: 0, to: 70, color: "#10b981", label: "Optimal" },
-        { from: 70, to: 85, color: "#f59e0b", label: "High" },
-        { from: 85, to: 100, color: "#ef4444", label: "Critical Alarm" }
-    ]
-};
-return msg;
-```
-
----
+The old *Gauge & Meter* (radial + linear in one) is replaced by these two (2026-10-06, no migration).
 
 ### Area & Stacked Area Chart (`nexa-ui-area-chart`)
 

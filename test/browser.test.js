@@ -19,7 +19,7 @@ async function ok(label, fn) { if (only && !only.test(label)) return; await fn()
 const P = 'nexa-ui-';
 const ALL = ['button', 'input', 'textarea', 'number-input', 'password-input', 'checkbox', 'switch', 'radio-group', 'segmented', 'select', 'combobox', 'slider', 'tags-input', 'pin-input', 'rating',
     'text', 'heading', 'badge', 'tag', 'card', 'avatar', 'stat', 'alert', 'progress', 'spinner', 'skeleton', 'separator', 'empty-state', 'timeline', 'fieldset',
-    'tabs', 'iframe', 'datetime', 'daterange', 'pagination', 'line-chart', 'state-timeline', 'column-chart', 'pie-chart', 'gauge', 'area-chart', 'kpi', 'histogram'];
+    'tabs', 'iframe', 'datetime', 'daterange', 'pagination', 'line-chart', 'state-timeline', 'column-chart', 'pie-chart', 'gauge', 'bar-gauge', 'area-chart', 'kpi', 'histogram'];
 const TAG = '{sparkplug:Plant::Line1::Mixer::Speed}';
 
 withHarness({
@@ -44,7 +44,7 @@ withHarness({
         await settle();
     };
 
-    await ok('all 43 components register (UI · Form / Display / Layout / Embed / Charts), each mounts and draws', async () => {
+    await ok('all 44 components register (UI · Form / Display / Layout / Embed / Charts), each mounts and draws', async () => {
         const reg = await js(`${JSON.stringify(ALL)}.map(function (id) { var d = NEXA.getComponent("${P}" + id); return d ? d.category : "MISSING " + id; })`);
         assert.deepStrictEqual(reg.filter((c) => c !== 'UI · Form' && c !== 'UI · Display' && c !== 'UI · Layout' && c !== 'UI · Embed' && c !== 'UI · Charts'), []);
         for (const id of ALL) await mount('all-' + id, id, {}, { width: 320, height: 120 });
@@ -1490,60 +1490,53 @@ withHarness({
         assert.ok(/\.xlsx$/.test(exp.name));
     });
 
-    // ---- Gauge ------------------------------------------------------------------------------
+    // ---- Gauge / Bar Gauge (the shared value model: readout.js) -------------------------------
     const gw = (name) => `NexaTest.wc(${JSON.stringify(name)})`;
+    const hist60 = (f) => { const now = Date.now(); return Array.from({ length: 60 }, (_, i) => ({ x: now - (60 - i) * 60000 + 30000, y: f(i) })); };
 
-    await ok('Gauge: radial and linear modes, threshold zone detection, needle rendering, and setValue', async () => {
-        await mount('g-test', 'gauge', {
-            mode: 'radial',
-            min: 0,
-            max: 100,
-            value: 75,
-            showTarget: true,
-            targetValue: 80,
-            unit: '°C'
-        }, { width: 320, height: 240 });
+    await ok('Gauge: the arc (any sweep; a ring from the top), the value on its scale, a soft max, the steps as zones, the ticks (automatic, a step, a list), the peak over the window', async () => {
+        await mount('ga1', 'gauge', { gauges: [{ id: 'g1', name: 'Pressure', max: 100, softMax: true, showPeak: true }], thresholds: [{ from: 0, status: 'success' }, { from: 80, status: 'error', label: 'Trip' }] }, { width: 300, height: 260 });
+        await js(`${gw('ga1')}.setHistory(${JSON.stringify(hist60((i) => (i === 30 ? 130 : 50 + i / 2)))}, { list: "gauges", id: "g1" })`); await settle();
+        const r = await js(`(function () { var w = ${gw('ga1')}, t = w.itemList()[0], st = w._state(t), v = w._figure(t, st).v; return { v: v, range: w._range(t, st, v), peak: w._peak(t, st), color: w._stateColor(t, 125), err: w.statusColor("error") }; })()`);
+        assert.strictEqual(r.v, 79.5, 'the last value');
+        assert.strictEqual(r.range.lo, 0);
+        assert.ok(r.range.hi >= 130, 'a soft max grows to the peak (a round number): ' + r.range.hi);
+        assert.deepStrictEqual([r.peak.lo, r.peak.hi], [50, 130]);
+        assert.strictEqual(r.color, r.err, 'past 80: the Trip step');
+        const geo = await js(`(function () { var w = ${gw('ga1')}; w.p.sweep = 360; var g = w._geometry({ x: 0, y: 0, w: 300, h: 260 }, 0, 0, 10); var a = { a0: Math.round(g.a0 * 180 / Math.PI), a1: Math.round(g.a1 * 180 / Math.PI) }; w.p.sweep = 180; var h = w._geometry({ x: 0, y: 0, w: 300, h: 260 }, 0, 0, 10); return { ring: a, half: [Math.round(h.a0 * 180 / Math.PI), Math.round(h.a1 * 180 / Math.PI)] }; })()`);
+        assert.deepStrictEqual(geo.ring, { a0: -90, a1: 270 }, 'a full ring starts at the top');
+        assert.deepStrictEqual(geo.half, [180, 360], 'a half dial: west to east, over the top');
+        const ticks = await js(`import("/nexa-component-ui-library/vendor/chart/readout.js").then(function (m) { return [m.scaleTicks(0, 100, 0, "", 5), m.scaleTicks(0, 100, 25, ""), m.scaleTicks(0, 100, 10, "0, 25, 80, 100, 140")]; })`);
+        assert.deepStrictEqual(ticks, [[0, 20, 40, 60, 80, 100], [0, 25, 50, 75, 100], [0, 25, 80, 100]], 'automatic, a step, a list (in range: 140 out)');
+        assert.ok(await pixels('ga1') > 3000, 'drawn');
+    });
 
-        const zoneInfo = await js(`(function () {
-            var w = ${gw('g-test')};
-            w.draw();
-            var z = w._activeZone(75);
-            return { label: z.zone.label, color: z.zone.color, lastVal: w._lastVal };
-        })()`);
-        assert.strictEqual(zoneInfo.label, 'Warning');
-        assert.strictEqual(zoneInfo.lastVal, 75);
+    await ok('Gauge: every pointer model draws (fill, needle line / tapered / arrow, a triangle outside / inside), ticks inside / outside / across, labels outside, zones as a ring / the track / inner', async () => {
+        const looks = [{ needle: 'line' }, { needle: 'tapered', fill: false, sweep: 180 }, { needle: 'arrow', zones: 'track' }, { marker: 'outside', fill: false, tickPlace: 'outside', labelPlace: 'outside' },
+            { marker: 'inside', sweep: 360, ticks: false, labels: false }, { tickPlace: 'across', tickList: '0, 25, 80, 100', minorTicks: 9, zones: 'inner', zoneLabels: true }];
+        for (let i = 0; i < looks.length; i++) {
+            await mount('ga2-' + i, 'gauge', Object.assign({ gauges: [{ id: 'g1', name: 'Look ' + i, target: 70, setpoint: 60, normalLow: 40, normalHigh: 80 }], thresholds: [{ from: 0, status: 'success', label: 'OK' }, { from: 85, status: 'error', label: 'Hi' }] }, looks[i]), { width: 260, height: 220 });
+            await js(`${gw('ga2-' + i)}.setValue(64, { list: "gauges", id: "g1" })`); await settle();
+            assert.ok(await pixels('ga2-' + i) > 2500, JSON.stringify(looks[i]));
+        }
+    });
 
-        // Update value via action
-        await js(`(function () {
-            var w = ${gw('g-test')};
-            w.setValue(92);
-        })()`);
-        const it = await item('g-test');
-        const chgEv = it.events.find((e) => e[0] === 'change');
-        assert.ok(chgEv, 'change event emitted');
-        assert.strictEqual(chgEv[1].value, 92);
-        assert.strictEqual(chgEv[1].unit, '°C');
-
-        // Switch to linear mode
-        await js(`(function () {
-            var w = ${gw('g-test')};
-            w.p.mode = 'linear';
-            w.p.orientation = 'horizontal';
-            w.draw();
-        })()`);
-        const modeLinear = await js(`${gw('g-test')}.p.mode`);
-        assert.strictEqual(modeLinear, 'linear');
-
-        // Export test
-        const exp = await js(`(function () {
-            var w = ${gw('g-test')};
-            var csv = w.exportData('csv');
-            var xlsx = w.exportData('xlsx');
-            return { csv: csv, xlsx: xlsx, name: w._lastExport.name };
-        })()`);
-        assert.strictEqual(exp.csv, 1);
-        assert.strictEqual(exp.xlsx, 1);
-        assert.ok(/\.xlsx$/.test(exp.name));
+    await ok('Bar Gauge: bars horizontal / vertical, basic / gradient / LCD, a shared scale, sorted, the top N, a click on a bar, the export', async () => {
+        const bars = ['A', 'B', 'C', 'D'].map((n, i) => ({ id: 'b' + i, name: n, unit: '%', target: i === 1 ? 70 : '' }));
+        await mount('bg1', 'bar-gauge', { bars, sort: 'value-desc', topN: 3, thresholds: [{ from: 0, status: 'success' }, { from: 80, status: 'error' }] }, { width: 500, height: 220 });
+        for (let i = 0; i < 4; i++) await js(`${gw('bg1')}.setValue(${[30, 90, 55, 10][i]}, { list: "bars", id: "b${i}" })`);
+        await settle();
+        const r = await js(`(function () { var w = ${gw('bg1')}; w.draw(); return { order: w._ordered().map(function (x) { return x.t.name; }), rects: w._rects.length, red: w._stateColor(w.itemList()[1], 90) === w.statusColor("error") }; })()`);
+        assert.deepStrictEqual(r.order, ['B', 'C', 'A'], 'largest first, the top 3');
+        assert.strictEqual(r.rects, 3);
+        assert.strictEqual(r.red, true);
+        for (const look of [{ mode: 'basic' }, { mode: 'lcd', orientation: 'vertical', ticks: true }, { mode: 'gradient', zoneStrip: true, ticks: true }]) {
+            await js(`NexaTest.setProps("bg1", ${JSON.stringify(look)})`); await settle();
+            assert.ok(await pixels('bg1') > 3000, JSON.stringify(look));
+        }
+        await js(`(function () { var w = ${gw('bg1')}; window.__bev = []; var old = w.emit.bind(w); w.emit = function (n, p, t) { window.__bev.push([n, p, t && t.id]); return old(n, p, t); }; w.draw(); var q = w._rects[0], pl = w.renderRoot.querySelector(".plot"), b = pl.getBoundingClientRect(); pl.dispatchEvent(new MouseEvent("click", { bubbles: true, clientX: b.left + q.x + q.w / 2, clientY: b.top + q.y + q.h / 2 })); return 1; })()`);
+        assert.deepStrictEqual(await js('window.__bev.filter(function (e) { return e[0] === "barClick"; }).map(function (e) { return [e[1].value, e[2]]; })'), [[90, 'b1']], 'On Bar Click: its value, its target');
+        assert.strictEqual(await js(`${gw('bg1')}.exportData({ format: "csv" })`), 4);
     });
 
     // ---- Area Chart -------------------------------------------------------------------------
@@ -1639,7 +1632,7 @@ withHarness({
         assert.ok(await pixels('kp3') > 1000, 'a sparkline only');
         assert.strictEqual(await js(`${kw('kp3')}.exportData({ format: "csv" })`), 3);
         const csv = await js(`${kw('kp3')}._lastExport.blob.text()`);
-        assert.ok(/"Tile","Value","Unit","State"/.test(csv) && /"A",79/.test(csv), csv);
+        assert.ok(/"Name","Value","Unit","State"/.test(csv) && /"A",79/.test(csv), csv);
         assert.strictEqual(await js(`${kw('kp3')}.exportData({ format: "xlsx" })`), 3);
         const png = await js(`${kw('kp3')}.exportPNG().then(function (x) { return x && x.width; })`);
         assert.ok(png > 0, 'a PNG');
@@ -1799,7 +1792,7 @@ withHarness({
     });
 
     await ok('Print: every chart with a panel paints it in (Pie, Gauge, Area, Histogram clear through _clearCanvas, not clearRect)', async () => {
-        const kinds = { pie: ['pie-chart', { slices: [{ id: 'a', name: 'A', value: 3 }, { id: 'b', name: 'B', value: 1 }] }], gauge: ['gauge', { value: 40 }], area: ['area-chart', { series: [{ id: 's1', name: 'S' }] }],
+        const kinds = { pie: ['pie-chart', { slices: [{ id: 'a', name: 'A', value: 3 }, { id: 'b', name: 'B', value: 1 }] }], gauge: ['gauge', {}], bargauge: ['bar-gauge', {}], area: ['area-chart', { series: [{ id: 's1', name: 'S' }] }],
             hist: ['histogram', {}], column: ['column-chart', {}] };       // (the Sparkline has no panel of its own: nothing to paint in)
         for (const name of Object.keys(kinds)) await mount('pr-' + name, kinds[name][0], kinds[name][1], { width: 300, height: 180 });
         const px = (name) => js(`(function () { var w = NexaTest.wc("pr-${name}"), cv = w.renderRoot.querySelector("canvas"); return Array.from(cv.getContext("2d").getImageData(1, 1, 1, 1).data); })()`);
@@ -2029,11 +2022,13 @@ withHarness({
         await js('delete window.__big; 1');
     });
 
-    await ok('Sample data (Line, State Timeline, Column, KPI): only in the editor, for the user series, marked "Sample data"; on a page with no data the chart is empty; real data drops it', async () => {
+    await ok('Sample data (Line, State Timeline, Column, KPI, Gauge, Bar Gauge): only in the editor, for the user series, marked "Sample data"; on a page with no data the chart is empty; real data drops it', async () => {
         const kinds = [['line-chart', { series: [{ id: 's1', name: 'Speed' }] }, 'appendPoints', [{ x: 1727852400000, y: 3 }], { list: 'series', id: 's1' }],
             ['state-timeline', { rows: [{ id: 'r1', name: 'Filler' }] }, 'appendChange', { time: 1727852400000, state: 1 }, { list: 'rows', id: 'r1' }],
             ['column-chart', { series: [{ id: 's1', name: 'Load' }, { id: 's2', name: 'Temp', type: 'line' }] }, 'setData', { A: 3 }, { list: 'series', id: 's1' }],
-            ['kpi', { tiles: [{ id: 'k1', name: 'Load' }] }, 'setValue', 21.5, { list: 'tiles', id: 'k1' }]];
+            ['kpi', { tiles: [{ id: 'k1', name: 'Load' }] }, 'setValue', 21.5, { list: 'tiles', id: 'k1' }],
+            ['gauge', { gauges: [{ id: 'g1', name: 'Load' }] }, 'setValue', 21.5, { list: 'gauges', id: 'g1' }],
+            ['bar-gauge', { bars: [{ id: 'b1', name: 'Load' }] }, 'setValue', 21.5, { list: 'bars', id: 'b1' }]];
         for (const [id, props, action, payload, target] of kinds) {
             await mount('sd-ed-' + id, id, props, { width: 500, height: 220, design: true });
             await js('new Promise(function (r) { setTimeout(r, 150); })');

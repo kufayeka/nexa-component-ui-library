@@ -4,6 +4,7 @@ import "./state.js";
 import "./column.js";
 import "./pie.js";
 import "./gauge.js";
+import "./bargauge.js";
 import "./area.js";
 import "./kpi.js";
 import "./histogram.js";
