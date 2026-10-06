@@ -329,6 +329,20 @@ Parts of a whole: downtime by reason, energy by area, output by product. **The r
 
 **Legend** (the shared part): any position, a list (the % or the value) or a **table** (Value, %); a click hides a slice and the % are of the rest (**On Slice Toggle**). **On Slice Click** `{ name, value, percent, group, id }` (a listed slice also fires its own On Click). Export CSV / Excel (a row per slice) / PNG. In the editor: sample slices (*Sample data*). It replaces the old Pie & Donut Chart (2026-10-06, no migration).
 
+### Pareto (`nexa-ui-pareto`)
+
+Which causes to fix **first**: downtime by reason, defects by type, scrap by cause. The rules of a Pareto are built in, with no DAX:
+- the bars **largest first** (else the cumulative line means nothing), **Others last** whatever its size (past the top N);
+- the **cumulative %** on its own axis 0 – 100 %, **ending at exactly 100 %** (from the running sum over the total, the last point forced: no rounding drift);
+- a **cut-off line** (80 % by default; the chart shows the real split, it does not assume 80/20) with **"4 of 12 causes = 89 %"**; the **vital few** (up to the cut-off) strong, the trivial many faded;
+- the left axis **aligned** to the right one (0 .. the total = 0 .. 100 %, the classic Pareto) or fitted to the largest bar.
+
+**Data:** **rows** from a query (`[{ reason, minutes }]`, added up per category) or an **event log** (`[{ time, defect }]` with no value field: **counted** per category), over a **window** when the rows have a time (this shift, 24 h, 7 days, 30 days; **window buttons** for the viewer; **Set the window** from Logic); **Set rows** / **Append rows** (a new event). Or the categories as items of the shared value model (Logic targets, live values; a category styles the rows' category of its name: its colour or status).
+- **Stacked:** a field splits each bar in parts (the defects per shift, per machine), with a legend.
+- **Before / after:** a field gives a Pareto per group side by side **in the same category order** (last week and this week: the fix shows).
+
+**Look:** vertical or **horizontal** (long names), the bar / faded / Others colours, the gap, rounded corners; the cumulative line straight / smooth / step / none, an area under it, markers, its % at each point; labels on the bars (value / % / both); axis titles, gridlines, unit, decimals. **Tooltip:** value, %, cumulative %, rank (Others: what is in it; stacked: its parts). **On Bar Click** `{ name, value, percent, cumulative, rank, group }` (a listed category also its own On Click). Export CSV / Excel (rank, value, %, cumulative %, vital few) / PNG. In the editor an empty Pareto shows sample causes (*Sample data*).
+
 ### Gauge (`nexa-ui-gauge`)
 
 A dial per value (pressure, temperature, speed, load), several side by side. A **gauge** is an item of the shared value model, the same as a KPI tile (a Logic target: **Set value**, **Set history**, **Clear**; **On Gauge Click**, **On State Change**, **On Stale** / **On Resume**; a live tag; the figure over a window; value texts; a delta; a target, a setpoint, a normal band; threshold steps; stale), plus its **scale**: min / max, each **soft** (it grows with the data to a round number), and **the ghost**: the lowest .. highest over the window, faint on the track (the peak the value now hides).

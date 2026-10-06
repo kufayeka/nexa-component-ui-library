@@ -19,7 +19,7 @@ async function ok(label, fn) { if (only && !only.test(label)) return; await fn()
 const P = 'nexa-ui-';
 const ALL = ['button', 'input', 'textarea', 'number-input', 'password-input', 'checkbox', 'switch', 'radio-group', 'segmented', 'select', 'combobox', 'slider', 'tags-input', 'pin-input', 'rating',
     'text', 'heading', 'badge', 'tag', 'card', 'avatar', 'stat', 'alert', 'progress', 'spinner', 'skeleton', 'separator', 'empty-state', 'timeline', 'fieldset',
-    'tabs', 'iframe', 'datetime', 'daterange', 'pagination', 'line-chart', 'state-timeline', 'column-chart', 'pie', 'gauge', 'bar-gauge', 'area-chart', 'kpi', 'histogram'];
+    'tabs', 'iframe', 'datetime', 'daterange', 'pagination', 'line-chart', 'state-timeline', 'column-chart', 'pie', 'pareto', 'gauge', 'bar-gauge', 'area-chart', 'kpi', 'histogram'];
 const TAG = '{sparkplug:Plant::Line1::Mixer::Speed}';
 
 withHarness({
@@ -44,7 +44,7 @@ withHarness({
         await settle();
     };
 
-    await ok('all 44 components register (UI · Form / Display / Layout / Embed / Charts), each mounts and draws', async () => {
+    await ok('all 45 components register (UI · Form / Display / Layout / Embed / Charts), each mounts and draws', async () => {
         const reg = await js(`${JSON.stringify(ALL)}.map(function (id) { var d = NEXA.getComponent("${P}" + id); return d ? d.category : "MISSING " + id; })`);
         assert.deepStrictEqual(reg.filter((c) => c !== 'UI · Form' && c !== 'UI · Display' && c !== 'UI · Layout' && c !== 'UI · Embed' && c !== 'UI · Charts'), []);
         for (const id of ALL) await mount('all-' + id, id, {}, { width: 320, height: 120 });
@@ -1419,6 +1419,45 @@ withHarness({
         for (const look of [{ half: true }, { kind: 'pie', labelPlace: 'outside' }, { center: 'slice', centerSlice: 'Jam' }, { labelShow: 'all', legend: 'right', legendMode: 'table' }]) {
             await js(`NexaTest.setProps("pi3", ${JSON.stringify(look)})`); await settle();
             assert.ok(await pixels('pi3') > 3000, JSON.stringify(look));
+        }
+    });
+
+    // ---- Pareto ---------------------------------------------------------------------------------
+    const paw = (name) => `NexaTest.wc(${JSON.stringify(name)})`;
+
+    await ok('Pareto: the bars largest first, Others last, the cumulative % ends at exactly 100 %, the cut-off and the vital few', async () => {
+        // values that sum awkwardly in floating point (0.1 + 0.2 …)
+        const rows = [['A', 0.1], ['B', 0.2], ['C', 0.7], ['D', 0.3], ['E', 0.05], ['F', 0.05], ['G', 0.01]].map(([name, value]) => ({ name, value }));
+        await mount('pa1', 'pareto', { rows, topN: 5, cutoff: 80 }, { width: 600, height: 300 });
+        const r = await js(`(function () { var w = ${paw('pa1')}; w.draw(); var pl = w._paretos[0].plan; return { names: pl.bars.map(function (b) { return b.name; }), last: pl.bars[pl.bars.length - 1].cum,
+            vital: pl.bars.filter(function (b) { return b.vital; }).map(function (b) { return b.name; }), count: pl.vitalCount, n: pl.n, others: pl.bars[pl.bars.length - 1].others.map(function (o) { return o.name; }) }; })()`);
+        assert.deepStrictEqual(r.names, ['C', 'D', 'B', 'A', 'E', 'Others']);
+        assert.strictEqual(r.last, 1, 'exactly 100 %');
+        assert.deepStrictEqual(r.others, ['F', 'G']);
+        assert.deepStrictEqual(r.vital, ['C', 'D', 'B'], 'up to (and with) the bar that reaches 80 %');
+        assert.deepStrictEqual([r.count, r.n], [3, 7]);
+        assert.ok(await pixels('pa1') > 3000);
+    });
+
+    await ok('Pareto: an event log counted per category over a window (Set the window), stacked by a field, before / after in the same order, a click on a bar, the export', async () => {
+        const now = Date.now(), log = [];
+        [['Scratch', 5, 1], ['Dent', 3, 1], ['Crack', 2, 30]].forEach(([d, n, ageDays]) => { for (let i = 0; i < n; i++) log.push({ time: now - ageDays * 864e5 + i * 1000, defect: d, shift: i % 2 ? 'Night' : 'Day' }); });
+        await mount('pa2', 'pareto', { rows: log, catField: 'defect', valueField: '', timeField: 'time', window: '7d', stackField: 'shift' }, { width: 600, height: 300 });
+        const counted = () => js(`(function () { var w = ${paw('pa2')}; w.draw(); return w._paretos[0].plan.bars.map(function (b) { return [b.name, b.value]; }); })()`);
+        assert.deepStrictEqual(await counted(), [['Scratch', 5], ['Dent', 3]], 'the last 7 days, counted (Crack is 30 days old)');
+        await js(`NexaTest.invoke("pa2", "setWindow", { window: "" })`); await settle();
+        assert.deepStrictEqual(await counted(), [['Scratch', 5], ['Dent', 3], ['Crack', 2]], 'every row');
+        assert.deepStrictEqual(await js(`(function () { var w = ${paw('pa2')}; var b = w._paretos[0].plan.bars[0]; return [b.parts.get("Day"), b.parts.get("Night")]; })()`), [3, 2], 'a bar in its parts (per shift)');
+        const ba = [['A', 10, 2], ['B', 6, 9], ['C', 3, 1]].reduce((o, [n, before, after]) => o.concat([{ week: 'W1', name: n, value: before }, { week: 'W2', name: n, value: after }]), []);
+        await mount('pa3', 'pareto', { rows: ba, groupField: 'week' }, { width: 700, height: 300 });
+        assert.deepStrictEqual(await js(`(function () { var w = ${paw('pa3')}; w.draw(); return w._paretos.map(function (p) { return p.group + ":" + p.plan.bars.map(function (b) { return b.name; }).join(""); }); })()`), ['W1:ABC', 'W2:ABC'], 'after in the order of before');
+        await js(`(function () { var w = ${paw('pa3')}; window.__paev = []; var old = w.emit.bind(w); w.emit = function (n, p, t) { window.__paev.push([n, p]); return old(n, p, t); };
+            var q = w._rects[0], pl = w.renderRoot.querySelector(".plot"), b = pl.getBoundingClientRect(); pl.dispatchEvent(new MouseEvent("click", { bubbles: true, clientX: b.left + q.x + q.w / 2, clientY: b.top + q.y + q.h / 2 })); return 1; })()`);
+        assert.deepStrictEqual(await js('window.__paev.filter(function (e) { return e[0] === "barClick"; }).map(function (e) { return [e[1].name, e[1].rank, e[1].group]; })'), [['A', 1, 'W1']]);
+        assert.strictEqual(await js(`${paw('pa3')}.exportData({ format: "csv" })`), 6);
+        for (const look of [{ orientation: 'horizontal', labels: 'both' }, { line: 'smooth', lineArea: true, lineLabels: true }, { aligned: false, line: 'step' }]) {
+            await js(`NexaTest.setProps("pa3", ${JSON.stringify(look)})`); await settle();
+            assert.ok(await pixels('pa3') > 3000, JSON.stringify(look));
         }
     });
 

@@ -3,6 +3,7 @@ import "./line.js";
 import "./state.js";
 import "./column.js";
 import "./pie.js";
+import "./pareto.js";
 import "./gauge.js";
 import "./bargauge.js";
 import "./area.js";
