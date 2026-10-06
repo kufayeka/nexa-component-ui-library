@@ -8,12 +8,16 @@ import { opt, numOr } from "./core.js";
 
 export const LEGEND_AT = [["bottom", "Below"], ["top", "Above"], ["right", "Right"], ["left", "Left"],
     ["inside-tl", "Inside, top left"], ["inside-tr", "Inside, top right"], ["inside-bl", "Inside, bottom left"], ["inside-br", "Inside, bottom right"], ["none", "None"]];
-export const LEGEND_STATS = [["last", "Last"], ["min", "Min"], ["max", "Max"], ["avg", "Average"]];
-const STAT_LABEL = { last: "Last", min: "Min", max: "Max", avg: "Avg" };
+// a legend's figures: [key, the field's label, the table's column title]; a chart may give its own
+export const LEGEND_STATS = [["last", "Last", "Last"], ["min", "Min (shown)", "Min"], ["max", "Max (shown)", "Max"], ["avg", "Average (shown)", "Avg"]];
+const colKey = (k) => "legend" + k[0].toUpperCase() + k.slice(1);
 
-/** The Legend group. `value`: the list's default value next to the name. */
+/**
+ * The Legend group. `value`: the list's default value next to the name; `stats`: the chart's own
+ * figures (default: last / min / max / average); `what`: what a row is ("series", "state").
+ */
 export function legendProps(o) {
-    const d = o || {};
+    const d = o || {}, stats = d.stats || LEGEND_STATS;
     const shown = (p) => p.legend !== "none";
     const table = (p) => shown(p) && p.legendMode === "table";
     return {
@@ -21,25 +25,22 @@ export function legendProps(o) {
         legendMode: {
             type: "enum", group: "Legend", label: "Shape", default: "list", visibleWhen: shown,
             options: opt([["list", "A list (the name and one value)"], ["table", "A table (a column per value)"]]),
-            help: "A table puts the series in rows with Last / Min / Max / Average columns: an operator compares pens at a glance."
+            help: "A table puts each " + (d.what || "series") + " in a row with a column per figure (" + stats.map((x) => x[2]).join(" / ") + "): compare them at a glance."
         },
         legendValue: {
             type: "enum", group: "Legend", label: "Value next to the name", default: d.value || "last",
-            options: opt([["none", "None"]].concat(LEGEND_STATS)), visibleWhen: (p) => shown(p) && p.legendMode !== "table",
-            help: "Min, Max and Average are over the time shown."
+            options: opt([["none", "None"]].concat(stats.map((x) => [x[0], x[1]]))), visibleWhen: (p) => shown(p) && p.legendMode !== "table",
+            help: "Over the time shown (the last: the newest)."
         },
-        legendLast: { type: "boolean", group: "Legend", label: "Column: Last", default: true, visibleWhen: table },
-        legendMin: { type: "boolean", group: "Legend", label: "Column: Min (shown)", default: true, visibleWhen: table },
-        legendMax: { type: "boolean", group: "Legend", label: "Column: Max (shown)", default: true, visibleWhen: table },
-        legendAvg: { type: "boolean", group: "Legend", label: "Column: Average (shown)", default: true, visibleWhen: table },
+        ...Object.fromEntries(stats.map((x) => [colKey(x[0]), { type: "boolean", group: "Legend", label: "Column: " + x[1], default: true, visibleWhen: table }])),
         legendSize: { type: "number", group: "Legend", label: "Text size", default: 11, min: 8, max: 24, unit: "px", visibleWhen: shown }
     };
 }
 
 /** The values the legend shows: a table's columns, or the list's one value ([] = none). */
-export function legendColumns(p) {
+export function legendColumns(p, stats) {
     if (!p || p.legend === "none") return [];
-    if (p.legendMode === "table") return LEGEND_STATS.map((x) => x[0]).filter((k) => p["legend" + k[0].toUpperCase() + k.slice(1)] !== false);
+    if (p.legendMode === "table") return (stats || LEGEND_STATS).map((x) => x[0]).filter((k) => p[colKey(k)] !== false);
     const v = p.legendValue || "last";
     return v === "none" ? [] : [v];
 }
@@ -52,12 +53,14 @@ export function legendPlace(p) {
 
 /**
  * The legend's markup ("" without entries or at "none"). entries: [{ key, name, color, off, swatch }]
- * (swatch: "line" | "square" | "dot"); toggle(entry, event): a click (Alt+click: only this one).
+ * (swatch: "line" | "square" | "dot"); toggle(entry, event): a click (Alt+click: only this one);
+ * o: { stats (the chart's figures, as legendProps), head (the name column's title) }.
  */
-export function legendTemplate(p, entries, toggle) {
+export function legendTemplate(p, entries, toggle, o) {
     const { at, inside, vertical } = legendPlace(p);
     if (at === "none" || !entries.length) return "";
-    const cols = legendColumns(p);
+    const stats = (o && o.stats) || LEGEND_STATS, title = Object.fromEntries(stats.map((x) => [x[0], x[2]]));
+    const cols = legendColumns(p, stats);
     const cls = "legend" + (vertical ? " v" : "") + (inside ? " inside " + at.slice(7) : "") + (p.legendMode === "table" ? " table" : "");
     const size = "--lg-size:" + numOr(p.legendSize, 11) + "px";
     const swatch = (e) => html`<span class="lg-swatch ${e.swatch === "square" ? "sw-sq" : e.swatch === "dot" ? "sw-dot" : ""}" style="background:${e.color}"></span>`;
@@ -66,7 +69,7 @@ export function legendTemplate(p, entries, toggle) {
         return html`
             <div class=${cls} part="legend" style=${size}>
                 <table class="lg-table">
-                    <thead><tr><th class="lg-th-name">Series</th>${cols.map((k) => html`<th>${STAT_LABEL[k]}</th>`)}</tr></thead>
+                    <thead><tr><th class="lg-th-name">${(o && o.head) || "Series"}</th>${cols.map((k) => html`<th>${title[k]}</th>`)}</tr></thead>
                     <tbody>${entries.map((e) => html`
                         <tr class="lg-item lg-row ${e.off ? "off" : ""}" data-key=${e.key} title=${tip} @click=${(ev) => toggle(e, ev)}>
                             <td><span class="lg-name-cell">${swatch(e)}<span class="lg-name">${e.name}</span></span></td>

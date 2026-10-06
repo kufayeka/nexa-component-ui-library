@@ -596,6 +596,13 @@ export class ChartElement extends UIElement {
             return opaque(c) ? c : "";
         }
 
+        // black or white text on a colour (a hex or an rgb), whichever reads better
+        _onColor(color) {
+            const m = /rgba?\(([^)]+)\)/.exec(this.hexToRgba(color, 1));
+            const [r, g, b] = m ? m[1].split(",").map((x) => Number(x)) : [0, 0, 0];
+            return (0.299 * r + 0.587 * g + 0.114 * b) / 255 > 0.6 ? "#161616" : "#ffffff";
+        }
+
         hexToRgba(hexOrRgb, alpha) {
             if (!hexOrRgb) return `rgba(59, 130, 246, ${alpha})`;
             if (hexOrRgb.startsWith("rgb")) return hexOrRgb.replace(/rgba?\(([^)]+)\)/, (m, val) => `rgba(${val.split(",").slice(0, 3).map((s) => s.trim()).join(",")}, ${alpha})`);

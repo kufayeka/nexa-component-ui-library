@@ -1058,13 +1058,6 @@ export const lineChart = defineUI({
             ctx.restore();
         }
 
-        // black or white text on a colour (whichever reads better)
-        _onColor(color) {
-            const m = /rgba?\(([^)]+)\)/.exec(this.hexToRgba(color, 1));
-            const [r, g, b] = m ? m[1].split(",").map((x) => Number(x)) : [0, 0, 0];
-            return (0.299 * r + 0.587 * g + 0.114 * b) / 255 > 0.6 ? "#161616" : "#ffffff";
-        }
-
         _drawHover(ctx, toX, toY, plotY, plotH) {
             const h = this.hover;
             if (!h || !h.hits.length) return;
