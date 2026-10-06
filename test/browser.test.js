@@ -17,12 +17,13 @@ async function ok(label, fn) { await fn(); passed++; console.log('✔ ' + label)
 const P = 'nexa-ui-';
 const ALL = ['button', 'input', 'textarea', 'number-input', 'password-input', 'checkbox', 'switch', 'radio-group', 'segmented', 'select', 'combobox', 'slider', 'tags-input', 'pin-input', 'rating',
     'text', 'heading', 'badge', 'tag', 'card', 'avatar', 'stat', 'alert', 'progress', 'spinner', 'skeleton', 'separator', 'empty-state', 'timeline', 'fieldset',
-    'tabs', 'iframe', 'datetime', 'daterange', 'pagination', 'line-chart', 'state-timeline', 'bar-chart', 'pie-chart', 'gauge', 'area-chart', 'sparkline', 'histogram', 'chart'];
+    'tabs', 'iframe', 'datetime', 'daterange', 'pagination', 'line-chart', 'state-timeline', 'bar-chart', 'pie-chart', 'gauge', 'area-chart', 'sparkline', 'histogram'];
 const TAG = '{sparkplug:Plant::Line1::Mixer::Speed}';
 
 withHarness({
     mounts: { '/nexa-component-ui-library/vendor': path.join(__dirname, '..', 'dist'), '/fx': path.join(__dirname, 'fixtures') },
-    modules: ['/nexa-component-ui-library/vendor/ui-library.js']
+    // the layered Chart is hidden from the palette (not imported by the library): its engine tests load it
+    modules: ['/nexa-component-ui-library/vendor/ui-library.js', '/nexa-component-ui-library/vendor/chart/cartesian.js']
 }, async ({ js, type, key, logs, send }) => {
     const settle = () => js('NexaTest.settle()');
     // after a style change: its CSS transition (0.15 s) done
@@ -42,7 +43,7 @@ withHarness({
         await settle();
     };
 
-    await ok('all 44 components register (UI · Form / Display / Layout / Embed / Charts), each mounts and draws', async () => {
+    await ok('all 43 components register (UI · Form / Display / Layout / Embed / Charts), each mounts and draws', async () => {
         const reg = await js(`${JSON.stringify(ALL)}.map(function (id) { var d = NEXA.getComponent("${P}" + id); return d ? d.category : "MISSING " + id; })`);
         assert.deepStrictEqual(reg.filter((c) => c !== 'UI · Form' && c !== 'UI · Display' && c !== 'UI · Layout' && c !== 'UI · Embed' && c !== 'UI · Charts'), []);
         for (const id of ALL) await mount('all-' + id, id, {}, { width: 320, height: 120 });

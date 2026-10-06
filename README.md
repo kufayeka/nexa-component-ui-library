@@ -581,7 +581,9 @@ return msg;
 
 ---
 
-### Chart (`nexa-ui-chart`)
+### Chart (`nexa-ui-chart`): hidden
+
+**Not in the palette** (2026-10-06): one chart per type replaces it (Line, State Timeline, Column / Bar, KPI, Gauge, Pie, Pareto, Scatter); its engine below is what Column / Bar and Pareto are built on.
 
 The Cartesian chart, built in **layers**: every series is a column, line, step, area or points chart of its own, on any axis, in any stack. The first of the new chart family (see `.agents/CHART_FAMILIES_DESIGN.md`); Line and State Timeline stay as they are. It draws like the Line Chart (smooth monotone curves, gradient fills, a dashed crosshair, the time ruler) in a Power BI style format pane.
 

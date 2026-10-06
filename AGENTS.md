@@ -40,7 +40,7 @@ This is a Nexa component plugin (`@kufayeka/nexa-component-ui-library`). Every c
     - time-chart.js (TimeChartElement: time, ruler, zoom / pan, annotations, gestures, the frozen clock, print);
     - props.js (the shared props / events / actions);
     - time.js, buffer.js, export.js (the xlsx writer);
-    - rows.js, stack.js (pure: rows -> columns split by a field, stacking, nice ticks; test/chart-pure.test.js, no browser), cartesian.js (Chart: the Cartesian chart, see .agents/CHART_FAMILIES_DESIGN.md);
+    - rows.js, stack.js (pure: rows -> columns split by a field, stacking, nice ticks; test/chart-pure.test.js, no browser), cartesian.js (the layered Chart: NOT imported by index.js, hidden from the palette since 2026-10-06; its engine is reused by the per-type charts, see .agents/CHART_FAMILIES_DESIGN.md section 0);
     - line.js (Line Chart), state.js (State Timeline), bar.js (Bar / Column Chart), pie.js (Pie / Donut Chart), gauge.js (Radial & Linear Gauge), area.js (Area & Stacked Area Chart), sparkline.js (Sparkline), histogram.js (Histogram);
     - index.js (every chart).
 
