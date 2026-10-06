@@ -289,48 +289,28 @@ msg.payload = [
 return msg;
 ```
 
-### Bar Chart (`nexa-ui-bar-chart`)
+### Column / Bar Chart (`nexa-ui-column-chart`)
 
-Bar and column chart for discrete categories or time series, supporting comparison and Pareto analysis.
+Columns (or horizontal bars), lines and target markers over categories, numbers or time: energy per floor, output per shift, plan vs actual, a combo of kWh columns and a temperature line.
 
-**Modes (`mode`)**:
-- **Grouped ("dempet")**: bars of each series stand side-by-side within each category or timestamp slot.
-- **Stacked**: series stack vertically on top of each other (accumulating total $\sum$).
-- **100% Stacked**: stacks normalized to 100% for proportional distribution.
-- **Pareto**: categories automatically sorted descending by value + dual right Y-axis with a cumulative percentage line curve and an **80% Cutoff Line** (the 80/20 rule).
+**A series is a Column, a Line or a Target**, on the **left** or the **right** axis. The chart's **Stack** is Off (side by side), Stacked or 100 %; each series says whether it is **In the stack**:
+- a column in the stack sits on the ones before it (the first at the bottom); a column out of it stands **beside** the pile;
+- a line in the stack is drawn at the **total so far** (the cumulative top); out of it, at its own value (a line has no width: it never stands "beside");
+- a **target** is a short thick line across its category (the plan an actual column is compared with); it never stacks and its tooltip row says *(target)*.
 
-**Orientations**:
-- **Vertical**: standard column chart (categories on bottom, values on left).
-- **Horizontal**: horizontal bars (categories on left, values on bottom), ideal for long category names or horizontal rankings.
+**Data: rows, split by a field** (Power BI's legend field). Logic or a bound list gives rows `[{ hour, floor, kwh }]`; in *Data*: the **X field**, the **Y field** (several, comma separated: the wide form), **Split into series by** (`floor`). The x is detected: a category, a number or a **time**.
+- A category x: **Category order** as they come / largest first / smallest first / A–Z / Z–A; **Show the top N** (by the total of the series) and **the rest as "Others"**.
+- A time x: every point kept in Float64 rings (M4 + LOD, up to 2 000 000 a series); columns group the points into columns of the width the screen allows (average, sum, min, max, last); range buttons, the time ruler, zoom / pan, Live and annotations as the Line Chart.
+- Per series (its own Update node): **Set data**, **Set a point**, **Append a point**, Clear, Show, Hide; a **Live value** (a tag). The chart: **Set rows**, **Append rows**, Clear every series, Export.
 
-**X-Axis Types (`xType`)**:
-- **Category (`category`)**: discrete categories (`categories` prop, data keys, or `setCategories` action). Supports automatic label rotation (0°, 45°, 90°, -45°).
-- **Time series (`time`)**: timestamps along the time ruler. Supports live following, time windows, zoom & pan gestures, and event annotations.
+**The format pane:** Data · Series · Columns (default type, Stack, direction, fill solid / gradient, gaps, width, corner radius) · Lines (curve smooth / straight / step, width, markers) · Y axis · Secondary Y axis (title, log, soft / hard min / max, notation, decimals, gridlines, label colour) · X axis · Time axis · Title · Legend · Data labels · Tooltip · Thresholds · Zoom & pan · Annotations · General · Export.
+- **Data labels:** the value, the % of its category (or of its stack), or both; outside / inside the end / centre / inside the base; **the total above a stack**.
+- **Thresholds** (on the left or the right axis): a line, an upper / lower limit (*Shade past the limit*; **Colour the columns past it**: a column past the limit takes its colour), a band. Empty colour: the theme's status colour (limit: error, band: warning, line: info).
+- **Legend** (the shared part): any position (also inside the plot), a value (Total, Average, Max, Min, Last) or a **table** of them; click hides a series (Alt+click: only this one), **On Series Toggle**.
+- **Tooltip:** every series at that category (and the stack's total) or only the one under the cursor; a band or a dashed line behind the category.
+- **Events:** On Point Click (a series' own, with the category and value), On Hover, On Series Toggle, and the time events.
 
-**Series as Logic targets (`target: true`)**:
-Each series has its own Update node and click events in Logic (Events tab).
-- **Actions**:
-  - **Set data** (`setData`): replaces data for this series (`[10, 20, 30]` or `[{category, value}, …]` or `[{x: timestamp, y: value}, …]`).
-  - **Set point / bar** (`setPoint`): updates a single category bar `{category, value}` or timestamp point `{x, y}`.
-  - **Append point** (`appendPoint`): appends `{x, y}` or a scalar (time = now).
-  - **Clear**, **Show**, **Hide**.
-- **Events**:
-  - **On Bar Click** `{ category, time, value, percent, index }`.
-
-**Chart-level Logic**:
-- **Actions**:
-  - `setCategories(["A", "B", "C"])`: sets or replaces category labels.
-  - `setChartData({ categories, series: { s1: [...], s2: [...] } })`: bulk data update for all series from a single SQL / REST payload.
-  - `clearAll()`: empties all series.
-  - `export({ format: "csv" | "xlsx" | "png" })`.
-- **Events**:
-  - **On Bar Click** `{ category, time, seriesId, seriesName, value, percent, cumulativePercent, index }` — for drill-down flows.
-  - **On Hover**, **On Hover End**, **On Legend Toggle**, **On Range Change**.
-
-**Export**:
-- CSV: tabular data with category/time and all visible series.
-- Excel (`.xlsx`): real multi-sheet workbook with numbers and dates formatted.
-- PNG: 2× crisp rendering with title, axis scales, and bottom legend.
+Colours are a hex or a theme token; empty: the theme's chart palette. The editor shows sample data on an empty chart. It replaces the old Bar Chart and the layered Chart (2026-10-06, no migration: they were new); a Pareto chart comes later on the same engine.
 
 ### Pie & Donut Chart (`nexa-ui-pie-chart`)
 
@@ -607,27 +587,6 @@ return msg;
 ```
 
 ---
-
-### Chart (`nexa-ui-chart`): hidden
-
-**Not in the palette** (2026-10-06): one chart per type replaces it (Line, State Timeline, Column / Bar, KPI, Gauge, Pie, Pareto, Scatter); its engine below is what Column / Bar and Pareto are built on.
-
-The Cartesian chart, built in **layers**: every series is a column, line, step, area or points chart of its own, on any axis, in any stack. The first of the new chart family (see `.agents/CHART_FAMILIES_DESIGN.md`); Line and State Timeline stay as they are. It draws like the Line Chart (smooth monotone curves, gradient fills, a dashed crosshair, the time ruler) in a Power BI style format pane.
-
-**Data: rows, split by a field.** Logic (or a bound list) gives rows `[{ hour, floor, kwh }]`; in *Data* you say the **X field**, the **Y field** (several, comma separated: the wide form) and **Split into series by** (`floor`): one series per floor. The x is detected: a category, a number, or a **time** (epoch ms / seconds, an ISO text). Per series, Logic can also **Set data**, **Set a point**, **Append a point**, Clear, Show, Hide; a series can have a **Live value** (a tag). Actions of the chart: **Set rows**, **Append rows**, Clear, Export, and for a time x the Line Chart's (Follow live, Show a range, annotations).
-
-**A time x keeps every point** in Float64 ring buffers with the LOD of the Line Chart (up to 2 000 000 a series, 16 bytes a point): lines are drawn at pixel accuracy (M4), columns and stacks group the points into columns of the width the screen allows (average, sum, min, max or last), and the time ruler, zoom / pan, Live, annotations and the refresh ticker are the Line Chart's.
-
-**Layers.** A series' own fields: mark, axis, stack, colour, opacity, curve, line width and dash, fill, markers, corner radius, data labels, unit, notation, decimals. The chart-level *Visual* settings are only the **defaults** of a series that leaves its field empty.
-- **Axes** (a list): any number, left or right, linear or logarithmic, soft and hard min / max, notation, decimals, gridlines, label colour. A series, a stack and a reference line pick one by Id (empty: the first).
-- **Stacks** (a list): add a stack, then pick it in each series' **Stack** field; the order of the series is the order of the pile (the first at the bottom). A stack owns its **mode** (stacked, 100 %, side by side, overlapping), its **axis** (every member is on it: a sum is only meaningful on one scale) and its **place** (beside the other stacks, or over them, narrower: a target over an actual). *Any marks stack together*: a column is a rectangle from its base to its top, an area a band, a line or points sit at the cumulative top ("the total so far"). **Also every other series of the data** puts the series that came from the split field and are listed nowhere into the stack: the floors of a building, however many. Tooltips and labels show a series' own value, plus a Total for a pile.
-- Series in no stack: *Visual -> Series in no stack* (side by side, one pile, 100 %, overlapping).
-
-**The format pane:** Data · Series · Stacks · Axes · Visual · Title · Legend · X axis · Time axis · Data labels · Tooltip · Reference lines · Zoom & pan · Annotations · General · Export. Legend: six positions (also inside any corner), a value next to the name (last, total, average, min, max), click hides (Alt+click: only this one). Tooltip: every series at that category / x, or only the one under the cursor. Reference lines and bands on any axis.
-
-**Colours**: every colour field takes a **hex** or a **theme token** (the ◆ picker: `{token:colors.red.solid}`); empty = the theme's chart palette (`colors.chart.1...14`, Theme & Styling). Status colours (a reference line) are the theme's `error`.
-
-Not yet: a table legend, tooltip templates, per-series conditional colours (thresholds, value mappings), readouts (a big current value anywhere), SPC; the Stacks field is a pick-from-the-series field (a nested "add child" editor comes later).
 
 ### Histogram (`nexa-ui-histogram`)
 

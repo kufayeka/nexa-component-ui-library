@@ -41,8 +41,8 @@ This is a Nexa component plugin (`@kufayeka/nexa-component-ui-library`). Every c
     - props.js (the shared props / events / actions);
     - legend.js (the legend part: props, list / table markup, placement around / inside the plot; its look is in core.js CHART_CSS);
     - time.js, buffer.js, export.js (the xlsx writer);
-    - rows.js, stack.js (pure: rows -> columns split by a field, stacking, nice ticks; test/chart-pure.test.js, no browser), cartesian.js (the layered Chart: NOT imported by index.js, hidden from the palette since 2026-10-06; its engine is reused by the per-type charts, see .agents/CHART_FAMILIES_DESIGN.md section 0);
-    - line.js (Line Chart), state.js (State Timeline), bar.js (Bar / Column Chart), pie.js (Pie / Donut Chart), gauge.js (Radial & Linear Gauge), area.js (Area & Stacked Area Chart), sparkline.js (Sparkline), histogram.js (Histogram);
+    - rows.js, stack.js, curves.js (pure: rows -> columns split by a field, stacking, nice ticks, monotone curves; test/chart-pure.test.js, no browser);
+    - line.js (Line Chart), state.js (State Timeline), column.js (Column / Bar Chart: columns, lines, targets; stack or side by side; the engine of the old layered Chart), pie.js (Pie / Donut Chart), gauge.js (Radial & Linear Gauge), area.js (Area & Stacked Area Chart), sparkline.js (Sparkline), histogram.js (Histogram);
     - index.js (every chart).
 
     A new chart is its own file there, on ChartElement or TimeChartElement.

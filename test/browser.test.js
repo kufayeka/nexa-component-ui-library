@@ -6,24 +6,25 @@
 // theme (palettes, tokens, dark mode); the inspector gives every prop its binding, its
 // breakpoints and tokens. Needs the dashboard built (npm run build there).
 //   node test/browser.test.js         (skipped when Chrome is not installed)
+//   node test/browser.test.js --only "Chart|Timeline"   only the tests whose name matches (npm run test:charts)
 
 const assert = require('assert');
 const path = require('path');
 const { withHarness } = require('@kufayeka/node-red-nexa-dashboard/sdk/testkit');
 
 let passed = 0;
-async function ok(label, fn) { await fn(); passed++; console.log('✔ ' + label); }
+const onlyAt = process.argv.indexOf('--only'), only = onlyAt !== -1 ? new RegExp(process.argv[onlyAt + 1] || '.', 'i') : null;
+async function ok(label, fn) { if (only && !only.test(label)) return; await fn(); passed++; console.log('✔ ' + label); }
 
 const P = 'nexa-ui-';
 const ALL = ['button', 'input', 'textarea', 'number-input', 'password-input', 'checkbox', 'switch', 'radio-group', 'segmented', 'select', 'combobox', 'slider', 'tags-input', 'pin-input', 'rating',
     'text', 'heading', 'badge', 'tag', 'card', 'avatar', 'stat', 'alert', 'progress', 'spinner', 'skeleton', 'separator', 'empty-state', 'timeline', 'fieldset',
-    'tabs', 'iframe', 'datetime', 'daterange', 'pagination', 'line-chart', 'state-timeline', 'bar-chart', 'pie-chart', 'gauge', 'area-chart', 'sparkline', 'histogram'];
+    'tabs', 'iframe', 'datetime', 'daterange', 'pagination', 'line-chart', 'state-timeline', 'column-chart', 'pie-chart', 'gauge', 'area-chart', 'sparkline', 'histogram'];
 const TAG = '{sparkplug:Plant::Line1::Mixer::Speed}';
 
 withHarness({
     mounts: { '/nexa-component-ui-library/vendor': path.join(__dirname, '..', 'dist'), '/fx': path.join(__dirname, 'fixtures') },
-    // the layered Chart is hidden from the palette (not imported by the library): its engine tests load it
-    modules: ['/nexa-component-ui-library/vendor/ui-library.js', '/nexa-component-ui-library/vendor/chart/cartesian.js']
+    modules: ['/nexa-component-ui-library/vendor/ui-library.js']
 }, async ({ js, type, key, logs, send }) => {
     const settle = () => js('NexaTest.settle()');
     // after a style change: its CSS transition (0.15 s) done
@@ -1352,159 +1353,6 @@ withHarness({
         assert.strictEqual(z[0], z[1], 'the same plot height at 50 %');
     });
 
-    // ---- Bar Chart --------------------------------------------------------------------------
-    const bcw = (name) => `NexaTest.wc(${JSON.stringify(name)})`;
-
-    await ok('Bar Chart: grouped (dempet) columns, multiple series, data in, click fires On Bar Click with full payload', async () => {
-        await mount('bc-grp', 'bar-chart', {
-            categories: ['Line 1', 'Line 2', 'Line 3'],
-            series: [{ id: 's1', name: 'Shift 1' }, { id: 's2', name: 'Shift 2' }],
-            mode: 'grouped',
-            orientation: 'vertical'
-        }, { width: 600, height: 260 });
-
-        const count = await js(`(function () {
-            var w = ${bcw('bc-grp')};
-            w.setData([45, 60, 80], { list: 'series', id: 's1' });
-            w.setData([30, 50, 70], { list: 'series', id: 's2' });
-            w.draw();
-            return [w._hitBoxes.length, w._scale.m.plotW > 0];
-        })()`);
-        assert.deepStrictEqual(count, [6, true], '6 bars rendered (3 categories * 2 series)');
-
-        // Click on first bar
-        await js(`(function () {
-            var w = ${bcw('bc-grp')};
-            var b = w._hitBoxes[0].box;
-            w._plotClick({ px: b.x + b.w / 2, py: b.y + b.h / 2 });
-        })()`);
-        const it = await item('bc-grp');
-        const clickEv = it.events.find((e) => e[0] === 'barClick');
-        assert.ok(clickEv, 'barClick emitted');
-        assert.strictEqual(clickEv[1].category, 'Line 1');
-        assert.strictEqual(clickEv[1].value, 45);
-        assert.strictEqual(clickEv[1].seriesId, 's1');
-    });
-
-    await ok('Bar Chart: direct array payload [{ category, s1, s2 }, …] sets categories and series data', async () => {
-        await mount('bc-array', 'bar-chart', {
-            series: [{ id: 's1', name: 'Shift 1' }, { id: 's2', name: 'Shift 2' }],
-            mode: 'grouped'
-        }, { width: 600, height: 260 });
-
-        const res = await js(`(function () {
-            var w = ${bcw('bc-array')};
-            w.setChartData([
-                { category: 'Line 1', s1: 120, s2: 110 },
-                { category: 'Line 2', s1: 185, s2: 170 },
-                { category: 'Line 3', s1: 95,  s2: 105 }
-            ]);
-            w.draw();
-            return {
-                cats: w._activeCategories.slice(),
-                s1Val: w._state(w.findSeries('s1')).categoryMap.get('Line 1'),
-                s2Val: w._state(w.findSeries('s2')).categoryMap.get('Line 2')
-            };
-        })()`);
-        assert.deepStrictEqual(res.cats, ['Line 1', 'Line 2', 'Line 3']);
-        assert.strictEqual(res.s1Val, 120);
-        assert.strictEqual(res.s2Val, 170);
-    });
-
-    await ok('Bar Chart: stacked and stacked100 modes normalize scale and stack values', async () => {
-        await mount('bc-stk', 'bar-chart', {
-            categories: ['Q1', 'Q2'],
-            series: [{ id: 's1', name: 'North' }, { id: 's2', name: 'South' }],
-            mode: 'stacked'
-        }, { width: 500, height: 240 });
-
-        await js(`(function () {
-            var w = ${bcw('bc-stk')};
-            w.setData([100, 200], { list: 'series', id: 's1' });
-            w.setData([50, 100], { list: 'series', id: 's2' });
-            w.draw();
-        })()`);
-
-        const maxValStacked = await js(`(function () {
-            var w = ${bcw('bc-stk')};
-            return w._hitBoxes.length;
-        })()`);
-        assert.strictEqual(maxValStacked, 4);
-
-        // Switch to stacked100
-        await js(`(function () {
-            var w = ${bcw('bc-stk')};
-            w.p.mode = 'stacked100';
-            w.draw();
-        })()`);
-        const mode100 = await js(`${bcw('bc-stk')}.p.mode`);
-        assert.strictEqual(mode100, 'stacked100');
-    });
-
-    await ok('Bar Chart: pareto mode sorts descending, calculates cumulative curve, and renders 80% cutoff line', async () => {
-        await mount('bc-par', 'bar-chart', {
-            categories: ['Scratch', 'Dent', 'Crack', 'Misaligned'],
-            series: [{ id: 's1', name: 'Defects', colorMode: 'byCategory' }],
-            mode: 'pareto',
-            showCutoffLine: true,
-            cutoffPercent: 80
-        }, { width: 600, height: 280 });
-
-        const pareto = await js(`(function () {
-            var w = ${bcw('bc-par')};
-            w.setData([
-                { category: 'Crack', value: 15 },
-                { category: 'Scratch', value: 80 },
-                { category: 'Misaligned', value: 5 },
-                { category: 'Dent', value: 40 }
-            ], { list: 'series', id: 's1' });
-            w.draw();
-            var sortedCats = w._hitBoxes.map(function (h) { return h.slot.label; });
-            var cumPercents = w._hitBoxes.map(function (h) { return Math.round(h.slot.cumPercent); });
-            return { sortedCats: sortedCats, cumPercents: cumPercents };
-        })()`);
-        // Total = 80 + 40 + 15 + 5 = 140
-        // Scratch: 80/140 = 57%
-        // Dent: 120/140 = 86%
-        // Crack: 135/140 = 96%
-        // Misaligned: 140/140 = 100%
-        assert.deepStrictEqual(pareto.sortedCats, ['Scratch', 'Dent', 'Crack', 'Misaligned'], 'sorted descending');
-        assert.deepStrictEqual(pareto.cumPercents, [57, 86, 96, 100], 'cumulative percentages calculated');
-    });
-
-    await ok('Bar Chart: timeseries mode (xType: "time") renders along time with time ruler and live data', async () => {
-        const T = 1728000000000;
-        await mount('bc-time', 'bar-chart', {
-            xType: 'time',
-            series: [{ id: 's1', name: 'Energy' }],
-            mode: 'grouped'
-        }, { width: 600, height: 260 });
-
-        const timeData = await js(`(function () {
-            var w = ${bcw('bc-time')};
-            w.appendPoint({ x: ${T}, y: 45 }, { list: 'series', id: 's1' });
-            w.appendPoint({ x: ${T + 3600000}, y: 55 }, { list: 'series', id: 's1' });
-            w.appendPoint({ x: ${T + 7200000}, y: 65 }, { list: 'series', id: 's1' });
-            w.draw();
-            var m = w.getPlotMetrics(600, 260);
-            return { points: w._state(w.findSeries('s1')).timePoints.length, rulerH: m.rulerH > 0 };
-        })()`);
-        assert.strictEqual(timeData.points, 3);
-        assert.strictEqual(timeData.rulerH, true, 'time ruler rendered');
-    });
-
-    await ok('Bar Chart: export CSV and Excel (.xlsx) with real rows and headers', async () => {
-        const res = await js(`(async function () {
-            var w = ${bcw('bc-par')};
-            var csv = w.exportData('csv');
-            var xlsx = w.exportData('xlsx');
-            return { csvRows: csv, xlsxRows: xlsx, lastExportName: w._lastExport.name };
-        })()`);
-        assert.strictEqual(res.csvRows, 4);
-        assert.strictEqual(res.xlsxRows, 4);
-        assert.ok(/\.xlsx$/.test(res.lastExportName));
-    });
-
     // ---- Pie Chart --------------------------------------------------------------------------
     const pcw = (name) => `NexaTest.wc(${JSON.stringify(name)})`;
 
@@ -1895,7 +1743,7 @@ withHarness({
 
     await ok('Print: every chart with a panel paints it in (Pie, Gauge, Area, Histogram clear through _clearCanvas, not clearRect)', async () => {
         const kinds = { pie: ['pie-chart', { slices: [{ id: 'a', name: 'A', value: 3 }, { id: 'b', name: 'B', value: 1 }] }], gauge: ['gauge', { value: 40 }], area: ['area-chart', { series: [{ id: 's1', name: 'S' }] }],
-            hist: ['histogram', {}] };       // (the Sparkline has no panel of its own: nothing to paint in)
+            hist: ['histogram', {}], column: ['column-chart', {}] };       // (the Sparkline has no panel of its own: nothing to paint in)
         for (const name of Object.keys(kinds)) await mount('pr-' + name, kinds[name][0], kinds[name][1], { width: 300, height: 180 });
         const px = (name) => js(`(function () { var w = NexaTest.wc("pr-${name}"), cv = w.renderRoot.querySelector("canvas"); return Array.from(cv.getContext("2d").getImageData(1, 1, 1, 1).data); })()`);
         for (const name of Object.keys(kinds)) assert.strictEqual((await px(name))[3], 0, name + ' on screen: transparent');
@@ -1924,15 +1772,19 @@ withHarness({
         assert.strictEqual(c.err.toLowerCase(), '#da1e28');
     });
 
-    // ---- Chart (the Cartesian chart) ---------------------------------------------------------------------------
+    // ---- Column / Bar Chart -----------------------------------------------------------------------------------
     const cw = (name) => `NexaTest.wc(${JSON.stringify(name)})`;
     const FLOORS = ['F1', 'F2', 'F3'], HOURS = ['08:00', '09:00', '10:00', '11:00'];
     const energyRows = () => { const r = []; HOURS.forEach((h, hi) => FLOORS.forEach((f, fi) => r.push({ hour: h, floor: f, kwh: 10 + fi * 5 + hi }))); return r; };
     const painted = (name) => js(`(function () { var c = ${root(name)}.querySelector("canvas"), d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data, n = 0; for (var i = 3; i < d.length; i += 4) if (d[i]) n++; return n; })()`);
     const pointer = (name, type, fx, fy) => js(`(function () { var w = ${cw(name)}, pl = w.renderRoot.querySelector(".plot"), r = pl.getBoundingClientRect(); pl.dispatchEvent(new PointerEvent("${type}", { bubbles: true, clientX: r.left + r.width * ${fx}, clientY: r.top + r.height * ${fy}, pointerId: 3 })); return 1; })()`);
+    // the pointer over category i's centre, at a height fraction of the plot
+    const pointAt = (name, type, i, fy) => js(`(function () { var w = ${cw(name)}; w.draw(); var g = w._geo, pl = w.renderRoot.querySelector(".plot"), r = pl.getBoundingClientRect();
+        pl.dispatchEvent(new PointerEvent("${type}", { bubbles: true, clientX: r.left + g.plotX + g.cpos(g.slots.xs[${i}]), clientY: r.top + g.plotY + g.plotH * ${fy}, pointerId: 3 })); return 1; })()`);
+    const COL = 'column-chart';
 
-    await ok('Chart: rows split by a field become a series each (long form), draw, and the legend lists them; wide form: a series per y field', async () => {
-        await mount('ch1', 'chart', { rows: energyRows(), xField: 'hour', yField: 'kwh', splitField: 'floor', title: 'Energy', stacking: 'clustered' }, { width: 500, height: 280 });
+    await ok('Column Chart: rows split by a field become a series each (long form), draw, and the legend lists them; wide form: a series per y field', async () => {
+        await mount('ch1', COL, { rows: energyRows(), xField: 'hour', yField: 'kwh', splitField: 'floor', title: 'Energy' }, { width: 500, height: 280 });
         const r = await js(`(function () { var w = ${cw('ch1')}; return { xType: w._frame.xType, cats: w._frame.cats, series: w.seriesList().map(function (s) { return s.name; }), legend: Array.from(w.renderRoot.querySelectorAll(".lg-name")).map(function (e) { return e.textContent; }), title: w.renderRoot.querySelector(".c-title").textContent }; })()`);
         assert.strictEqual(r.xType, 'category');
         assert.deepStrictEqual(r.cats, HOURS);
@@ -1940,12 +1792,12 @@ withHarness({
         assert.deepStrictEqual(r.legend, FLOORS);
         assert.strictEqual(r.title, 'Energy');
         assert.ok(await painted('ch1') > 3000, 'columns, axes and labels are drawn');
-        await mount('ch2', 'chart', { rows: [{ t: 'a', p: 1, q: 2 }, { t: 'b', p: 3, q: 4 }], xField: 't', yField: 'p, q' }, { width: 300, height: 200 });
+        await mount('ch2', COL, { rows: [{ t: 'a', p: 1, q: 2 }, { t: 'b', p: 3, q: 4 }], xField: 't', yField: 'p, q' }, { width: 300, height: 200 });
         assert.deepStrictEqual(await js(`${cw('ch2')}.seriesList().map(function (s) { return s.name; })`), ['p', 'q']);
     });
 
-    await ok('Chart: Logic Set rows / Append rows replace / add; a time x is detected; item actions (Set data, Set a point, Append, Hide, Show, Clear) drive one series; a click fires On Point Click with the series as target', async () => {
-        await mount('ch3', 'chart', { series: [{ id: 's1', name: 'Load' }], xField: 'x', yField: 'y' }, { width: 500, height: 260 });
+    await ok('Column Chart: Logic Set rows / Append rows replace / add; a time x is detected; item actions (Set data, Set a point, Append, Hide, Show, Clear) drive one series; a click fires On Point Click with the series as target', async () => {
+        await mount('ch3', COL, { series: [{ id: 's1', name: 'Load' }], xField: 'x', yField: 'y' }, { width: 500, height: 260 });
         await js(`NexaTest.invoke("ch3", "clearAll")`);            // (the harness is an editor: an empty chart shows sample data until it is cleared)
         await js(`NexaTest.invoke("ch3", "setData", { "A": 5, "B": 9, "C": 7 }, { list: "series", id: "s1", index: 0 })`); await settle();
         assert.deepStrictEqual(await js(`(function () { var w = ${cw('ch3')}; return [w._frame.cats, Array.from(w._frame.series[0].y)]; })()`), [['A', 'B', 'C'], [5, 9, 7]]);
@@ -1957,16 +1809,15 @@ withHarness({
         await js(`NexaTest.invoke("ch3", "show", null, { list: "series", id: "s1", index: 0 })`); await settle();
         assert.strictEqual(await js(`${cw('ch3')}._visible().length`), 1);
         // a click on a column: the event of THAT series
-        await js(`${cw('ch3')}.draw(); 1`);          // the drawing is what a click is measured on
         await js(`window.__ev = []; var w = ${cw('ch3')}; var old = w.emit.bind(w); w.emit = function (n, p, t) { window.__ev.push([n, p, t]); return old(n, p, t); }; w.isEditor = false; 1`);
-        await js(`(function () { var pl = ${cw('ch3')}.renderRoot.querySelector(".plot"), r = pl.getBoundingClientRect(); pl.dispatchEvent(new MouseEvent("click", { bubbles: true, clientX: r.left + r.width * 0.43, clientY: r.top + r.height * 0.5 })); })()`);
+        await js(`(function () { var w = ${cw('ch3')}; w.draw(); var g = w._geo, pl = w.renderRoot.querySelector(".plot"), r = pl.getBoundingClientRect(); pl.dispatchEvent(new MouseEvent("click", { bubbles: true, clientX: r.left + g.plotX + g.cpos(1), clientY: r.top + g.plotY + g.plotH * 0.8 })); })()`);
         const ev = await js('window.__ev.filter(function (e) { return e[0] === "pointClick"; })');
         assert.strictEqual(ev.length, 1, JSON.stringify(ev));
         assert.deepStrictEqual(ev[0][2], { list: 'series', id: 's1' });
         assert.strictEqual(ev[0][1].x, 'B');
         await js(`NexaTest.invoke("ch3", "clear", null, { list: "series", id: "s1", index: 0 })`); await settle();
         assert.strictEqual(await js(`${cw('ch3')}._frame.series.length`), 0);
-        await mount('ch4', 'chart', {}, { width: 300, height: 200 });
+        await mount('ch4', COL, {}, { width: 300, height: 200 });
         const T0 = 1727852400000;
         await js(`NexaTest.invoke("ch4", "setRows", [{ x: ${T0}, y: 1, s: "a" }, { x: ${T0 + 60000}, y: 2, s: "a" }])`); await settle();
         assert.strictEqual(await js(`${cw('ch4')}._xt`), 'time');
@@ -1974,9 +1825,9 @@ withHarness({
         assert.deepStrictEqual(await js(`(function () { var b = ${cw('ch4')}._tser.get("y").buf, o = []; for (var i = 0; i < b.count; i++) o.push(b.getY(i)); return o; })()`), [1, 2, 3], 'a time x: Float64 rings, not rows');
     });
 
-    await ok('Chart: stacked piles, 100 % (the axis ends at 100), clustered; the tooltip lists every series at that category with the total of a stack; a single-series tooltip', async () => {
-        await mount('ch5', 'chart', { rows: energyRows(), xField: 'hour', yField: 'kwh', splitField: 'floor', stacking: 'stacked' }, { width: 500, height: 280 });
-        await pointer('ch5', 'pointermove', 0.2, 0.4); await settle();
+    await ok('Column Chart: stacked piles, 100 % (the axis ends at 100), side by side; the tooltip lists every series at that category with the total of the stack; a single-series tooltip', async () => {
+        await mount('ch5', COL, { rows: energyRows(), xField: 'hour', yField: 'kwh', splitField: 'floor', stacking: 'stacked' }, { width: 500, height: 280 });
+        await pointAt('ch5', 'pointermove', 0, 0.4); await settle();
         const tip = await js(`(function () { var t = ${cw('ch5')}.renderRoot.querySelector(".tooltip"); return { shown: t.style.display, text: t.textContent }; })()`);
         assert.strictEqual(tip.shown, 'block');
         assert.ok(/08:00/.test(tip.text) && /F1/.test(tip.text) && /F2/.test(tip.text) && /F3/.test(tip.text) && /Total45/.test(tip.text.replace(/\s/g, '')), tip.text);
@@ -1984,51 +1835,87 @@ withHarness({
         assert.strictEqual(await js(`${cw('ch5')}.renderRoot.querySelector(".tooltip").style.display`), 'none');
         const hi = await js(`${cw('ch5')}._geo.axes.get("y").hi`);
         assert.ok(hi >= 45, 'the stack total sets the axis: ' + hi);
-        await mount('ch5p', 'chart', { rows: energyRows(), xField: 'hour', yField: 'kwh', splitField: 'floor', stacking: 'percent' }, { width: 500, height: 280 });
+        await mount('ch5p', COL, { rows: energyRows(), xField: 'hour', yField: 'kwh', splitField: 'floor', stacking: 'percent' }, { width: 500, height: 280 });
         assert.strictEqual(await js(`${cw('ch5p')}._geo.axes.get("y").hi`), 100);
-        await mount('ch5s', 'chart', { rows: energyRows(), xField: 'hour', yField: 'kwh', splitField: 'floor', stacking: 'stacked', tooltipShows: 'single' }, { width: 500, height: 280 });
-        await pointer('ch5s', 'pointermove', 0.2, 0.7); await settle();
-        const one = await js(`${cw('ch5s')}.renderRoot.querySelectorAll(".tooltip-row").length`);
-        assert.strictEqual(one, 1, 'one series under the cursor');
+        await mount('ch5s', COL, { rows: energyRows(), xField: 'hour', yField: 'kwh', splitField: 'floor', stacking: 'stacked', tooltipShows: 'single' }, { width: 500, height: 280 });
+        await pointAt('ch5s', 'pointermove', 0, 0.95); await settle();
+        assert.strictEqual(await js(`${cw('ch5s')}.renderRoot.querySelectorAll(".tooltip-row").length`), 1, 'one series under the cursor');
+        await mount('ch5n', COL, { rows: energyRows(), xField: 'hour', yField: 'kwh', splitField: 'floor' }, { width: 500, height: 280 });
+        assert.deepStrictEqual(await js(`(function () { var g = ${cw('ch5n')}._geo; return ["F1", "F2", "F3"].map(function (k) { return g.place.get(k); }); })()`), [0, 1, 2], 'Stack off: side by side, a place each');
     });
 
-    await ok('Chart: a colour is a hex OR a theme token (a list item too); no colour: the theme\'s palette; a status colour for a reference line', async () => {
-        await mount('ch6', 'chart', { rows: energyRows(), xField: 'hour', yField: 'kwh', splitField: 'floor',
-            series: [{ id: 'F1', name: 'F1', color: '{token:colors.red.solid}' }, { id: 'F2', name: 'F2', color: '#123456' }], references: [{ kind: 'line', value: 20, label: 'Limit' }] }, { width: 400, height: 240 });
-        const c = await js(`(function () { var w = ${cw('ch6')}, l = w.seriesList(); return { c: l.map(function (s) { return w.colorOf(s); }), p0: w.seriesColor(0), e: w.statusColor("error") }; })()`);
-        assert.strictEqual(c.c[0], '#da1e28', 'the token, in the current mode');
+    await ok('Column Chart: a series is a column, a line or a target; in the stack or not (a column out of it stands beside the pile, a line in it sits at the total so far); the right axis', async () => {
+        const rows = energyRows();
+        await mount('cb1', COL, { rows, xField: 'hour', yField: 'kwh', splitField: 'floor', stacking: 'stacked',
+            series: [{ id: 'F1', name: 'F1' }, { id: 'F2', name: 'F2', type: 'line' }, { id: 'F3', name: 'F3', stack: false }] }, { width: 500, height: 280 });
+        const r = await js(`(function () { var w = ${cw('cb1')}; w.draw(); var g = w._geo; return { places: ["F1", "F3"].map(function (k) { return g.place.get(k); }), line: Array.from(g.lines.get("F2").y), f1: Array.from(g.stackOf.get("F1").hi) }; })()`);
+        assert.deepStrictEqual(r.places, [0, 1], 'F1 in the stack (place 0), F3 out of it beside the pile (place 1)');
+        assert.deepStrictEqual(r.f1, [10, 11, 12, 13]);
+        assert.deepStrictEqual(r.line, [25, 27, 29, 31], 'the line in the stack: F1 + F2, the total so far');
+        await mount('cb2', COL, { rows, xField: 'hour', yField: 'kwh', splitField: 'floor', stacking: 'stacked',
+            series: [{ id: 'F3', name: 'F3', type: 'line', stack: false, axis: 'right' }, { id: 'F2', name: 'Plan', type: 'target' }] }, { width: 500, height: 280 });
+        const t = await js(`(function () { var w = ${cw('cb2')}; w.draw(); var g = w._geo; return { line: Array.from(g.lines.get("F3").y), axis: g.axisOf.get("F3"), right: g.axes.has("y2"), targetStacked: g.stackOf.has("F2"), hi: g.axes.get("y").hi }; })()`);
+        assert.deepStrictEqual(t.line, [20, 21, 22, 23], 'a line out of the stack: its own value');
+        assert.strictEqual(t.axis, 'y2');
+        assert.strictEqual(t.right, true);
+        assert.strictEqual(t.targetStacked, false, 'a target never stacks');
+        assert.ok(t.hi >= 18, 'the target is on the axis');
+        await pointAt('cb2', 'pointermove', 1, 0.5); await settle();
+        assert.ok(/Plan \(target\)/.test(await js(`${cw('cb2')}.renderRoot.querySelector(".tooltip").textContent`)), 'the tooltip says it is a target');
+        assert.ok(await painted('cb2') > 4000);
+    });
+
+    await ok('Column Chart: a colour is a hex OR a theme token; thresholds in the theme\'s status colours; a limit colours the columns past it', async () => {
+        await mount('ch6', COL, { rows: energyRows(), xField: 'hour', yField: 'kwh', splitField: 'floor',
+            series: [{ id: 'F1', name: 'F1', color: '{token:colors.red.solid}' }, { id: 'F2', name: 'F2', color: '#123456' }],
+            thresholds: [{ kind: 'upper', value: 20, colorColumns: true, label: 'Max' }, { kind: 'band', value: 5, to: 8 }, { kind: 'line', value: 15 }] }, { width: 400, height: 240 });
+        const c = await js(`(function () { var w = ${cw('ch6')}, l = w.seriesList(), th = w._thresholds(); return { c: l.map(function (s) { return w.colorOf(s); }), p2: w.seriesColor(2), th: th.map(function (t) { return t.color; }), st: [w.statusColor("error"), w.statusColor("warning"), w.statusColor("info")],
+            past: w._columnColor("y", 21, "#000000", th), under: w._columnColor("y", 19, "#000000", th) }; })()`);
+        assert.strictEqual(c.c[0], await js(`${cw('ch6')}._tok("{token:colors.red.solid}")`), 'the token, in the current mode');
         assert.strictEqual(c.c[1], '#123456', 'a hex as it is');
-        assert.strictEqual(c.c[2].toLowerCase(), c.p0.toLowerCase().length ? await js(`${cw('ch6')}.seriesColor(2)`).then((x) => x.toLowerCase()) : '', 'the third: the palette');
-        assert.ok(/^#|^rgb/.test(c.p0), c.p0);
+        assert.strictEqual(c.c[2], c.p2, 'the third: the palette');
+        assert.deepStrictEqual(c.th, c.st, 'limit: error, band: warning, line: info');
+        assert.deepStrictEqual([c.past, c.under], [c.st[0], '#000000'], 'past the limit: its colour');
     });
 
-    await ok('Chart: the right axis, a line over columns (combo), orientation horizontal, data labels, a band; each draws', async () => {
-        await mount('ch7', 'chart', { rows: energyRows().concat(HOURS.map((h, i) => ({ hour: h, floor: 'T', kwh: 18 + i }))), xField: 'hour', yField: 'kwh', splitField: 'floor', stacking: 'stacked', labels: true,
-            series: [{ id: 'T', name: 'Temp', mark: 'line', axis: 'y2' }], references: [{ kind: 'band', value: 30, to: 40, label: 'Target' }], axes: [{ id: 'y', side: 'left', grid: true }, { id: 'y2', side: 'right', title: 'C' }] }, { width: 500, height: 280 });
-        const g = await js(`(function () { var g = ${cw('ch7')}._geo; return { left: g.axes.has("y"), right: g.axes.has("y2"), hiR: g.axes.get("y2") && g.axes.get("y2").hi }; })()`);
-        assert.ok(g.left && g.right && g.hiR >= 21, JSON.stringify(g));
-        assert.ok(await painted('ch7') > 4000);
-        await mount('ch7h', 'chart', { rows: energyRows(), xField: 'hour', yField: 'kwh', splitField: 'floor', stacking: 'stacked', orientation: 'horizontal', labels: true }, { width: 500, height: 280 });
+    await ok('Column Chart: horizontal bars, data labels (value / % / both), the total above a stack, a gradient fill; each draws', async () => {
+        await mount('ch7h', COL, { rows: energyRows(), xField: 'hour', yField: 'kwh', splitField: 'floor', stacking: 'stacked', orientation: 'horizontal', labels: true, labelShow: 'both' }, { width: 500, height: 280 });
         assert.strictEqual(await js(`${cw('ch7h')}._geo.horizontal`), true);
         assert.ok(await painted('ch7h') > 3000);
+        await mount('ch7t', COL, { rows: energyRows(), xField: 'hour', yField: 'kwh', splitField: 'floor', stacking: 'stacked', columnFill: 'gradient' }, { width: 500, height: 280 });
+        await mount('ch7n', COL, { rows: energyRows(), xField: 'hour', yField: 'kwh', splitField: 'floor', stacking: 'stacked', labelTotal: false }, { width: 500, height: 280 });
+        const top = await js(`[${cw('ch7t')}._geo.plotY, ${cw('ch7n')}._geo.plotY]`);
+        assert.ok(top[0] > top[1], 'room above the stacks for their totals: ' + top);
+        assert.ok(await painted('ch7t') > 3000);
     });
 
-    await ok('Chart: ordered legend (toggle hides a series and fires On Series Toggle), a legend value, positions (top / left / right / inside / none)', async () => {
-        await mount('ch8', 'chart', { rows: energyRows(), xField: 'hour', yField: 'kwh', splitField: 'floor', legendValue: 'sum' }, { width: 500, height: 260 });
+    await ok('Column Chart: categories by value, the top N and the rest as Others', async () => {
+        const rows = [{ c: 'A', v: 5 }, { c: 'B', v: 40 }, { c: 'C', v: 12 }, { c: 'D', v: 30 }, { c: 'E', v: 1 }];
+        await mount('cs1', COL, { rows, xField: 'c', yField: 'v', categoryOrder: 'value-desc', topN: 2 }, { width: 400, height: 220 });
+        const r = await js(`(function () { var a = ${cw('cs1')}._align(); return { cats: a.cats, v: Array.from(a.cols.get("v")) }; })()`);
+        assert.deepStrictEqual(r, { cats: ['B', 'D', 'Others'], v: [40, 30, 18] });
+        await js(`NexaTest.setProps("cs1", { others: false, categoryOrder: "data" })`); await settle();
+        assert.deepStrictEqual(await js(`${cw('cs1')}._align().cats`), ['B', 'D'], 'the top 2 in the order they came');
+    });
+
+    await ok('Column Chart: the legend part (a value, a table of Total / Avg / Max…, positions); a toggle hides a series and fires On Series Toggle', async () => {
+        await mount('ch8', COL, { rows: energyRows(), xField: 'hour', yField: 'kwh', splitField: 'floor', legendValue: 'sum' }, { width: 500, height: 260 });
         assert.deepStrictEqual(await js(`Array.from(${cw('ch8')}.renderRoot.querySelectorAll(".lg-val")).map(function (e) { return e.textContent; })`), ['46', '66', '86']);
         await js(`${cw('ch8')}.renderRoot.querySelector(".lg-item").click()`); await settle();
         assert.strictEqual(await js(`${cw('ch8')}._visible().length`), 2);
-        for (const at of ['top', 'left', 'right', 'inside-tr', 'none']) {
-            await mount('ch8' + at, 'chart', { rows: energyRows(), xField: 'hour', yField: 'kwh', splitField: 'floor', legend: at }, { width: 500, height: 260 });
+        await mount('ch8t', COL, { rows: energyRows(), xField: 'hour', yField: 'kwh', splitField: 'floor', legend: 'right', legendMode: 'table', legendMin: false, legendLast: false }, { width: 600, height: 260 });
+        assert.deepStrictEqual(await js(`Array.from(${cw('ch8t')}.renderRoot.querySelectorAll(".lg-table th")).map(function (e) { return e.textContent.trim(); })`), ['Series', 'Total', 'Avg', 'Max']);
+        for (const at of ['top', 'left', 'inside-tr', 'none']) {
+            await mount('ch8' + at, COL, { rows: energyRows(), xField: 'hour', yField: 'kwh', splitField: 'floor', legend: at }, { width: 500, height: 260 });
             const cls = await js(`(function () { var l = ${cw('ch8' + at)}.renderRoot.querySelector(".legend"); return l ? l.className : null; })()`);
             assert.strictEqual(cls !== null, at !== 'none', at);
-            if (at === 'left' || at === 'right') assert.ok(cls.split(' ').indexOf('v') !== -1, 'vertical: ' + cls);
+            if (at === 'left') assert.ok(cls.split(' ').indexOf('v') !== -1, 'vertical: ' + cls);
             if (at === 'inside-tr') assert.ok(/inside tr/.test(cls), cls);
         }
     });
 
-    await ok('Chart: export CSV / Excel of what it shows, the file name; PNG; no errors; the editor draws sample data when it is empty', async () => {
-        await mount('ch9', 'chart', { rows: energyRows(), xField: 'hour', yField: 'kwh', splitField: 'floor', title: 'E' }, { width: 400, height: 220 });
+    await ok('Column Chart: export CSV / Excel of what it shows; the editor draws sample data when it is empty', async () => {
+        await mount('ch9', COL, { rows: energyRows(), xField: 'hour', yField: 'kwh', splitField: 'floor', title: 'E' }, { width: 400, height: 220 });
         const n = await js(`${cw('ch9')}.exportData({ format: "csv" })`);
         assert.strictEqual(n, 4);
         const csv = await js(`${cw('ch9')}._lastExport.blob.text()`);
@@ -2036,58 +1923,25 @@ withHarness({
         assert.ok(/"08:00",10,15,20/.test(csv), csv);
         assert.strictEqual(await js(`${cw('ch9')}.exportData({ format: "xlsx" })`), 4);
         assert.ok(/\.xlsx$/.test(await js(`${cw('ch9')}._lastExport.name`)));
-        await mount('ch10', 'chart', {}, { width: 400, height: 220, design: true });
+        await mount('ch10', COL, {}, { width: 400, height: 220, design: true });
         await js('new Promise(function (r) { setTimeout(r, 200); })');
         assert.ok(await painted('ch10') > 2000, 'sample data in the editor');
         assert.deepStrictEqual(await js(`${cw('ch10')}.seriesList().map(function (s) { return s.name; })`), ['Lighting', 'HVAC']);
     });
 
-    await ok('Chart: stack groups: a stack owns the mode and the axis; a series picks it; the rest of the data joins the stack that takes it; any marks stack (a line sits at the cumulative top); stacks stand side by side', async () => {
-        await mount('st1', 'chart', { rows: energyRows(), xField: 'hour', yField: 'kwh', splitField: 'floor',
-            stacks: [{ id: 'k1', name: 'Floors', mode: 'stacked', axis: 'y', includeRest: true }],
-            series: [{ id: 'F3', name: 'F3', mark: 'line', stack: 'k1' }] }, { width: 500, height: 280 });
-        const r = await js(`(function () { var g = ${cw('st1')}._geo, st = g.stackOf;
-            return { groups: Array.from(new Set(g.groupOf.values())).map(function (x) { return [x.id, x.members.map(function (m) { return m.name; })]; }), f1hi: Array.from(st.get("F1").hi), f2lo: Array.from(st.get("F2").lo),
-                f3: st.get("F3") && Array.from(st.get("F3").hi), lines: Array.from(g.lines.keys()), axisHi: g.axes.get("y").hi }; })()`);
-        assert.deepStrictEqual(r.groups, [['k1', ['F3', 'F1', 'F2']]], 'F3 picks the stack (a line); F1 and F2, listed nowhere, join the stack that takes the rest');
-        // the pile, bottom to top: F3 (20..23), F1 (10..13), F2 (15..18): F1 sits on F3
-        assert.deepStrictEqual(r.f1hi, [30, 32, 34, 36], 'F1 sits on F3 (the first of the pile)');
-        assert.deepStrictEqual(r.f2lo, [30, 32, 34, 36], 'F2 sits on F1');
-        assert.deepStrictEqual(r.f3, [20, 21, 22, 23], 'a LINE in the stack: its own value is the first of the pile, drawn at the cumulative top');
-        assert.ok(r.lines.indexOf('F3') !== -1);
-        assert.ok(r.axisHi >= 45, 'the axis covers the pile: ' + r.axisHi);
-        await mount('st2', 'chart', { rows: energyRows(), xField: 'hour', yField: 'kwh', splitField: 'floor',
-            axes: [{ id: 'y', side: 'left', grid: true }, { id: 'y2', side: 'right' }],
-            stacks: [{ id: 'a', name: 'A', mode: 'stacked', axis: 'y' }, { id: 'b', name: 'B', mode: 'none', axis: 'y2', placement: 'overlay', width: 50 }],
-            series: [{ id: 'F1', name: 'F1', stack: 'a' }, { id: 'F2', name: 'F2', stack: 'a' }, { id: 'F3', name: 'F3', stack: 'b' }] }, { width: 500, height: 280 });
-        const t = await js(`(function () { var g = ${cw('st2')}._geo; return { onAxis: g.vis.map(function (s) { return [s.name, g.axisOf.get(s._key)]; }), axes: Array.from(g.axes.keys()) }; })()`);
-        assert.deepStrictEqual(t.onAxis, [['F1', 'y'], ['F2', 'y'], ['F3', 'y2']], 'the stack axis wins');
-        assert.deepStrictEqual(t.axes, ['y', 'y2']);
-        assert.ok(await painted('st2') > 3000);
-    });
-
-    await ok('Chart: any number of axes; a series picks one by id (the first when empty); an older "right" means the first right axis; hard min / max clip', async () => {
-        await mount('ax1', 'chart', { rows: energyRows(), xField: 'hour', yField: 'kwh', splitField: 'floor', mark: 'line',
-            axes: [{ id: 'a', side: 'left' }, { id: 'b', side: 'left', title: 'B', min: 0, max: 100 }, { id: 'c', side: 'right' }],
-            series: [{ id: 'F1', name: 'F1', axis: 'b' }, { id: 'F2', name: 'F2', axis: 'right' }] }, { width: 500, height: 260 });
-        const r = await js(`(function () { var g = ${cw('ax1')}._geo; return { onAxis: g.vis.map(function (s) { return g.axisOf.get(s._key); }), b: [g.axes.get("b").lo, g.axes.get("b").hi], n: g.axes.size }; })()`);
-        assert.deepStrictEqual(r.onAxis, ['b', 'c', 'a']);
-        assert.deepStrictEqual(r.b, [0, 100]);
-        assert.strictEqual(r.n, 3);
-    });
-
-    await ok('Chart: a TIME x keeps every point in Float64 rings (600 000), draws a frame fast, has the time ruler, zoom (Show a range), Live, a tooltip, columns grouped to the width of the screen, a stacked area', async () => {
+    await ok('Column Chart: a TIME x keeps every point in Float64 rings (600 000), draws a frame fast, the time ruler, range buttons, zoom, Live, a tooltip; columns grouped to the width of the screen; a line in the stack', async () => {
         const T0 = 1727852400000, N = 200000;
         const made = await js(`(function () { var rows = []; for (var i = 0; i < ${N}; i++) { ["A", "B", "C"].forEach(function (k, j) { rows.push({ t: ${T0} + i * 1000, host: k, v: 40 + j * 10 + 15 * Math.sin(i / 3000 + j) + 4 * Math.sin(i / 30) }); }); } window.__big = rows; return rows.length; })()`);
         assert.strictEqual(made, 3 * N);
-        await js(`NexaTest.mount("tm1", "${P}chart", { rows: window.__big, xField: "t", yField: "v", splitField: "host", mark: "line", legendValue: "last" }, { width: 600, height: 300 }); 1`);
+        await js(`NexaTest.mount("tm1", "${P}${COL}", { rows: window.__big, xField: "t", yField: "v", splitField: "host", type: "line", legendValue: "last", rangeBar: true }, { width: 600, height: 300 }); 1`);
         await settle();
         const r = await js(`(function () { var w = ${cw('tm1')}; w.draw(); var t = performance.now(); for (var i = 0; i < 5; i++) w.draw(); var ms = (performance.now() - t) / 5;
-            return { xt: w._xt, counts: Array.from(w._tser.values()).map(function (x) { return x.buf.count; }), ms: ms, ruler: !!w._scale && w._scale.m.rulerH > 0, f64: w._tser.get("A").buf.y instanceof Float64Array, legend: Array.from(w.renderRoot.querySelectorAll(".lg-val")).map(function (e) { return e.textContent; }) }; })()`);
+            return { xt: w._xt, counts: Array.from(w._tser.values()).map(function (x) { return x.buf.count; }), ms: ms, ruler: !!w._scale && w._scale.m.rulerH > 0, f64: w._tser.get("A").buf.y instanceof Float64Array, legend: Array.from(w.renderRoot.querySelectorAll(".lg-val")).map(function (e) { return e.textContent; }), bar: !!w.renderRoot.querySelector(".range-bar") }; })()`);
         assert.strictEqual(r.xt, 'time');
         assert.deepStrictEqual(r.counts, [N, N, N]);
         assert.strictEqual(r.f64, true);
         assert.ok(r.ruler, 'the time ruler');
+        assert.ok(r.bar, 'the range buttons');
         assert.ok(r.ms < 80, 'a frame of 600 000 points: ' + r.ms.toFixed(1) + ' ms');
         assert.strictEqual(r.legend.length, 3);
         assert.ok(await painted('tm1') > 8000);
@@ -2097,26 +1951,24 @@ withHarness({
         assert.strictEqual(z.zoomed, true);
         await js(`NexaTest.invoke("tm1", "followLive")`); await settle();
         assert.strictEqual(await js(`!!${cw('tm1')}.viewRange`), false);
-        await js(`(function () { var w = ${cw('tm1')}, pl = w.renderRoot.querySelector(".plot"), r = pl.getBoundingClientRect(); pl.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: r.left + r.width * 0.5, clientY: r.top + r.height * 0.4, pointerId: 3 })); })()`); await settle();
+        await pointer('tm1', 'pointermove', 0.5, 0.4); await settle();
         const tip = await js(`(function () { var t = ${cw('tm1')}.renderRoot.querySelector(".tooltip"); return { shown: t.style.display, text: t.textContent }; })()`);
         assert.strictEqual(tip.shown, 'block');
         assert.ok(/A/.test(tip.text) && /B/.test(tip.text) && /C/.test(tip.text), tip.text);
-        await js(`NexaTest.mount("tm2", "${P}chart", { rows: window.__big.filter(function (r) { return r.t < ${T0 + 3600000 * 6}; }), xField: "t", yField: "v", splitField: "host", mark: "column", stacking: "stacked" }, { width: 600, height: 280 }); 1`);
+        await js(`NexaTest.mount("tm2", "${P}${COL}", { rows: window.__big.filter(function (r) { return r.t < ${T0 + 3600000 * 6}; }), xField: "t", yField: "v", splitField: "host", stacking: "stacked", series: [{ id: "C", name: "C", type: "line" }] }, { width: 600, height: 280 }); 1`);
         await settle();
-        const c2 = await js(`(function () { var w = ${cw('tm2')}; w.draw(); var g = w._geo; return { n: g.n, stacked: g.stackOf.size }; })()`);
+        const c2 = await js(`(function () { var w = ${cw('tm2')}; w.draw(); var g = w._geo, k = 5; return { n: g.n, stacked: g.stackOf.size, top: g.lines.get("C").y[k], sum: g.stackOf.get("C").hi[k] }; })()`);
         assert.ok(c2.n > 20 && c2.n <= 100 && c2.stacked === 3, JSON.stringify(c2));
-        await js(`NexaTest.mount("tm3", "${P}chart", { rows: window.__big.filter(function (r) { return r.host !== "C" && r.t < ${T0 + 3600000 * 6}; }), xField: "t", yField: "v", splitField: "host", mark: "area", stacking: "stacked" }, { width: 600, height: 280 }); 1`);
-        await settle();
-        assert.ok(await painted('tm3') > 5000, 'a stacked area on a time x');
+        assert.strictEqual(c2.top, c2.sum, 'the line in the stack: at the cumulative top');
         await js('delete window.__big; 1');
     });
 
-    await ok('Chart: the inspector is a Power BI style format pane: its cards in order, series as a list of items', async () => {
-        const r = await js(`(function () { var m = NEXA.getComponent("${P}chart").nexa; var seen = []; Object.keys(m.props).forEach(function (k) { var g = m.props[k].group; if (g && seen.indexOf(g) === -1) seen.push(g); }); return { groups: seen, order: m.groupOrder, targets: m.targetList.map(function (t) { return [t.key, t.actionList.map(function (a) { return a.name; })]; }), label: m.label }; })()`);
-        assert.deepStrictEqual(r.order.slice(0, 7), ['Data', 'Series', 'Stacks', 'Axes', 'Visual', 'Title', 'Legend']);
-        ['X axis', 'Time axis', 'Data labels', 'Tooltip', 'Reference lines', 'Zoom & pan', 'Annotations', 'General', 'Export'].forEach((g) => assert.ok(r.groups.indexOf(g) !== -1, g));
+    await ok('Column Chart: the inspector is a Power BI style format pane: its cards in order, series as a list of items', async () => {
+        const r = await js(`(function () { var m = NEXA.getComponent("${P}${COL}").nexa; var seen = []; Object.keys(m.props).forEach(function (k) { var g = m.props[k].group; if (g && seen.indexOf(g) === -1) seen.push(g); }); return { groups: seen, order: m.groupOrder, targets: m.targetList.map(function (t) { return [t.key, t.actionList.map(function (a) { return a.name; })]; }), label: m.label }; })()`);
+        assert.deepStrictEqual(r.order.slice(0, 7), ['Data', 'Series', 'Columns', 'Lines', 'Y axis', 'Secondary Y axis', 'X axis']);
+        ['Time axis', 'Title', 'Legend', 'Data labels', 'Tooltip', 'Thresholds', 'Zoom & pan', 'Annotations', 'General', 'Export'].forEach((g) => assert.ok(r.groups.indexOf(g) !== -1, g));
         assert.deepStrictEqual(r.targets, [['series', ['setData', 'setPoint', 'appendPoint', 'clear', 'show', 'hide']]]);
-        assert.strictEqual(r.label, 'Chart');
+        assert.strictEqual(r.label, 'Column / Bar Chart');
     });
 
     await ok('the inspector: every plain prop takes a binding (Static | Binding); colours and sizes take theme tokens (◆), a token shows as a chip', async () => {

@@ -1,21 +1,19 @@
-// Nexa UI — Chart: the Cartesian chart (columns, bars, lines, steps, areas, points, any mix, any number of series).
+// Nexa UI — Column / Bar Chart: columns (or bars), lines and target markers over categories, numbers or time.
 //
-// A LAYER model. A series is a layer: its own mark (column, line, step, area, points), axis, colour, curve, fill, markers, labels
-// and number format; a chart-level setting is only the DEFAULT of a series that leaves its field empty. What belongs to
-// several series lives in a list of its own:
-//   - AXES   (`axes`): any number; a series (or a stack) picks one by id.
-//   - STACKS (`stacks`): a stack owns a mode (stacked / 100 % / side by side / overlapping), an axis and its place beside
-//     the other stacks; a series picks the stack it is in; the order of the series is the order of the pile. Stacking is a
-//     transform of the data (lo / hi per member): the mark only decides how the band is drawn — a column is a rectangle, an
-//     area a band, a line / points sit at the cumulative top ("the total so far"). Any marks may stack together.
-// The look is the Line Chart's (smooth monotone curves, gradient fills, the dashed crosshair, the time ruler) in a Power BI
-// style format pane. A colour is a hex OR a theme token ({token:colors.…}); the default is the theme's palette (colors.chart.N).
+// A series is a COLUMN, a LINE or a TARGET marker (a plan per category), on the left or the right axis. The chart stacks
+// or not (Stack: off / stacked / 100 %); a series says whether it joins the stack:
+//   - a column in the stack sits on the ones before it; a column out of it stands BESIDE the stack (side by side);
+//   - a line in the stack is drawn at the total so far (the cumulative top); out of it, at its own value
+//     (a line never stands "beside": it has no width);
+//   - a target is a short line across its category (plan vs actual, a bullet chart), never stacked.
+// Stacking is a transform of the data (lo / hi per member, stack.js); the look is the Line Chart's (smooth monotone curves,
+// gradient fills, the dashed crosshair, the time ruler) in a Power BI style format pane. A colour is a hex OR a theme token.
 //
-// DATA: rows from Logic ([{ time, floor, kwh }]) mapped to x / y / "split by" (a series per value of a field), per series
-// (its Update node), or a live tag per series. The x is a category, a number or a TIME. A time x keeps every point in
-// Float64 ring buffers (the Line Chart's: M4 + LOD), drawn at pixel accuracy (10^6 points a series); columns and stacks group
-// the points into columns of the width the screen allows. The time ruler, zoom / pan, Live, annotations and the refresh
-// ticker are TimeChartElement's. See .agents/CHART_FAMILIES_DESIGN.md.
+// DATA: rows from Logic ([{ hour, floor, kwh }]) mapped to x / y / "split by" (a series per value of a field), per series
+// (its Update node), or a live tag per series. The x is a category, a number or a TIME. A category x can be sorted by value,
+// cut to the top N and the rest summed as "Others". A time x keeps every point in Float64 ring buffers (M4 + LOD) and groups
+// them into columns of the width the screen allows; the time ruler, zoom / pan, range buttons, Live and annotations are
+// TimeChartElement's.
 import { html, css, formatValue } from "../../../nexa-sdk/nexa-component-sdk.js";
 import { PREFIX, part, defineUI } from "../core.js";
 import { chartCommon, opt, NOTATIONS, DECIMALS, DASHES, numOr } from "./core.js";
@@ -25,11 +23,10 @@ import { stackColumns, niceTicks, logTicks, extent } from "./stack.js";
 import { monotoneSegments, stepPoints } from "./curves.js";
 import { TimeSeriesRingBuffer, lowerBoundRing, upperBoundRing, M4Decimator } from "./buffer.js";
 import { TimeChartElement } from "./time-chart.js";
-import { timeProps, refreshProps, zoomProps, annotationProps, timeEvents, timeActions } from "./props.js";
+import { timeProps, refreshProps, zoomProps, rangeBarProps, annotationProps, exportProps, timeEvents, timeActions } from "./props.js";
+import { legendProps, legendTemplate, legendPlace, fillLegend, placeInsideLegend } from "./legend.js";
 
-const MARKS = [["column", "Column / bar"], ["line", "Line"], ["step", "Step line"], ["area", "Area"], ["point", "Points (scatter)"]];
-const STACKINGS = [["clustered", "Side by side"], ["stacked", "Stacked"], ["percent", "100 % stacked"], ["none", "Overlapping"]];
-const LEGEND_AT = [["bottom", "Bottom"], ["top", "Top"], ["left", "Left"], ["right", "Right"], ["inside-tl", "Inside, top left"], ["inside-tr", "Inside, top right"], ["inside-bl", "Inside, bottom left"], ["inside-br", "Inside, bottom right"], ["none", "None"]];
+const TYPES = [["column", "Column (a bar when horizontal)"], ["line", "Line"], ["target", "Target marker (a plan per category)"]];
 const dashOf = (d) => DASHES[d] || [];
 const timeish = (p) => p.xType === "time" || p.xType === "auto" || p.xType === undefined;
 // the time cards (Time axis, Zoom & pan, Annotations, the time range, Refresh) show when the x is, or may be, a time
@@ -38,15 +35,9 @@ const onTime = (props) => {
     Object.keys(props).forEach((k) => { const q = props[k], prev = q.visibleWhen; out[k] = Object.assign({}, q, { visibleWhen: (p, ...r) => timeish(p) && (!prev || prev(p, ...r)) }); });
     return out;
 };
+// the legend's figures for a series
+const COL_STATS = [["sum", "Total", "Total"], ["avg", "Average", "Avg"], ["max", "Max", "Max"], ["min", "Min", "Min"], ["last", "Last", "Last"]];
 
-const DEFAULT_AXES = [
-    { id: "y", side: "left", title: "", show: true, scale: "linear", grid: true },
-    { id: "y2", side: "right", title: "", show: true, scale: "linear", grid: false }
-];
-const axisOptions = (p) => [{ value: "", label: "The first axis" }].concat((Array.isArray(p && p.axes) ? p.axes : DEFAULT_AXES).filter((a) => a && a.id).map((a) => ({ value: a.id, label: (a.title || a.id) + " (" + (a.side === "right" ? "right" : "left") + ")" })));
-const stackOptions = (p) => [{ value: "", label: "None (the chart's default)" }].concat((Array.isArray(p && p.stacks) ? p.stacks : []).filter((g) => g && g.id).map((g) => ({ value: g.id, label: g.name || g.id })));
-
-// ---- the series' fields (a Power BI "Visual / Series" card, per series; an empty field takes the chart's default) ---
 const SERIES_FIELDS = {
     name: { type: "string", label: "Name", default: "Series" },
     id: { type: "string", label: "Id", default: "", bindable: false, help: "Fixed: its Update node and events find the series by it. It is also the value of the split field it styles (e.g. \"Floor 3\")." },
@@ -55,26 +46,26 @@ const SERIES_FIELDS = {
 
     live: { type: "tag", access: "read", section: "Data", label: "Live value", help: "A tag or a variable: every new value is one more point (a time x: its time = now). A {x, y} or a list of them is added as it is." },
     field: { type: "string", section: "Data", label: "Row field (y)", default: "", bindable: false, help: "Wide form: the field of each row this series takes. Empty: the series of that Id / name." },
-    gapAfter: { type: "number", section: "Data", label: "Break the line after (ms without data)", default: 0, min: 0, step: 1000, help: "A time x: 0 = always connected. A longer silence draws a gap: a sensor offline is not a straight line." },
+    gapAfter: { type: "number", section: "Data", label: "Break the line after (ms without data)", default: 0, min: 0, step: 1000, help: "A time x: 0 = always connected. A longer silence draws a gap." },
 
-    mark: { type: "enum", section: "Mark", label: "Mark", default: "", options: opt([["", "The chart's default"]].concat(MARKS)) },
-    axis: { type: "enum", section: "Mark", label: "Axis", default: "", options: axisOptions, help: "From the Axes list. In a stack, the stack's axis wins." },
-    stack: { type: "enum", section: "Mark", label: "Stack", default: "", options: stackOptions, help: "From the Stacks list: the pile this series is in (the order of the series is the order of the pile)." },
+    type: { type: "enum", label: "Type", default: "", options: opt([["", "The chart's default"]].concat(TYPES)), help: "A column, a line, or a target marker (a short line across its category: the plan an actual column is compared with)." },
+    axis: { type: "enum", label: "Axis", default: "left", options: opt([["left", "Left (Y axis)"], ["right", "Right (Secondary Y axis)"]]) },
+    stack: {
+        type: "boolean", label: "In the stack", default: true,
+        help: "When the chart stacks: a column joins the pile (out of it: it stands beside the pile), a line is drawn at the total so far (out of it: its own value). A target never stacks."
+    },
 
     color: { type: "color", section: "Colour", label: "Colour", default: "", tokens: "colors", help: "A hex colour, or a theme token (◆). Empty: the next colour of the theme's chart palette." },
     opacity: { type: "number", section: "Colour", label: "Opacity", default: 1, min: 0, max: 1, step: 0.05 },
 
-    curve: { type: "enum", section: "Line", label: "Curve", default: "", options: opt([["", "The chart's default"], ["linear", "Straight"], ["smooth", "Smooth (never overshoots)"]]) },
-    width: { type: "number", section: "Line", label: "Width", default: "", min: 0.5, max: 12, step: 0.5, unit: "px", help: "Empty: the chart's line width." },
+    curve: { type: "enum", section: "Line", label: "Curve", default: "", options: opt([["", "The chart's default"], ["linear", "Straight"], ["smooth", "Smooth (never overshoots)"], ["step", "Step"]]) },
+    width: { type: "number", section: "Line", label: "Width", default: "", min: 0.5, max: 12, step: 0.5, unit: "px", help: "Empty: the chart's line width (a target: 3 px)." },
     dash: { type: "enum", section: "Line", label: "Dash", default: "solid", options: opt([["solid", "Solid"], ["dashed", "Dashed"], ["dotted", "Dotted"]]) },
-    fill: { type: "enum", section: "Line", label: "Fill under the line", default: "", options: opt([["", "The mark's default (an area: the chart's)"], ["none", "None"], ["gradient", "Gradient (fades to the axis)"], ["solid", "Solid"]]) },
-    fillOpacity: { type: "number", section: "Line", label: "Fill opacity", default: "", min: 0, max: 1, step: 0.05, help: "Empty: the chart's." },
+    fill: { type: "enum", section: "Line", label: "Fill under the line", default: "none", options: opt([["none", "None"], ["gradient", "Gradient (fades to the axis)"], ["solid", "Solid"]]) },
+    points: { type: "enum", section: "Line", label: "Markers", default: "", options: opt([["", "The chart's default"], ["on", "Show"], ["off", "Hide"]]) },
+    pointShape: { type: "enum", section: "Line", label: "Marker shape", default: "circle", options: opt([["circle", "Circle"], ["square", "Square"], ["diamond", "Diamond"], ["triangle", "Triangle"]]) },
 
-    points: { type: "enum", section: "Points", label: "Markers", default: "", options: opt([["", "The chart's default"], ["on", "Show"], ["off", "Hide"]]) },
-    pointShape: { type: "enum", section: "Points", label: "Shape", default: "circle", options: opt([["circle", "Circle"], ["square", "Square"], ["diamond", "Diamond"], ["triangle", "Triangle"]]) },
-    pointSize: { type: "number", section: "Points", label: "Size", default: "", min: 1, max: 20, unit: "px", help: "Empty: the chart's." },
-
-    radius: { type: "number", section: "Columns", label: "Corner radius", default: "", min: 0, max: 20, unit: "px", help: "Empty: the chart's." },
+    radius: { type: "number", section: "Column", label: "Corner radius", default: "", min: 0, max: 20, unit: "px", help: "Empty: the chart's." },
     labels: { type: "enum", section: "Data labels", label: "Data labels", default: "", options: opt([["", "The chart's default"], ["on", "Show"], ["off", "Hide"]]) },
 
     unit: { type: "string", section: "Numbers", label: "Unit (kWh, °C, %)", default: "", help: "In the tooltip, the legend and the data labels." },
@@ -89,54 +80,51 @@ function seriesDefaults() {
     return o;
 }
 
-const STACK_FIELDS = {
-    name: { type: "string", label: "Name", default: "Stack" },
-    id: { type: "string", label: "Id", default: "", bindable: false, help: "Fixed: a series says which stack it is in by this." },
-    mode: { type: "enum", label: "Mode", default: "stacked", options: opt(STACKINGS), help: "Side by side: each series its own column. Overlapping: all from the base." },
-    axis: { type: "enum", label: "On the axis", default: "", options: axisOptions, help: "Every series of the stack is on this axis: a sum is only meaningful on one scale." },
-    placement: { type: "enum", label: "Place", default: "beside", options: opt([["beside", "Beside the other stacks"], ["overlay", "Over the others (a narrower column, a target)"]]) },
-    width: { type: "number", label: "Width", default: 100, min: 10, max: 100, step: 5, unit: "%", help: "Of its place. A target column over an actual one: 50 %." },
-    includeRest: { type: "boolean", label: "Also every other series of the data", default: false, help: "The series that come from the split field and are listed nowhere (no Stack of their own) join this stack: the floors of a building, however many." }
-};
-
-const AXIS_FIELDS = {
-    id: { type: "string", label: "Id", default: "", bindable: false, help: "Fixed: a series, a stack and a reference line pick the axis by it." },
-    side: { type: "enum", label: "Side", default: "left", options: opt([["left", "Left"], ["right", "Right"]]), help: "Several on one side stand side by side, the first nearest to the plot." },
-    show: { type: "boolean", label: "Show", default: true },
-    title: { type: "string", label: "Title", default: "" },
-    scale: { type: "enum", label: "Scale", default: "linear", options: opt([["linear", "Linear"], ["log", "Logarithmic"]]) },
-    softMin: { type: "number", section: "Range", label: "Soft min (grows with the data)", default: "" },
-    softMax: { type: "number", section: "Range", label: "Soft max (grows with the data)", default: "" },
-    min: { type: "number", section: "Range", label: "Hard min (fixed, clips)", default: "" },
-    max: { type: "number", section: "Range", label: "Hard max (fixed, clips)", default: "" },
-    notation: { type: "enum", section: "Labels", label: "Notation", default: "standard", options: opt(NOTATIONS) },
-    decimals: { type: "enum", section: "Labels", label: "Decimals", default: "auto", options: opt(DECIMALS) },
-    grid: { type: "boolean", section: "Labels", label: "Gridlines", default: false },
-    labelColor: { type: "color", section: "Labels", label: "Label colour", default: "", tokens: "colors", help: "Empty: the theme's muted text." }
-};
-
-const REFERENCE_FIELDS = {
-    kind: { type: "enum", label: "Kind", default: "line", options: opt([["line", "Line (a limit, a target)"], ["band", "Band (from – to)"]]) },
-    axis: { type: "enum", label: "On the axis", default: "", options: axisOptions },
-    value: { type: "number", label: "Value (from)", default: 0 },
-    to: { type: "number", label: "To", default: "", visibleWhen: (r) => r.kind === "band" },
+const THRESHOLD_FIELDS = {
+    kind: {
+        type: "enum", label: "Kind", default: "line",
+        options: opt([["line", "Line (a setpoint, a target)"], ["upper", "Upper limit (at or above it: past it)"], ["lower", "Lower limit (at or below it: past it)"], ["band", "Band (a zone from Value to To)"]])
+    },
+    axis: { type: "enum", label: "On the axis", default: "left", options: opt([["left", "Left (Y axis)"], ["right", "Right (Secondary Y axis)"]]) },
+    value: { type: "number", label: "Value", default: 0 },
+    to: { type: "number", label: "To", default: "", visibleWhen: (t) => t.kind === "band" },
     label: { type: "string", label: "Label", default: "" },
-    color: { type: "color", label: "Colour", default: "", tokens: "colors", help: "Empty: the error colour of the theme." },
-    dash: { type: "enum", label: "Dash", default: "dashed", options: opt([["solid", "Solid"], ["dashed", "Dashed"], ["dotted", "Dotted"]]), visibleWhen: (r) => r.kind !== "band" },
-    width: { type: "number", label: "Width", default: 1.5, min: 0.5, max: 8, step: 0.5, unit: "px", visibleWhen: (r) => r.kind !== "band" },
-    opacity: { type: "number", label: "Opacity", default: "", min: 0, max: 1, step: 0.05, help: "Empty: 1 for a line, 0.12 for a band." }
+    color: { type: "color", label: "Colour", default: "", tokens: "colors", help: "Empty: the theme's status colour (a limit: error; a band: warning; a line: info)." },
+    dash: { type: "enum", label: "Dash", default: "dashed", options: opt([["solid", "Solid"], ["dashed", "Dashed"], ["dotted", "Dotted"]]), visibleWhen: (t) => t.kind !== "band" },
+    shade: { type: "boolean", label: "Shade past the limit", default: false, visibleWhen: (t) => t.kind === "upper" || t.kind === "lower" },
+    colorColumns: {
+        type: "boolean", label: "Colour the columns past it", default: false, visibleWhen: (t) => t.kind === "upper" || t.kind === "lower",
+        help: "A column whose value is past this limit takes the limit's colour (conditional colour: an overload, a reject rate)."
+    }
 };
 
-export const cartesianChart = defineUI({
+// the two value axes: the props of a group (prefix y / y2)
+function axisProps(pre, group, right) {
+    return {
+        [pre + "Show"]: { type: "boolean", group, label: "Show", default: true },
+        [pre + "Title"]: { type: "string", group, label: "Title", default: "" },
+        [pre + "Log"]: { type: "boolean", group, label: "Logarithmic", default: false },
+        [pre + "SoftMin"]: { type: "number", group, section: "Range", label: "Soft min (grows with the data)", default: "" },
+        [pre + "SoftMax"]: { type: "number", group, section: "Range", label: "Soft max (grows with the data)", default: "" },
+        [pre + "Min"]: { type: "number", group, section: "Range", label: "Hard min (fixed, clips)", default: "" },
+        [pre + "Max"]: { type: "number", group, section: "Range", label: "Hard max (fixed, clips)", default: "" },
+        [pre + "Notation"]: { type: "enum", group, section: "Labels", label: "Notation", default: "standard", options: opt(NOTATIONS) },
+        [pre + "Decimals"]: { type: "enum", group, section: "Labels", label: "Decimals", default: "auto", options: opt(DECIMALS) },
+        [pre + "Grid"]: { type: "boolean", group, section: "Labels", label: "Gridlines", default: !right },
+        [pre + "LabelColor"]: { type: "color", group, section: "Labels", label: "Label colour", default: "", tokens: "colors", help: "Empty: the theme's muted text." }
+    };
+}
+
+export const columnChart = defineUI({
     ...chartCommon,
-    id: PREFIX + "chart",
-    label: "Chart",
+    id: PREFIX + "column-chart",
+    label: "Column / Bar Chart",
     icon: "fa fa-bar-chart",
     size: { w: 600, h: 320 },
-    help: "Layers: each series is a column, line, area or points chart of its own, on any axis, stacked in the stacks you make. A time x keeps every point (millions) with the time ruler, zoom and Live. Data from rows (a field to split into series), a tag, or per series from Logic.",
+    help: "Columns (bars), lines and target markers over categories, numbers or time; stacked or side by side, a series on the left or the right axis. Data from rows (a field to split into series), a tag, or per series from Logic.",
     version: 1,
 
-    groups: ["Data", "Series", "Stacks", "Axes", "Visual", "Title", "Legend", "X axis", "Time axis", "Data labels", "Tooltip", "Reference lines", "Zoom & pan", "Annotations", "General", "Export"],
+    groups: ["Data", "Series", "Columns", "Lines", "Y axis", "Secondary Y axis", "X axis", "Time axis", "Title", "Legend", "Data labels", "Tooltip", "Thresholds", "Zoom & pan", "Annotations", "General", "Export"],
 
     properties: {
         // ---- Data: the fields well of Power BI ----
@@ -146,17 +134,25 @@ export const cartesianChart = defineUI({
         splitField: { type: "string", group: "Data", label: "Split into series by", default: "", bindable: false, help: "The field whose every value is a series (the floor, the machine, the room). Needs one Y field. Style one by adding a series with its value as Id." },
         xType: { type: "enum", group: "Data", label: "X is", default: "auto", options: opt([["auto", "Detected"], ["category", "A category (words)"], ["number", "A number"], ["time", "A time"]]) },
         aggregate: { type: "enum", group: "Data", label: "Rows with the same x and series", default: "sum", options: opt([["sum", "Add up"], ["avg", "Average"], ["last", "The last"], ["min", "Minimum"], ["max", "Maximum"], ["count", "Count"]]), visibleWhen: (p) => p.xType !== "time" },
-        categoryOrder: { type: "enum", group: "Data", label: "Category order", default: "data", options: opt([["data", "As they come"], ["asc", "A – Z"], ["desc", "Z – A"]]), visibleWhen: (p) => p.xType !== "number" && p.xType !== "time" },
+        categoryOrder: {
+            type: "enum", group: "Data", label: "Category order", default: "data", visibleWhen: (p) => p.xType !== "number" && p.xType !== "time",
+            options: opt([["data", "As they come"], ["value-desc", "Largest first (a total of the series)"], ["value-asc", "Smallest first"], ["asc", "A – Z"], ["desc", "Z – A"]])
+        },
+        topN: {
+            type: "number", group: "Data", label: "Show the top", default: 0, min: 0, max: 1000, step: 1, visibleWhen: (p) => p.xType !== "number" && p.xType !== "time",
+            help: "0 = every category. N: the N largest (by the total of the series), in the order above."
+        },
+        others: { type: "boolean", group: "Data", label: "The rest as \"Others\"", default: true, visibleWhen: (p) => numOr(p.topN, 0) > 0 && p.xType !== "number" && p.xType !== "time", help: "The categories past the top N added up into one more column." },
         maxCategories: { type: "number", group: "Data", label: "Most categories", default: 2000, min: 1, max: 100000, step: 100, visibleWhen: (p) => p.xType !== "time" },
-        maxPoints: { type: "number", group: "Data", label: "Points kept per series", default: 100000, min: 50, max: 2000000, step: 5000, visibleWhen: timeish, help: "A time x: a ring, the oldest go past it. 16 bytes a point (1 000 000 = 16 MB). A bigger load of rows keeps all its points (to 2 000 000 a series)." },
-        bucketBy: { type: "enum", group: "Data", label: "Many points in one column", default: "avg", options: opt([["avg", "Average"], ["sum", "Add up"], ["min", "Minimum"], ["max", "Maximum"], ["last", "The last"]]), visibleWhen: timeish, help: "A time x: columns and stacks group the points the screen cannot show apart into one column of the width it allows." },
+        maxPoints: { type: "number", group: "Data", label: "Points kept per series", default: 100000, min: 50, max: 2000000, step: 5000, visibleWhen: timeish, help: "A time x: a ring, the oldest go past it. 16 bytes a point (1 000 000 = 16 MB)." },
+        bucketBy: { type: "enum", group: "Data", label: "Many points in one column", default: "avg", options: opt([["avg", "Average"], ["sum", "Add up"], ["min", "Minimum"], ["max", "Maximum"], ["last", "The last"]]), visibleWhen: timeish, help: "A time x: the points the screen cannot show apart are grouped into one column of the width it allows." },
         ...onTime({ timeWindow: timeProps().timeWindow }),
         ...onTime(refreshProps("data")),
 
-        // ---- Series: the layers ----
+        // ---- Series ----
         series: {
             type: "list", group: "Series", label: "Series", noun: "series", default: [],
-            help: "Optional: one per series you want to style, name, put on an axis or in a stack, or drive from Logic. Series that come from the data and are not listed take the chart's defaults and the palette. Each has its own Update node and events (Events tab).",
+            help: "Optional: one per series you want to type (column / line / target), name, colour, put on the right axis, keep out of the stack or drive from Logic. Series from the data that are not listed are columns with the palette's colours. Each has its own Update node and events (Events tab).",
             item: {
                 fields: SERIES_FIELDS, noun: "series", target: true,
                 create: (items) => {
@@ -179,61 +175,28 @@ export const cartesianChart = defineUI({
             }
         },
 
-        // ---- Stacks: the piles ----
-        stacks: {
-            type: "list", group: "Stacks", label: "Stacks", noun: "stack", default: [],
-            help: "A stack gathers series: add one, then pick it in each series' Stack field. Its mode (stacked, 100 %, side by side, overlapping) and its axis belong to the stack; the order of the series is the order of the pile (the first at the bottom). Any marks may stack together: a column is a rectangle from its base to its top, an area a band, a line the total so far.",
-            item: {
-                fields: STACK_FIELDS, noun: "stack",
-                create: (items) => {
-                    let n = items.length + 1;
-                    const ids = new Set(items.map((x) => x && x.id));
-                    while (ids.has("k" + n)) n++;
-                    return { id: "k" + n, name: "Stack " + n, mode: "stacked", axis: "", placement: "beside", width: 100, includeRest: false };
-                }
-            }
+        // ---- Columns ----
+        type: { type: "enum", group: "Columns", label: "Default type", default: "column", options: opt(TYPES), help: "What a series is unless it says otherwise (a mix of columns and lines is a combo chart)." },
+        stacking: {
+            type: "enum", group: "Columns", label: "Stack", default: "none", options: opt([["none", "Off (side by side)"], ["stacked", "Stacked"], ["percent", "100 % stacked"]]),
+            help: "Stacked: the series that are In the stack pile up (the first at the bottom); the others stand beside the pile. A line in the stack: the total so far."
         },
+        orientation: { type: "enum", group: "Columns", label: "Direction", default: "vertical", options: opt([["vertical", "Vertical (columns)"], ["horizontal", "Horizontal (bars)"]]), help: "Horizontal: a category or number x, the left axis only." },
+        columnFill: { type: "enum", group: "Columns", label: "Fill", default: "solid", options: opt([["solid", "Solid"], ["gradient", "Gradient (lighter towards the base)"]]) },
+        gap: { type: "number", group: "Columns", label: "Space between categories", default: 30, min: 0, max: 90, step: 5, unit: "%" },
+        barGap: { type: "number", group: "Columns", label: "Space between columns", default: 2, min: 0, max: 20, step: 1, unit: "px" },
+        maxBarWidth: { type: "number", group: "Columns", label: "Widest column", default: 0, min: 0, max: 400, step: 5, unit: "px", help: "0 = no limit." },
+        radius: { type: "number", group: "Columns", label: "Corner radius", default: 2, min: 0, max: 20, unit: "px" },
 
-        // ---- Axes ----
-        axes: {
-            type: "list", group: "Axes", label: "Axes", noun: "axis", default: DEFAULT_AXES.map((a) => Object.assign({}, a)),
-            help: "As many as you need, left or right. A series, a stack or a reference line picks one by its Id. The right axis is drawn when a series is on it.",
-            item: {
-                fields: AXIS_FIELDS, noun: "axis",
-                create: (items) => {
-                    let n = items.length + 1;
-                    const ids = new Set(items.map((x) => x && x.id));
-                    while (ids.has("y" + n)) n++;
-                    return { id: "y" + n, side: "right", show: true, title: "", scale: "linear", grid: false };
-                }
-            }
-        },
+        // ---- Lines ----
+        curve: { type: "enum", group: "Lines", label: "Curve", default: "smooth", options: opt([["smooth", "Smooth (never overshoots)"], ["linear", "Straight"], ["step", "Step"]]) },
+        lineWidth: { type: "number", group: "Lines", label: "Line width", default: 2, min: 0.5, max: 12, step: 0.5, unit: "px" },
+        markers: { type: "boolean", group: "Lines", label: "Markers", default: true },
+        pointSize: { type: "number", group: "Lines", label: "Marker size", default: 3.5, min: 1, max: 20, step: 0.5, unit: "px" },
 
-        // ---- Visual: the defaults of every series ----
-        mark: { type: "enum", group: "Visual", label: "Default mark", default: "column", options: opt(MARKS), help: "What a series is drawn as unless it says otherwise: a mix is a combo chart." },
-        stacking: { type: "enum", group: "Visual", label: "Series in no stack", default: "clustered", options: opt(STACKINGS), help: "What columns and areas that are in no Stack do: side by side, or one pile (a quick stacked chart without making a Stack)." },
-        orientation: { type: "enum", group: "Visual", label: "Direction", default: "vertical", options: opt([["vertical", "Vertical (columns)"], ["horizontal", "Horizontal (bars; columns only)"]]), help: "Horizontal: a category or number x, the first axis only." },
-        curve: { type: "enum", group: "Visual", section: "Lines", label: "Curve", default: "smooth", options: opt([["smooth", "Smooth (never overshoots)"], ["linear", "Straight"]]), help: "A monotone curve: smooth, and it never dips below a 0 or above a peak the data does not have." },
-        lineWidth: { type: "number", group: "Visual", section: "Lines", label: "Line width", default: 2, min: 0.5, max: 12, step: 0.5, unit: "px" },
-        areaFill: { type: "enum", group: "Visual", section: "Lines", label: "Area fill", default: "gradient", options: opt([["gradient", "Gradient (fades to the axis)"], ["solid", "Solid"], ["none", "None (a line)"]]) },
-        fillOpacity: { type: "number", group: "Visual", section: "Lines", label: "Fill opacity", default: 0.3, min: 0, max: 1, step: 0.05 },
-        markers: { type: "boolean", group: "Visual", section: "Points", label: "Markers on lines", default: false },
-        pointSize: { type: "number", group: "Visual", section: "Points", label: "Marker size", default: 4, min: 1, max: 20, unit: "px" },
-        gap: { type: "number", group: "Visual", section: "Columns", label: "Space between categories", default: 30, min: 0, max: 90, step: 5, unit: "%" },
-        barGap: { type: "number", group: "Visual", section: "Columns", label: "Space between columns", default: 2, min: 0, max: 20, step: 1, unit: "px" },
-        maxBarWidth: { type: "number", group: "Visual", section: "Columns", label: "Widest column", default: 0, min: 0, max: 400, step: 5, unit: "px", help: "0 = no limit." },
-        radius: { type: "number", group: "Visual", section: "Columns", label: "Corner radius", default: 2, min: 0, max: 20, unit: "px" },
-
-        // ---- Title ----
-        title: { type: "string", group: "Title", label: "Title", default: "" },
-        subtitle: { type: "string", group: "Title", label: "Subtitle", default: "" },
-        titleAlign: { type: "enum", group: "Title", label: "Alignment", default: "left", options: opt([["left", "Left"], ["center", "Centre"], ["right", "Right"]]) },
-        titleSize: { type: "number", group: "Title", label: "Title size", default: 14, min: 8, max: 40, unit: "px" },
-
-        // ---- Legend ----
-        legend: { type: "enum", group: "Legend", label: "Position", default: "bottom", options: opt(LEGEND_AT) },
-        legendValue: { type: "enum", group: "Legend", label: "Value next to the name", default: "none", options: opt([["none", "None"], ["last", "Last"], ["sum", "Total"], ["avg", "Average"], ["min", "Minimum"], ["max", "Maximum"]]), visibleWhen: (p) => p.legend !== "none" },
-        legendSize: { type: "number", group: "Legend", label: "Text size", default: 12, min: 8, max: 24, unit: "px", visibleWhen: (p) => p.legend !== "none" },
+        // ---- the value axes ----
+        ...axisProps("y", "Y axis", false),
+        ...axisProps("y2", "Secondary Y axis", true),
 
         // ---- X axis ----
         xShow: { type: "boolean", group: "X axis", label: "Show the X axis", default: true },
@@ -243,24 +206,36 @@ export const cartesianChart = defineUI({
         xLabelColor: { type: "color", group: "X axis", section: "Labels", label: "Label colour", default: "", tokens: "colors", visibleWhen: (p) => p.xShow !== false },
         ...onTime(Object.fromEntries(Object.entries(timeProps()).filter(([k]) => k !== "timeWindow"))),
 
+        // ---- Title ----
+        title: { type: "string", group: "Title", label: "Title", default: "" },
+        subtitle: { type: "string", group: "Title", label: "Subtitle", default: "" },
+        titleAlign: { type: "enum", group: "Title", label: "Alignment", default: "left", options: opt([["left", "Left"], ["center", "Centre"], ["right", "Right"]]) },
+        titleSize: { type: "number", group: "Title", label: "Title size", default: 14, min: 8, max: 40, unit: "px" },
+
+        // ---- Legend (the shared part) ----
+        ...legendProps({ value: "none", stats: COL_STATS }),
+
         // ---- Data labels ----
         labels: { type: "boolean", group: "Data labels", label: "Data labels", default: false },
-        labelPos: { type: "enum", group: "Data labels", label: "Position", default: "auto", options: opt([["auto", "Automatic"], ["outside", "Outside end"], ["inside", "Inside end"], ["center", "Centre"]]), visibleWhen: (p) => p.labels },
-        labelSize: { type: "number", group: "Data labels", label: "Size", default: 11, min: 8, max: 24, unit: "px", visibleWhen: (p) => p.labels },
-        labelColor: { type: "color", group: "Data labels", label: "Colour", default: "", tokens: "colors", help: "Empty: the text colour (white on a dark column).", visibleWhen: (p) => p.labels },
+        labelShow: { type: "enum", group: "Data labels", label: "Shows", default: "value", options: opt([["value", "The value"], ["percent", "% of its category (or its stack)"], ["both", "The value and the %"]]), visibleWhen: (p) => p.labels },
+        labelPos: { type: "enum", group: "Data labels", label: "Position", default: "auto", options: opt([["auto", "Automatic"], ["outside", "Outside the end"], ["inside", "Inside the end"], ["center", "Centre"], ["base", "Inside the base"]]), visibleWhen: (p) => p.labels },
+        labelTotal: { type: "boolean", group: "Data labels", label: "The total above a stack", default: true, visibleWhen: (p) => p.stacking === "stacked" },
+        labelSize: { type: "number", group: "Data labels", label: "Size", default: 11, min: 8, max: 24, unit: "px", visibleWhen: (p) => p.labels || p.stacking === "stacked" },
+        labelColor: { type: "color", group: "Data labels", label: "Colour", default: "", tokens: "colors", help: "Empty: the text colour (white / black on a column).", visibleWhen: (p) => p.labels },
 
         // ---- Tooltip ----
-        tooltipShows: { type: "enum", group: "Tooltip", label: "Shows", default: "shared", options: opt([["shared", "Every series at that category / x"], ["single", "Only the one under the cursor"], ["off", "Nothing"]]) },
-        crosshair: { type: "enum", group: "Tooltip", label: "Highlight", default: "band", options: opt([["band", "A band behind the column"], ["line", "A dashed line"], ["none", "None"]]), visibleWhen: (p) => p.tooltipShows !== "off" },
+        tooltipShows: { type: "enum", group: "Tooltip", label: "Shows", default: "shared", options: opt([["shared", "Every series at that category / x (and a total)"], ["single", "Only the one under the cursor"], ["off", "Nothing"]]) },
+        crosshair: { type: "enum", group: "Tooltip", label: "Highlight", default: "band", options: opt([["band", "A band behind the category"], ["line", "A dashed line"], ["none", "None"]]), visibleWhen: (p) => p.tooltipShows !== "off" },
 
-        // ---- Reference lines ----
-        references: {
-            type: "list", group: "Reference lines", label: "Reference lines and bands", noun: "reference", default: [],
-            help: "A limit, a target, or a band (from – to) on an axis.", item: { fields: REFERENCE_FIELDS, noun: "reference" }
+        // ---- Thresholds ----
+        thresholds: {
+            type: "list", group: "Thresholds", label: "Thresholds", noun: "threshold", default: [],
+            help: "Lines and bands on an axis: a setpoint, a limit, a normal range. A limit can colour the columns past it.", item: { fields: THRESHOLD_FIELDS, noun: "threshold" }
         },
 
-        // ---- Zoom & pan, Annotations (a time x) ----
+        // ---- Zoom & pan, range buttons, Annotations (a time x) ----
         ...onTime(zoomProps()),
+        ...onTime(rangeBarProps()),
         ...onTime(annotationProps()),
 
         // ---- General: the panel ----
@@ -270,14 +245,7 @@ export const cartesianChart = defineUI({
         fontSize: { type: "number", group: "General", label: "Axis text size", default: 11, min: 8, max: 24, unit: "px" },
         emptyText: { type: "string", group: "General", label: "Text when there is no data", default: "No data to display" },
 
-        // ---- Export ----
-        exportButton: { type: "boolean", group: "Export", label: "Export menu on the chart (⋮)", default: true },
-        exportCsv: { type: "boolean", group: "Export", label: "Menu: CSV", default: true, visibleWhen: (p) => p.exportButton !== false },
-        exportXlsx: { type: "boolean", group: "Export", label: "Menu: Excel", default: true, visibleWhen: (p) => p.exportButton !== false },
-        exportPng: { type: "boolean", group: "Export", label: "Menu: PNG", default: true, visibleWhen: (p) => p.exportButton !== false },
-        exportRange: { type: "enum", group: "Export", label: "A time x exports", default: "visible", options: opt([["visible", "What is shown (zoom applied)"], ["all", "Everything it holds"]]), visibleWhen: timeish },
-        exportTitle: { type: "string", group: "Export", label: "Title", default: "", help: "{title} in the file name. Empty: the chart's title." },
-        exportFilename: { type: "string", group: "Export", label: "File name expression", default: "", bindable: false, help: "Variables: {title}, {date}, {time}, {year}, {month}, {day}, {format}." }
+        ...exportProps({ thresholds: false })
     },
 
     parts: { chart: part("Chart container", "chart"), legend: part("Legend", "legend") },
@@ -285,7 +253,7 @@ export const cartesianChart = defineUI({
     events: {
         ...timeEvents(),
         hover: { label: "On Hover", payload: { x: "string", values: "object" }, help: "The category / x (a time: ms) under the cursor and each series' value there." },
-        legendToggle: { label: "On Series Toggle", payload: { series: "string", visible: "boolean" }, help: "The viewer showed / hid a series in the legend." }
+        seriesToggle: { label: "On Series Toggle", payload: { series: "string", visible: "boolean" }, help: "The viewer showed / hid a series in the legend." }
     },
 
     actions: {
@@ -300,17 +268,7 @@ export const cartesianChart = defineUI({
             .c-head { flex: 0 0 auto; padding: 10px 14px 0; min-width: 0; }
             .c-title { font-size: var(--ct-size, 14px); font-weight: 600; color: var(--fg); line-height: 1.3; }
             .c-sub { font-size: 12px; color: var(--fg-muted); margin-top: 2px; }
-            .c-main { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: row; min-width: 0; }
-            .c-main > .plot { flex: 1 1 auto; min-width: 0; }
-            .legend { padding-left: 14px; }
-            .legend.v { padding: 8px 10px; max-height: none; flex-direction: column; align-items: stretch; flex-wrap: nowrap; overflow: auto; max-width: 40%; }
-            .legend.inside { position: absolute; z-index: 4; padding: 4px 8px; background: var(--panel); border: 1px solid var(--bd); border-radius: var(--r, 4px); max-width: 60%; }
-            .legend.inside.tl { left: 10px; top: 8px; } .legend.inside.tr { right: 36px; top: 8px; }
-            .legend.inside.bl { left: 10px; bottom: 8px; } .legend.inside.br { right: 10px; bottom: 8px; }
-            .lg-item { font-size: var(--lg-size, 12px); }
-            .lg-item .lg-swatch.sw-sq { width: 10px; height: 10px; border-radius: 2px; }
-            .lg-item .lg-swatch.sw-dot { width: 9px; height: 9px; border-radius: 50%; }
-            .lg-item.off { opacity: 0.45; }
+            .legend:not(.v):not(.inside):not(.table) { padding-left: 14px; }
             .empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: var(--fg-muted); font-size: 12px; pointer-events: none; }
         `];
 
@@ -482,36 +440,60 @@ export const cartesianChart = defineUI({
         }
 
         _rebuild() {
+            const ord = this.p.categoryOrder === "asc" || this.p.categoryOrder === "desc" ? this.p.categoryOrder : "data";
             this._frame = this._time() ? { xType: "time", cats: [], series: [] }
-                : buildFrame(this._canon, { x: "x", y: "y", split: "s" }, { xType: this.p.xType, aggregate: this.p.aggregate, order: this.p.categoryOrder, maxCategories: this.p.maxCategories });
+                : buildFrame(this._canon, { x: "x", y: "y", split: "s" }, { xType: this.p.xType, aggregate: this.p.aggregate, order: ord, maxCategories: this.p.maxCategories });
             this._sl = null;
             this._aligned = null;
             this.requestUpdate();
             this.scheduleDraw();
         }
 
-        // every series on the same x positions: category i, or the sorted union of the x values (a number)
+        /**
+         * Every series on the same x positions: { xs, cols: Map(key -> Float64Array), cats }. A category x: in the order chosen
+         * (as they come, by value, A – Z), cut to the top N (the rest added up as "Others"); a number x: the sorted union.
+         */
         _align() {
-            if (this._aligned) return this._aligned;
-            const f = this._frame;
-            let xs;
-            if (f.xType === "category") xs = Float64Array.from(f.cats, (_, i) => i);
-            else {
-                const set = new Set();
-                f.series.forEach((s) => { for (let i = 0; i < s.x.length; i++) set.add(s.x[i]); });
-                xs = Float64Array.from(Array.from(set).sort((a, b) => a - b));
+            const f = this._frame, sig = [this.p.categoryOrder, this.p.topN, this.p.others].join("|");
+            if (this._aligned && this._aligned.sig === sig) return this._aligned;
+            const cols = new Map();
+            if (f.xType === "category") {
+                let idx = f.cats.map((_, i) => i);
+                const order = this.p.categoryOrder, N = Math.max(0, Math.floor(numOr(this.p.topN, 0)));
+                let total = null;
+                if (order === "value-desc" || order === "value-asc" || N > 0) {
+                    total = new Float64Array(f.cats.length);
+                    f.series.forEach((s) => { for (let i = 0; i < s.y.length; i++) if (s.y[i] === s.y[i]) total[i] += s.y[i]; });
+                }
+                if (order === "value-desc") idx.sort((a, b) => total[b] - total[a] || a - b);
+                else if (order === "value-asc") idx.sort((a, b) => total[a] - total[b] || a - b);
+                let rest = [];
+                if (N > 0 && idx.length > N) {
+                    // the N largest, in the order chosen above
+                    const keep = new Set(idx.slice().sort((a, b) => total[b] - total[a] || a - b).slice(0, N));
+                    rest = idx.filter((i) => !keep.has(i));
+                    idx = idx.filter((i) => keep.has(i));
+                }
+                const withOthers = rest.length > 0 && this.p.others !== false;
+                const cats = idx.map((i) => f.cats[i]).concat(withOthers ? ["Others"] : []);
+                f.series.forEach((s) => {
+                    const y = new Float64Array(cats.length).fill(NaN);
+                    idx.forEach((i, k) => { y[k] = s.y[i]; });
+                    if (withOthers) { let sum = 0, any = false; rest.forEach((i) => { if (s.y[i] === s.y[i]) { sum += s.y[i]; any = true; } }); y[cats.length - 1] = any ? sum : NaN; }
+                    cols.set(s.key, y);
+                });
+                return (this._aligned = { sig, xs: Float64Array.from(cats, (_, i) => i), cols, cats });
             }
+            const set = new Set();
+            f.series.forEach((s) => { for (let i = 0; i < s.x.length; i++) set.add(s.x[i]); });
+            const xs = Float64Array.from(Array.from(set).sort((a, b) => a - b));
             const at = new Map();
             xs.forEach((v, i) => at.set(v, i));
-            const cols = new Map();
-            f.series.forEach((s) => {
-                if (f.xType === "category") cols.set(s.key, s.y);
-                else { const y = new Float64Array(xs.length).fill(NaN); for (let i = 0; i < s.x.length; i++) y[at.get(s.x[i])] = s.y[i]; cols.set(s.key, y); }
-            });
-            return (this._aligned = { xs, cols });
+            f.series.forEach((s) => { const y = new Float64Array(xs.length).fill(NaN); for (let i = 0; i < s.x.length; i++) y[at.get(s.x[i])] = s.y[i]; cols.set(s.key, y); });
+            return (this._aligned = { sig, xs, cols, cats: null });
         }
 
-        // ---- the series, the axes, the stacks ------------------------------------------------------
+        // ---- the series ----------------------------------------------------------------------------
         seriesList() {
             if (this._sl) return this._sl;
             const items = (Array.isArray(this.p.series) ? this.p.series : []).filter((s) => s && typeof s === "object");
@@ -541,58 +523,30 @@ export const cartesianChart = defineUI({
 
         _target(s) { return { list: "series", id: s.id || s._key }; }
 
-        // the axes the user made (or the two defaults), by id
+        // the two value axes from the Y axis / Secondary Y axis props
         _axisDefs() {
-            const raw = Array.isArray(this.p.axes) && this.p.axes.some((a) => a && a.id) ? this.p.axes : DEFAULT_AXES;
-            return raw.filter((a) => a && typeof a === "object" && a.id).map((a) => ({ id: String(a.id), side: a.side === "right" ? "right" : "left", show: a.show !== false, title: a.title || "", scale: a.scale === "log" ? "log" : "linear",
-                softMin: numOr(a.softMin, NaN), softMax: numOr(a.softMax, NaN), min: numOr(a.min, NaN), max: numOr(a.max, NaN), notation: a.notation || "standard", decimals: a.decimals || "auto", grid: !!a.grid, labelColor: a.labelColor }));
-        }
-
-        // the axis a series (or stack) names: by id; "left" / "right" (older / quick) the first axis on that side; empty: the first
-        _axisIdOf(name, defs) {
-            defs = defs || this._axisDefs();
-            if (name) {
-                const byId = defs.filter((a) => a.id === name)[0];
-                if (byId) return byId.id;
-                const side = defs.filter((a) => a.side === name)[0];
-                if (side) return side.id;
-            }
-            return defs[0] ? defs[0].id : "y";
-        }
-
-        _stackDefs() {
-            const m = new Map();
-            (Array.isArray(this.p.stacks) ? this.p.stacks : []).forEach((g) => {
-                if (!g || typeof g !== "object" || !g.id) return;
-                m.set(String(g.id), { id: String(g.id), name: g.name || g.id, mode: ["stacked", "percent", "clustered", "none"].indexOf(g.mode) !== -1 ? g.mode : "stacked", axis: g.axis || "", placement: g.placement === "overlay" ? "overlay" : "beside",
-                    width: Math.max(0.1, Math.min(1, numOr(g.width, 100) / 100)), rest: !!g.includeRest });
+            const p = this.p, def = (pre, id, side, grid) => ({
+                id, side, show: p[pre + "Show"] !== false, title: p[pre + "Title"] || "", scale: p[pre + "Log"] ? "log" : "linear",
+                softMin: numOr(p[pre + "SoftMin"], NaN), softMax: numOr(p[pre + "SoftMax"], NaN), min: numOr(p[pre + "Min"], NaN), max: numOr(p[pre + "Max"], NaN),
+                notation: p[pre + "Notation"] || "standard", decimals: p[pre + "Decimals"] || "auto", grid: p[pre + "Grid"] === undefined ? grid : !!p[pre + "Grid"], labelColor: p[pre + "LabelColor"]
             });
-            return m;
+            return [def("y", "y", "left", true), def("y2", "y2", "right", false)];
         }
 
-        // the stack a series is in: its own, else (a series from the data that is listed nowhere) the one that takes the rest, else none
-        _stackOf(s, defs) {
-            defs = defs || this._stackDefs();
-            if (s.stack && defs.get(String(s.stack))) return defs.get(String(s.stack));
-            if (!s.stack && s._auto) { for (const g of defs.values()) if (g.rest) return g; }
-            return null;
-        }
+        _axisIdOf(side) { return side === "right" ? "y2" : "y"; }
+        _markOf(s) { const t = s.type || this.p.type || "column"; return TYPES.some((x) => x[0] === t) ? t : "column"; }
+        _stacks() { return this.p.stacking === "stacked" || this.p.stacking === "percent"; }
+        _inStack(s) { return this._stacks() && s.stack !== false && this._markOf(s) !== "target"; }
 
-        _modeOf(s) { const g = this._stackOf(s); return g ? g.mode : (this.p.stacking || "clustered"); }
-
-        colorOf(s) {
-            const own = s ? this._tok(s.color) : "";
-            return own || this.seriesColor(s ? s._i : 0);
-        }
-        _markOf(s) { const m = s.mark || this.p.mark || "column"; return m === "bar" ? "column" : m; }
+        colorOf(s) { return (s && this._tok(s.color)) || this.seriesColor(s ? s._i : 0); }
         _num(v, d) { return numOr(v, d); }
         _curveOf(s) { return s.curve || this.p.curve || "smooth"; }
 
-        // does this series sit on the shared slots (columns; a member of a stacked / 100 % stack; everything on a category / number x)?
+        // does this series sit on the shared slots (columns, targets, members of the stack; everything on a category / number x)?
         _slotted(s) {
             if (!this._time()) return true;
-            const mode = this._modeOf(s);
-            return this._markOf(s) === "column" || mode === "stacked" || mode === "percent";
+            const mk = this._markOf(s);
+            return mk === "column" || mk === "target" || this._inStack(s);
         }
 
         // a category / number series' values on the aligned x
@@ -638,10 +592,11 @@ export const cartesianChart = defineUI({
                 return;
             }
             const rows = [];
+            const cats = this._frame.cats;
             if (Array.isArray(v)) {
                 v.forEach((p, i) => {
                     if (p && typeof p === "object") rows.push({ x: p.x !== undefined ? p.x : p.category !== undefined ? p.category : p.name, y: p.y !== undefined ? p.y : p.value, s: key });
-                    else rows.push({ x: this._frame.cats[i] !== undefined ? this._frame.cats[i] : String(i + 1), y: p, s: key });
+                    else rows.push({ x: cats[i] !== undefined ? cats[i] : String(i + 1), y: p, s: key });
                 });
             } else if (v && typeof v === "object") Object.keys(v).forEach((k) => rows.push({ x: k, y: v[k], s: key }));
             else return;
@@ -692,23 +647,24 @@ export const cartesianChart = defineUI({
         _textColor() { return this._tok(this.p.textColor); }
 
         _xLabel(i) {
-            const f = this._frame;
-            if (f.xType === "category") return f.cats[i] === undefined ? "" : String(f.cats[i]);
-            return formatValue(this._align().xs[i], { notation: "standard", decimals: "auto" }, "");
+            const a = this._align();
+            if (a.cats) return a.cats[i] === undefined ? "" : String(a.cats[i]);
+            return formatValue(a.xs[i], { notation: "standard", decimals: "auto" }, "");
         }
+        _xValue(i) { const a = this._align(); return a.cats ? a.cats[i] : a.xs[i]; }
 
         // ---- the legend ---------------------------------------------------------------------------
-        // min / max / avg / sum / last of a series (a time x: from its ring; the min and max from the LOD)
+        // sum / avg / min / max / last of a series (a time x: from its ring; the min and max from the LOD)
         _statsOf(s) {
             const buf = this._buf(s);
             if (buf) {
                 const c = this._statCache.get(s._key);
                 const last = buf.count ? buf.getY(buf.count - 1) : NaN;
-                if (c && c.count === buf.count && c.last === last && c.want === this.p.legendValue) return c;
+                if (c && c.count === buf.count && c.last === last) return c;
                 let sum = 0, mn = NaN, mx = NaN;
                 if (buf.count) { const o = this._mm; buf.rangeMinMax(0, buf.count, o); mn = o.min; mx = o.max; }
-                if (this.p.legendValue === "avg" || this.p.legendValue === "sum") for (let i = 0; i < buf.count; i++) sum += buf.getY(i);
-                const st = { count: buf.count, want: this.p.legendValue, last, min: mn, max: mx, sum, avg: buf.count ? sum / buf.count : NaN, n: buf.count };
+                for (let i = 0; i < buf.count; i++) sum += buf.getY(i);
+                const st = { count: buf.count, last, min: mn, max: mx, sum, avg: buf.count ? sum / buf.count : NaN, n: buf.count };
                 this._statCache.set(s._key, st);
                 return st;
             }
@@ -719,12 +675,11 @@ export const cartesianChart = defineUI({
             return { n, sum, last, min: mn, max: mx, avg: n ? sum / n : NaN };
         }
 
-        _legendValue(s) {
-            const how = this.p.legendValue;
-            if (!how || how === "none") return "";
+        _legendStat(s, k) {
             const st = this._statsOf(s);
-            if (!st.n || !Number.isFinite(st[how])) return "";
-            return this._fmt(st[how], s);
+            if (!st.n || !Number.isFinite(st[k])) return "";
+            // an average: 2 decimals when the series leaves them automatic
+            return k === "avg" && (s.decimals || "auto") === "auto" ? formatValue(st[k], Object.assign(this._spec(s), { decimals: "2" }), s.unit || "") : this._fmt(st[k], s);
         }
 
         _toggle(s, e) {
@@ -736,7 +691,7 @@ export const cartesianChart = defineUI({
                 this._hidden.delete(s._key);
             } else if (this._hidden.has(s._key)) this._hidden.delete(s._key);
             else this._hidden.add(s._key);
-            this.emit("legendToggle", { series: s.id || s.name, visible: !this._hidden.has(s._key) });
+            this.emit("seriesToggle", { series: s.id || s.name, visible: !this._hidden.has(s._key) });
             this._hoverAt = null; this.hover = null;
             this.requestUpdate();
             this.scheduleDraw();
@@ -752,8 +707,8 @@ export const cartesianChart = defineUI({
         _hasData() { return this._visible().length > 0; }
 
         _pngLegend(span) {
-            const how = this.p.legendValue;
-            return span.list.filter((s) => s.legend !== false).map((s) => ({ color: this.colorOf(s), text: (s.name || s.id) + (how && how !== "none" ? "  " + this._legendValue(s) : "") }));
+            const how = this.p.legendMode === "table" ? "sum" : this.p.legendValue;
+            return span.list.filter((s) => s.legend !== false).map((s) => { const v = how && how !== "none" ? this._legendStat(s, how) : ""; return { color: this.colorOf(s), text: (s.name || s.id) + (v ? "  " + v : "") }; });
         }
 
         _exportSpan(range) {
@@ -829,22 +784,37 @@ export const cartesianChart = defineUI({
             return { xs, width: bw, cols, n: B };
         }
 
-        // the stacks of what is drawn: [{ id, mode, axis (id), placement, width, members: [series, in order] }], the ones with a name first
-        // in the order of their first member; series in no stack form the default one (id "") with the chart's mode
-        _plan(vis, axisDefs) {
-            const defs = this._stackDefs(), groups = new Map();
-            vis.forEach((s) => {
-                const sd = this._stackOf(s, defs), key = sd ? sd.id : "";
-                let g = groups.get(key);
-                if (!g) {
-                    g = sd ? Object.assign({}, sd, { members: [] }) : { id: "", name: "", mode: this.p.stacking || "clustered", axis: "", placement: "beside", width: 1, rest: false, members: [] };
-                    groups.set(key, g);
-                }
-                g.members.push(s);
-            });
-            const list = Array.from(groups.values()).sort((a, b) => a.members[0]._i - b.members[0]._i);
-            list.forEach((g) => { g.axisId = this._axisIdOf(g.axis || (g.members[0] && g.members[0].axis), axisDefs); });
-            return list;
+        // what is drawn, grouped: the stack (its members in the order of the series, the first at the bottom; on the axis of the
+        // first), and the rest side by side (each column its own place; a line at its value). Targets are in neither.
+        _plan(vis) {
+            const stack = { id: "stack", mode: this.p.stacking, members: [] }, rest = { id: "", mode: "clustered", members: [] };
+            vis.forEach((s) => { if (this._markOf(s) !== "target") (this._inStack(s) ? stack : rest).members.push(s); });
+            const out = [];
+            if (stack.members.length) { stack.axisId = this._axisIdOf(stack.members[0].axis); out.push(stack); }
+            if (rest.members.length) out.push(rest);
+            return out.sort((a, b) => a.members[0]._i - b.members[0]._i);
+        }
+
+        // a threshold as drawn: its kind, axis id, values, colour (its own, else the theme's status colour for its kind)
+        _thresholds() {
+            return (Array.isArray(this.p.thresholds) ? this.p.thresholds : []).filter((t) => t && typeof t === "object")
+                .map((t) => {
+                    const kind = ["line", "upper", "lower", "band"].indexOf(t.kind) !== -1 ? t.kind : "line";
+                    return { kind, axis: this._axisIdOf(t.axis), value: numOr(t.value, NaN), to: numOr(t.to, NaN), label: t.label || "", dash: t.dash, shade: !!t.shade, colorColumns: !!t.colorColumns,
+                        color: this._tok(t.color) || this.statusColor(kind === "band" ? "warning" : kind === "line" ? "info" : "error") };
+                })
+                .filter((t) => Number.isFinite(t.value));
+        }
+
+        // a column's colour: past a limit that colours columns (the most extreme one), else its series'
+        _columnColor(axisId, v, own, ths) {
+            let best = null;
+            for (const t of ths) {
+                if (!t.colorColumns || t.axis !== axisId) continue;
+                if (t.kind === "upper" && v >= t.value && (!best || best.kind !== "upper" || t.value > best.value)) best = t;
+                else if (t.kind === "lower" && v <= t.value && (!best || (best.kind === "lower" && t.value < best.value))) best = t;
+            }
+            return best ? best.color : own;
         }
 
         // ---- the drawing --------------------------------------------------------------------------
@@ -858,13 +828,14 @@ export const cartesianChart = defineUI({
             const time = this._time(), f = this._frame;
             const c = this._colors(), font = c.font, fs = numOr(this.p.fontSize, 11);
             const txt = this._textColor() || c.text, strong = this._textColor() || c.strong;
-            const horizontal = !time && this.p.orientation === "horizontal" && vis.some((s) => this._markOf(s) === "column");
+            const horizontal = !time && this.p.orientation === "horizontal";
             const axisDefs = this._axisDefs();
-            const groups = this._plan(vis, axisDefs);
-            const axisOf = new Map();          // series key -> axis id
-            groups.forEach((g) => g.members.forEach((s) => axisOf.set(s._key, horizontal ? axisDefs[0].id : (g.id ? g.axisId : this._axisIdOf(s.axis, axisDefs)))));
+            const groups = this._plan(vis);
             const groupOf = new Map();
             groups.forEach((g) => g.members.forEach((s) => groupOf.set(s._key, g)));
+            const axisOf = new Map();          // series key -> axis id (the stack's for its members; horizontal: the left one)
+            vis.forEach((s) => { const g = groupOf.get(s._key); axisOf.set(s._key, horizontal ? "y" : g && g.id === "stack" ? g.axisId : this._axisIdOf(s.axis)); });
+            const ths = this._thresholds();
 
             // -- the x domain and what sits on it
             let dom, slots, al = null, n = 0, fb = null;
@@ -881,11 +852,11 @@ export const cartesianChart = defineUI({
             } else {
                 al = this._align(); n = al.xs.length;
                 if (!n) { this._geo = null; return; }
-                if (f.xType === "category") { dom = { lo: -0.5, hi: n - 0.5 }; slots = { xs: al.xs, width: 1, cols: al.cols, n }; }
+                if (al.cats) { dom = { lo: -0.5, hi: n - 0.5 }; slots = { xs: al.xs, width: 1, cols: al.cols, n }; }
                 else {
                     let minD = Infinity;
                     for (let i = 1; i < n; i++) minD = Math.min(minD, al.xs[i] - al.xs[i - 1]);
-                    const hasCol = vis.some((s) => this._markOf(s) === "column");
+                    const hasCol = vis.some((s) => this._markOf(s) !== "line");
                     let lo = al.xs[0], hi = al.xs[n - 1];
                     const pad = hasCol ? (Number.isFinite(minD) ? minD / 2 : 0.5) : (hi === lo ? 1 : 0);
                     lo -= pad; hi += pad;
@@ -894,25 +865,23 @@ export const cartesianChart = defineUI({
                 }
             }
 
-            // -- the stacks: lo / hi of every slotted member (the marks decide how the band is drawn)
+            // -- the stacks: lo / hi of every slotted member (side by side: each from 0 to its value)
             const colOf = (s) => slots.cols.get(s._data.key);
             const stackOf = new Map();
             groups.forEach((g) => {
                 const mem = g.members.filter((s) => this._slotted(s) && slots.cols.has(s._data.key));
                 if (!mem.length || !slots.n) return;
-                const mode = g.mode === "clustered" ? "none" : g.mode;
-                const res = stackColumns(mem.map((s) => ({ y: colOf(s) })), slots.n, mode);
+                const res = stackColumns(mem.map((s) => ({ y: colOf(s) })), slots.n, g.id === "stack" ? g.mode : "none");
                 mem.forEach((s, i) => stackOf.set(s._key, res[i]));
             });
 
-            // -- the lines: a time x, each from its own pixel columns (a member of a stack: from the shared columns, at the cumulative
-            // top); a category / number x, from the aligned values
+            // -- the lines: a time x out of the stack, each from its own pixel columns; else from the shared slots (in the stack: at the
+            // cumulative top)
             const lines = new Map();
             vis.forEach((s) => {
-                const mk = this._markOf(s);
-                if (mk === "column" || (mk === "area" && stackOf.has(s._key))) return;
+                if (this._markOf(s) !== "line") return;
                 if (this._slotted(s) && slots.cols.has(s._data.key)) {
-                    const st = stackOf.get(s._key), y = st ? st.hi : colOf(s);
+                    const st = stackOf.get(s._key), y = st && groupOf.get(s._key).id === "stack" ? st.hi : colOf(s);
                     lines.set(s._key, { x: slots.xs, y, n: slots.n });
                 } else if (time) { const ln = this._decimate(this.decimator, s, dom.lo, dom.hi, estW); if (ln && ln.n) lines.set(s._key, ln); }
             });
@@ -926,12 +895,12 @@ export const cartesianChart = defineUI({
                 let zero = false, percent = false;
                 mine.forEach((s) => {
                     const st = stackOf.get(s._key), mk = this._markOf(s), ln = lines.get(s._key);
-                    if (st && (mk === "column" || mk === "area")) { arrays.push(st.lo, st.hi); zero = true; }
+                    if (mk === "column" && st) { arrays.push(st.lo, st.hi); zero = true; }
+                    if (mk === "target" && slots.cols.has(s._data.key)) arrays.push(colOf(s));
                     if (ln) arrays.push(ln.y.subarray ? ln.y.subarray(0, ln.n) : ln.y);
-                    if (mk === "column" || mk === "area") zero = true;
-                    if (groupOf.get(s._key).mode === "percent" && st) percent = true;
+                    if (groupOf.get(s._key) && groupOf.get(s._key).id === "stack" && this.p.stacking === "percent") percent = true;
                 });
-                this._references().filter((r) => this._axisIdOf(r.axis, axisDefs) === def.id).forEach((r) => { arrays.push([r.value]); if (r.kind === "band" && Number.isFinite(r.to)) arrays.push([r.to]); });
+                ths.filter((t) => t.axis === def.id).forEach((t) => { arrays.push([t.value]); if (t.kind === "band" && Number.isFinite(t.to)) arrays.push([t.to]); });
                 let { min, max } = extent(arrays);
                 if (!Number.isFinite(min)) return;
                 const log = def.scale === "log";
@@ -952,8 +921,6 @@ export const cartesianChart = defineUI({
                 axes.set(def.id, { id: def.id, side: horizontal ? "left" : def.side, lo, hi, ticks, log, show: def.show, title: def.title, grid: def.grid, spec: { notation: def.notation, decimals: def.decimals }, color: this._tok(def.labelColor) || txt, percent, w: 0, off: 0 });
             });
             const axisList = Array.from(axes.values());
-            // the first axis draws the grid when none asks for it (a chart always has its horizontal lines of the main scale)
-            if (axisList.length && !axisList.some((a) => a.grid && a.show) && !(this._axisDefs().some((d) => d.grid === false && false))) { const first = axisList.filter((a) => a.show)[0]; if (first && axisDefs.every((d) => !d.grid)) first.grid = false; }
 
             // -- margins from the labels
             ctx.font = `${fs}px ${font}`;
@@ -977,9 +944,9 @@ export const cartesianChart = defineUI({
                     rh = showCat ? this._rulerHeight(h) : 0; rulerGap = rh ? 6 : 0;
                     padB += rh + rulerGap + (xTitle ? titleH : 0);
                 } else if (showCat) {
-                    const slot = (w - padL - padR) / Math.max(1, f.xType === "category" ? n : Math.min(n, 8));
+                    const slot = (w - padL - padR) / Math.max(1, al.cats ? n : Math.min(n, 8));
                     const rotate = this.p.xLabelRotate || "auto", lw = widest(catLabels.length ? catLabels : [""]);
-                    xRot = rotate === "auto" ? (lw + 6 > slot && f.xType === "category" ? 45 : 0) : Number(rotate) || 0;
+                    xRot = rotate === "auto" ? (lw + 6 > slot && al.cats ? 45 : 0) : Number(rotate) || 0;
                     const lh = xRot ? Math.sin((xRot * Math.PI) / 180) * Math.min(lw, 140) + fs : fs + 4;
                     padB += lh + 8 + (xTitle ? titleH : 0);
                 }
@@ -987,7 +954,11 @@ export const cartesianChart = defineUI({
                 if (showCat) padL += Math.min(widest(catLabels), (w * 0.4)) + 10 + (xTitle ? titleH : 0);
                 const a0 = axisList[0];
                 if (a0 && a0.show) padB += fs + 12 + (a0.title ? titleH : 0);
+                padR += 30;   // room for a label past the longest bar
             }
+            // a stack's total above it
+            const totals = this.p.stacking === "stacked" && this.p.labelTotal !== false && groups.some((g) => g.id === "stack");
+            if (totals && !horizontal) padT += numOr(this.p.labelSize, 11) + 4;
             const plotX = padL, plotY = padT, plotW = Math.max(10, w - padL - padR), plotH = Math.max(10, h - padT - padB);
             const catLen = horizontal ? plotH : plotW, valLen = horizontal ? plotW : plotH;
             const xy = (cc, vv) => (horizontal ? [plotX + vv, plotY + cc] : [plotX + cc, plotY + plotH - vv]);
@@ -998,8 +969,8 @@ export const cartesianChart = defineUI({
             const kx = catLen / (dom.hi - dom.lo || 1);
             const cpos = (xv) => (xv - dom.lo) * kx;
             const slotLen = slots.width * kx;
-            const m = time ? { plotX, plotY, plotW, plotH, padLeft: padL, padRight: padR, axisGap: 8, rulerX: plotX, rulerY: plotY + plotH + rulerGap, rulerW: plotW, rulerH: rh } : null;
-            this._scale = time ? { vMinX: dom.lo, vMaxX: dom.hi, toX: (x) => plotX + ((x - dom.lo) / (dom.hi - dom.lo)) * plotW, m } : null;
+            const m = { plotX, plotY, plotW, plotH, padLeft: padL, padRight: padR, axisGap: 8, rulerX: plotX, rulerY: plotY + plotH + rulerGap, rulerW: plotW, rulerH: rh };
+            this._scale = time ? { vMinX: dom.lo, vMaxX: dom.hi, toX: (x) => plotX + ((x - dom.lo) / (dom.hi - dom.lo)) * plotW, m } : { m };
             const axisFor = (s) => axes.get(axisOf.get(s._key)) || axisList[0];
 
             // -- the grid and the value labels
@@ -1016,7 +987,7 @@ export const cartesianChart = defineUI({
                     if (a.grid) {
                         ctx.strokeStyle = c.grid; ctx.setLineDash([]);
                         ctx.beginPath();
-                        if (horizontal) { ctx.moveTo(x, plotY); ctx.lineTo(x, plotY + plotH); } else { ctx.moveTo(plotX, Math.round(y) + 0.5); ctx.lineTo(plotX + plotW, Math.round(y) + 0.5); }
+                        if (horizontal) { ctx.moveTo(Math.round(x) + 0.5, plotY); ctx.lineTo(Math.round(x) + 0.5, plotY + plotH); } else { ctx.moveTo(plotX, Math.round(y) + 0.5); ctx.lineTo(plotX + plotW, Math.round(y) + 0.5); }
                         ctx.stroke();
                     }
                     ctx.fillStyle = a.color;
@@ -1040,69 +1011,83 @@ export const cartesianChart = defineUI({
                 ctx.save();
                 const base = vpos(a0, Math.max(a0.lo, Math.min(0, a0.hi)));
                 const [bx, by] = xy(0, base);
-                ctx.strokeStyle = this._textColor() || c.text; ctx.globalAlpha = 0.5; ctx.lineWidth = 1;
+                ctx.strokeStyle = txt; ctx.globalAlpha = 0.5; ctx.lineWidth = 1;
                 ctx.beginPath();
-                if (horizontal) { ctx.moveTo(bx, plotY); ctx.lineTo(bx, plotY + plotH); } else { ctx.moveTo(plotX, by); ctx.lineTo(plotX + plotW, by); }
+                if (horizontal) { ctx.moveTo(Math.round(bx) + 0.5, plotY); ctx.lineTo(Math.round(bx) + 0.5, plotY + plotH); } else { ctx.moveTo(plotX, Math.round(by) + 0.5); ctx.lineTo(plotX + plotW, Math.round(by) + 0.5); }
                 ctx.stroke();
                 ctx.restore();
             }
 
-            // everything in the plot is clipped to it (a time x: the decimated line runs a little beyond)
+            // everything in the plot is clipped to it (a time x: the decimated line runs a little beyond; the stack totals sit above)
             ctx.save();
-            ctx.beginPath(); ctx.rect(plotX, plotY, plotW, plotH); ctx.clip();
+            ctx.beginPath(); ctx.rect(plotX, plotY - (totals ? numOr(this.p.labelSize, 11) + 4 : 0), plotW + (horizontal ? 30 : 0), plotH + (totals ? numOr(this.p.labelSize, 11) + 4 : 0)); ctx.clip();
             if (time && this._selection) {
                 const a = plotX + cpos(Math.min(this._selection.from, this._selection.to)), b2 = plotX + cpos(Math.max(this._selection.from, this._selection.to));
                 ctx.fillStyle = "rgba(59, 130, 246, 0.14)"; ctx.fillRect(a, plotY, b2 - a, plotH);
             }
 
-            // -- reference bands (under the marks)
-            const refs = this._references();
-            const refColor = (r) => this._tok(r.color) || this.statusColor("error");
-            const refAxis = (r) => axes.get(this._axisIdOf(r.axis, axisDefs)) || axisList[0];
-            refs.filter((r) => r.kind === "band").forEach((r) => {
-                const a = refAxis(r);
-                if (!a || !Number.isFinite(r.to)) return;
-                const v0 = vpos(a, Math.min(r.value, r.to)), v1 = vpos(a, Math.max(r.value, r.to));
+            // -- bands and the shade past a limit (under the marks)
+            const exTh = this._exporting && this._exporting.noThresholds;
+            if (!exTh) ths.forEach((t) => {
+                const a = axes.get(t.axis);
+                if (!a) return;
+                let from, to;
+                if (t.kind === "band") { if (!Number.isFinite(t.to)) return; from = Math.min(t.value, t.to); to = Math.max(t.value, t.to); }
+                else if (t.shade && t.kind === "upper") { from = t.value; to = a.hi; }
+                else if (t.shade && t.kind === "lower") { from = a.lo; to = t.value; }
+                else return;
+                const v0 = Math.max(0, vpos(a, from)), v1 = Math.min(valLen, vpos(a, to));
+                if (v1 <= v0) return;
                 const [x0, y0] = xy(0, v0), [x1, y1] = xy(catLen, v1);
                 ctx.save();
-                ctx.globalAlpha = Number.isFinite(r.opacity) ? r.opacity : 0.12;
-                ctx.fillStyle = refColor(r);
+                ctx.fillStyle = this.hexToRgba(t.color, t.kind === "band" ? 0.14 : 0.08);
                 ctx.fillRect(Math.min(x0, x1), Math.min(y0, y1), Math.abs(x1 - x0), Math.abs(y1 - y0));
                 ctx.restore();
-                if (r.label) { ctx.save(); ctx.fillStyle = refColor(r); ctx.font = `${fs}px ${font}`; ctx.textAlign = "left"; ctx.textBaseline = "top"; ctx.fillText(r.label, horizontal ? Math.min(x0, x1) + 4 : plotX + 4, horizontal ? plotY + 4 : Math.min(y0, y1) + 3); ctx.restore(); }
+                if (t.kind === "band" && t.label) { ctx.save(); ctx.fillStyle = txt; ctx.font = `${fs}px ${font}`; ctx.textAlign = "right"; ctx.textBaseline = "top"; ctx.fillText(t.label, horizontal ? Math.max(x0, x1) - 4 : plotX + plotW - 4, horizontal ? plotY + 4 : Math.min(y0, y1) + 3); ctx.restore(); }
             });
 
-            // -- the hover highlight (behind the marks): a band behind the column, or a dashed line
+            // -- the hover highlight (behind the marks): a band behind the category, or a dashed line
             const hv = this._hoverShape(slots, time);
             if (hv && this.p.tooltipShows !== "off" && this.p.crosshair !== "none") {
                 const cc = cpos(hv.x);
                 ctx.save();
                 if (this.p.crosshair === "line" || (time && !hv.slot)) {
                     ctx.strokeStyle = txt; ctx.globalAlpha = 0.5; ctx.lineWidth = 1; ctx.setLineDash([4, 4]); ctx.beginPath();
-                    const [a1, b1] = xy(cc, 0), [a2, b2] = xy(cc, valLen); ctx.moveTo(a1, b1); ctx.lineTo(a2, b2); ctx.stroke();
+                    const [p1, q1] = xy(cc, 0), [p2, q2] = xy(cc, valLen); ctx.moveTo(p1, q1); ctx.lineTo(p2, q2); ctx.stroke();
                 } else {
                     ctx.fillStyle = c.band; ctx.globalAlpha = 0.9;
-                    const [a1, b1] = xy(cc - slotLen / 2, 0), [a2, b2] = xy(cc + slotLen / 2, valLen);
-                    ctx.fillRect(Math.min(a1, a2), Math.min(b1, b2), Math.abs(a2 - a1), Math.abs(b2 - b1));
+                    const [p1, q1] = xy(cc - slotLen / 2, 0), [p2, q2] = xy(cc + slotLen / 2, valLen);
+                    ctx.fillRect(Math.min(p1, p2), Math.min(q1, q2), Math.abs(p2 - p1), Math.abs(q2 - q1));
                 }
                 ctx.restore();
             }
 
-            // -- columns: the places. Stacks beside each other take a place each (a side-by-side stack one a series); an overlay stack
-            // takes the whole place, narrower. A column's width: the place minus the space between categories, shared by the places.
+            // -- the places of a category: the stack takes one, each column out of it one of its own (in the order of the series)
             const colSeries = vis.filter((s) => this._markOf(s) === "column" && stackOf.has(s._key));
-            const beside = groups.filter((g) => g.placement !== "overlay" && g.members.some((s) => colSeries.indexOf(s) !== -1));
             let nPlaces = 0;
             const place = new Map();
-            beside.forEach((g) => {
+            groups.forEach((g) => {
                 const cols = g.members.filter((s) => colSeries.indexOf(s) !== -1);
-                if (g.mode === "clustered") cols.forEach((s) => place.set(s._key, nPlaces++)); else { cols.forEach((s) => place.set(s._key, nPlaces)); nPlaces++; }
+                if (!cols.length) return;
+                if (g.id === "stack") { cols.forEach((s) => place.set(s._key, nPlaces)); nPlaces++; } else cols.forEach((s) => place.set(s._key, nPlaces++));
             });
             nPlaces = Math.max(1, nPlaces);
-            const labelsOn = (s) => (s.labels === "on" ? true : s.labels === "off" ? false : !!this.p.labels);
-            const labelDraw = [];
             const catGap = Math.max(0, Math.min(0.9, numOr(this.p.gap, 30) / 100));
             const maxBar = numOr(this.p.maxBarWidth, 0), inner = numOr(this.p.barGap, 2);
+            const cat = slotLen * (1 - catGap);
+            let each = (cat - inner * (nPlaces - 1)) / nPlaces;
+            if (maxBar > 0) each = Math.min(each, maxBar);
+            each = Math.max(1, each);
+            const groupW = each * nPlaces + inner * (nPlaces - 1);
+            const labelsOn = (s) => (s.labels === "on" ? true : s.labels === "off" ? false : !!this.p.labels);
+            const labelDraw = [];
+            const gradient = this.p.columnFill === "gradient";
+            // a category's total of the columns (the % of a label): its stack's, or every column's
+            const catTotal = (i, inStack) => {
+                let sum = 0;
+                colSeries.forEach((s) => { if ((groupOf.get(s._key).id === "stack") !== inStack && this._stacks()) return; const v = colOf(s)[i]; if (v === v) sum += Math.abs(v); });
+                return sum;
+            };
             // a column with the end away from the base rounded (positive: up / right; negative: down / left)
             const rectPath = (x, y, ww, hh, r, positive) => {
                 r = Math.max(0, Math.min(r, Math.abs(ww) / 2, Math.abs(hh) / 2));
@@ -1110,23 +1095,17 @@ export const cartesianChart = defineUI({
                 if (!r || !ctx.roundRect) { ctx.rect(x, y, ww, hh); return; }
                 ctx.roundRect(x, y, ww, hh, horizontal ? (positive ? [0, r, r, 0] : [r, 0, 0, r]) : (positive ? [r, r, 0, 0] : [0, 0, r, r]));
             };
+            const stackTops = new Map();   // i -> { pos, neg, sum } of the stack (the totals)
 
-            // -- the marks, in the order of the series (the first under the others)
+            // -- the marks, in the order of the series (the first under the others); targets after the columns
             vis.forEach((s) => {
                 const mk = this._markOf(s), color = this.colorOf(s), a = axisFor(s), st = stackOf.get(s._key), g = groupOf.get(s._key);
+                if (mk === "target" || !a) return;
                 ctx.save();
                 ctx.globalAlpha = this._num(s.opacity, 1);
                 if (mk === "column" && st) {
-                    const y = colOf(s), overlay = g.placement === "overlay";
-                    const cat = slotLen * (1 - catGap);
-                    const nP = overlay ? 1 : nPlaces, pl = overlay ? 0 : (place.get(s._key) || 0);
-                    let each = (cat - inner * (nP - 1)) / nP;
-                    if (overlay) each = cat * g.width;
-                    if (maxBar > 0) each = Math.min(each, maxBar);
-                    each = Math.max(1, each);
-                    const groupW = each * nP + inner * (nP - 1);
+                    const y = colOf(s), pl = place.get(s._key) || 0, piled = g.id === "stack";
                     const rad = this._num(s.radius, this._num(this.p.radius, 2));
-                    ctx.fillStyle = color;
                     for (let i = 0; i < slots.n; i++) {
                         if (!(y[i] === y[i])) continue;
                         const lo = st.lo[i], hiV = st.hi[i];
@@ -1136,32 +1115,55 @@ export const cartesianChart = defineUI({
                         const [x0, y0] = xy(c0, v0), [x1, y1] = xy(c0 + each, v1);
                         const bx = Math.min(x0, x1), by = Math.min(y0, y1), bw = Math.abs(x1 - x0), bh = Math.abs(y1 - y0);
                         if (bw <= 0 || bh <= 0) continue;
-                        const piled = g.mode === "stacked" || g.mode === "percent";
-                        const top = !piled || this._isTop(g.members.filter((x) => stackOf.has(x._key) && (this._markOf(x) === "column" || this._markOf(x) === "area")), s, i, stackOf, hiV);
+                        const top = !piled || this._isTop(g.members.filter((x) => stackOf.has(x._key) && this._markOf(x) === "column"), s, i, stackOf, hiV);
+                        const fill = this._columnColor(axisOf.get(s._key), y[i], color, ths);
+                        if (gradient) {
+                            const [gx0, gy0] = xy(c0, vpos(a, Math.max(a.lo, Math.min(a.hi, 0)))), [gx1, gy1] = xy(c0, v1);
+                            const gr = ctx.createLinearGradient(gx0, gy0, gx1, gy1);
+                            gr.addColorStop(0, this.hexToRgba(fill, 0.35)); gr.addColorStop(1, this.hexToRgba(fill, 1));
+                            ctx.fillStyle = gr;
+                        } else ctx.fillStyle = fill;
                         rectPath(bx, by, bw, bh, top ? rad : 0, hiV >= 0);
                         ctx.fill();
-                        if (labelsOn(s)) labelDraw.push({ s, x: bx, y: by, w: bw, h: bh, v: y[i], color, stacked: piled });
+                        if (piled) { const e = stackTops.get(i) || { c0, pos: 0, neg: 0, sum: 0, a }; if (y[i] >= 0) e.pos = Math.max(e.pos, hiV); else e.neg = Math.min(e.neg, lo); e.sum += y[i]; stackTops.set(i, e); }
+                        if (labelsOn(s)) labelDraw.push({ s, x: bx, y: by, w: bw, h: bh, v: y[i], pct: catTotal(i, piled) ? Math.abs(y[i]) / catTotal(i, piled) : NaN, color: fill, stacked: piled });
                     }
-                } else if (mk === "area" && st) {
-                    this._drawStackedArea(ctx, s, st, slots, cpos, vpos, xy, a, color, g.mode);
                 } else if (lines.has(s._key)) {
-                    this._drawLine(ctx, s, lines.get(s._key), mk === "column" ? "line" : mk, { cpos, vpos, xy, a, color, plotY, plotH, labelDraw, labelsOn, time, horizontal });
+                    this._drawLine(ctx, s, lines.get(s._key), { cpos, vpos, xy, a, color, plotY, plotH, labelDraw, labelsOn, time, horizontal });
+                }
+                ctx.restore();
+            });
+            // targets: a short thick line across the category's columns
+            vis.filter((s) => this._markOf(s) === "target" && slots.cols.has(s._data.key)).forEach((s) => {
+                const a = axisFor(s), y = colOf(s), color = this.colorOf(s), lw = this._num(s.width, 3);
+                if (!a) return;
+                ctx.save();
+                ctx.globalAlpha = this._num(s.opacity, 1);
+                ctx.strokeStyle = color; ctx.lineWidth = lw; ctx.lineCap = "butt"; ctx.setLineDash(dashOf(s.dash));
+                const half = Math.max(groupW, 6) / 2 + 3;
+                for (let i = 0; i < slots.n; i++) {
+                    if (!(y[i] === y[i])) continue;
+                    const cc = cpos(slots.xs[i]), vv = vpos(a, y[i]);
+                    if (vv < 0 || vv > valLen) continue;
+                    const [x0, y0] = xy(cc - half, vv), [x1, y1] = xy(cc + half, vv);
+                    ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+                    if (labelsOn(s)) labelDraw.push({ s, x: horizontal ? x0 : (x0 + x1) / 2, y: horizontal ? (y0 + y1) / 2 : y0, w: 0, h: 0, v: y[i], color, line: true });
                 }
                 ctx.restore();
             });
 
-            // -- reference lines (over the marks), the annotations of a time x, the hover dots
-            refs.filter((r) => r.kind !== "band").forEach((r) => {
-                const a = refAxis(r);
-                if (!a || !Number.isFinite(r.value)) return;
-                const vp = vpos(a, r.value);
+            // -- threshold lines (over the marks), the annotations of a time x, the hover dots
+            if (!exTh) ths.filter((t) => t.kind !== "band").forEach((t) => {
+                const a = axes.get(t.axis);
+                if (!a) return;
+                const vp = vpos(a, t.value);
                 if (vp < 0 || vp > valLen) return;
                 const [x0, y0] = xy(0, vp), [x1, y1] = xy(catLen, vp);
                 ctx.save();
-                ctx.strokeStyle = refColor(r); ctx.lineWidth = this._num(r.width, 1.5); ctx.setLineDash(dashOf(r.dash || "dashed")); ctx.globalAlpha = Number.isFinite(r.opacity) ? r.opacity : 1;
+                ctx.strokeStyle = t.color; ctx.lineWidth = 1.5; ctx.setLineDash(dashOf(t.dash || "dashed"));
                 ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
                 ctx.setLineDash([]);
-                if (r.label) { ctx.fillStyle = refColor(r); ctx.font = `${fs}px ${font}`; ctx.textAlign = "right"; ctx.textBaseline = "bottom"; ctx.fillText(r.label, horizontal ? x0 - 4 : x1 - 4, horizontal ? plotY + 12 : y0 - 3); }
+                if (t.label) { ctx.fillStyle = t.color; ctx.font = `${fs}px ${font}`; ctx.textAlign = "right"; ctx.textBaseline = "bottom"; ctx.fillText(t.label, horizontal ? x0 - 4 : x1 - 4, horizontal ? plotY + 12 : y0 - 3); }
                 ctx.restore();
             });
             if (time) {
@@ -1173,27 +1175,49 @@ export const cartesianChart = defineUI({
                 ctx.beginPath(); ctx.fillStyle = d.color; ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.arc(x, y, 4.5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
             });
 
-            // -- data labels
+            // -- data labels, then the stack totals
+            const ls = numOr(this.p.labelSize, 11), lc = this._tok(this.p.labelColor);
             if (labelDraw.length) {
-                const ls = numOr(this.p.labelSize, 11), lc = this._tok(this.p.labelColor);
                 ctx.save();
                 ctx.font = `${ls}px ${font}`;
+                const show = this.p.labelShow || "value";
                 labelDraw.forEach((d) => {
-                    const text = this._fmt(d.v, d.s);
+                    const pctText = Number.isFinite(d.pct) ? formatValue(d.pct * 100, { decimals: 0, separators: "dot" }) + "%" : "";
+                    const text = d.line || show === "value" || !pctText ? this._fmt(d.v, d.s) : show === "percent" ? pctText : this._fmt(d.v, d.s) + " · " + pctText;
                     let pos = this.p.labelPos || "auto";
                     if (pos === "auto") pos = d.stacked ? "center" : "outside";
                     let tx, ty, inside = false;
+                    const tw = ctx.measureText(text).width;
                     if (d.line) { tx = d.x; ty = d.y - 8; ctx.textAlign = "center"; ctx.textBaseline = "middle"; }
                     else if (horizontal) {
-                        if (pos === "outside") { tx = d.x + d.w + 4; ctx.textAlign = "left"; } else if (pos === "inside") { tx = d.x + d.w - 4; ctx.textAlign = "right"; inside = true; } else { tx = d.x + d.w / 2; ctx.textAlign = "center"; inside = true; }
+                        if (pos === "outside") { tx = d.x + d.w + 4; ctx.textAlign = "left"; } else if (pos === "inside") { tx = d.x + d.w - 4; ctx.textAlign = "right"; inside = true; }
+                        else if (pos === "base") { tx = d.x + 4; ctx.textAlign = "left"; inside = true; } else { tx = d.x + d.w / 2; ctx.textAlign = "center"; inside = true; }
                         ty = d.y + d.h / 2; ctx.textBaseline = "middle";
+                        if (inside && d.w < tw + 6) return;
                     } else {
                         tx = d.x + d.w / 2; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-                        if (pos === "outside") ty = d.y - 8; else if (pos === "inside") { ty = d.y + 9; inside = true; } else { ty = d.y + d.h / 2; inside = true; }
+                        if (pos === "outside") ty = d.y - 8; else if (pos === "inside") { ty = d.y + 9; inside = true; } else if (pos === "base") { ty = d.y + d.h - 9; inside = true; } else { ty = d.y + d.h / 2; inside = true; }
+                        if (inside && (d.h < ls + 4 || d.w < tw + 2)) return;
                     }
-                    if (inside && (horizontal ? d.w : d.h) < ls + 4) return;
-                    ctx.fillStyle = lc || (inside ? this._contrast(d.color) : strong);
+                    ctx.fillStyle = lc || (inside ? this._onColor(d.color) : strong);
                     ctx.fillText(text, tx, ty);
+                });
+                ctx.restore();
+            }
+            if (totals && stackTops.size) {
+                ctx.save();
+                ctx.font = `600 ${ls}px ${font}`;
+                ctx.fillStyle = strong;
+                const sg = groups.find((g) => g.id === "stack"), a = axes.get(sg.axisId) || axisList[0];
+                stackTops.forEach((e, i) => {
+                    const ref = colSeries.find((s) => groupOf.get(s._key).id === "stack");
+                    const text = this._fmt(e.sum, ref);
+                    // only where it fits above its column (a time x of many narrow columns: none)
+                    if (!horizontal && ctx.measureText(text).width > each + inner + 2) return;
+                    const vv = vpos(a, e.sum >= 0 ? e.pos : e.neg);
+                    const [x, y] = xy(e.c0 + each / 2, vv);
+                    if (horizontal) { ctx.textAlign = e.sum >= 0 ? "left" : "right"; ctx.textBaseline = "middle"; ctx.fillText(text, x + (e.sum >= 0 ? 4 : -4), y); }
+                    else { ctx.textAlign = "center"; ctx.textBaseline = e.sum >= 0 ? "bottom" : "top"; ctx.fillText(text, x, y + (e.sum >= 0 ? -3 : 3)); }
                 });
                 ctx.restore();
             }
@@ -1208,13 +1232,13 @@ export const cartesianChart = defineUI({
             } else if (showCat) {
                 ctx.fillStyle = this._tok(this.p.xLabelColor) || txt;
                 const every = this._labelEvery(catLabels, ctx, catLen, horizontal, xRot);
-                if (f.xType === "category") {
+                if (al.cats) {
                     for (let i = 0; i < n; i += every) {
                         const t = catLabels[i];
                         if (!t) continue;
                         const cc = cpos(al.xs[i]);
                         if (cc < 0 || cc > catLen) continue;
-                        if (horizontal) { const [, yy] = xy(cc, 0); ctx.textAlign = "right"; ctx.textBaseline = "middle"; ctx.fillText(this._clip(ctx, t, plotX - 12), plotX - 6, yy); }
+                        if (horizontal) { const [, yy] = xy(cc, 0); ctx.textAlign = "right"; ctx.textBaseline = "middle"; ctx.fillText(this._fit(ctx, t, plotX - 12), plotX - 6, yy); }
                         else {
                             const [x] = xy(cc, 0);
                             if (xRot) { ctx.save(); ctx.translate(x, plotY + plotH + 8); ctx.rotate((xRot * Math.PI) / 180); ctx.textAlign = "left"; ctx.textBaseline = "middle"; ctx.fillText(t, 0, 0); ctx.restore(); }
@@ -1252,8 +1276,13 @@ export const cartesianChart = defineUI({
             });
             ctx.restore();
 
-            // what a pointer needs
-            this._geo = { w, h, plotX, plotY, plotW, plotH, horizontal, time, n: slots.n, dom, kx, cpos, slotLen, vis, stackOf, axes, axisOf, groupOf, slots, lines, catLabels, xy, vpos, catLen, al, valLen };
+            // what a pointer needs; the legend's values and place
+            this._geo = { w, h, plotX, plotY, plotW, plotH, horizontal, time, n: slots.n, dom, kx, cpos, slotLen, vis, stackOf, axes, axisOf, groupOf, slots, lines, catLabels, xy, vpos, catLen, al, valLen, groupW, each, place };
+            if (!this._exporting) {
+                const byKey = new Map(vis.map((s) => [s._key, s]));
+                fillLegend(this.renderRoot, (key, k) => { const s = byKey.get(key); return s ? this._legendStat(s, k) : ""; });
+                if (legendPlace(this.p).inside) placeInsideLegend(this._plotEl(), m, w, h);
+            }
         }
 
         // the highlight under the pointer: { x (data units), slot (a column), dots: [{ x, v, axis, color }] }
@@ -1269,53 +1298,23 @@ export const cartesianChart = defineUI({
             return { x: slots.xs[hi.i], slot: true, dots: [] };
         }
 
-        // a stacked / overlapping area: gradient (or solid) fill between its two edges, its top edge as the line
-        _drawStackedArea(ctx, s, st, slots, cpos, vpos, xy, a, color, mode) {
-            const lw = this._num(s.width, numOr(this.p.lineWidth, 2)), curve = this._curveOf(s);
-            const top = [], low = [];
-            for (let i = 0; i < slots.n; i++) {
-                if (!(st.hi[i] === st.hi[i]) || !(st.lo[i] === st.lo[i])) continue;
-                top.push(xy(cpos(slots.xs[i]), vpos(a, st.hi[i]))); low.push(xy(cpos(slots.xs[i]), vpos(a, st.lo[i])));
-            }
-            if (top.length < 1) return;
-            const tx = Float64Array.from(top, (p) => p[0]), ty = Float64Array.from(top, (p) => p[1]), lx = Float64Array.from(low, (p) => p[0]), ly = Float64Array.from(low, (p) => p[1]);
-            const stacked = mode === "stacked" || mode === "percent";
-            const fillKind = s.fill || (stacked ? "solid" : (this.p.areaFill || "gradient"));
-            if (fillKind !== "none" && top.length > 1) {
-                const fo = this._num(s.fillOpacity, numOr(this.p.fillOpacity, 0.3));
-                if (fillKind === "gradient" && !stacked) {
-                    const gr = ctx.createLinearGradient(0, Math.min(...ty), 0, Math.max(...ly));
-                    gr.addColorStop(0, this.hexToRgba(color, fo)); gr.addColorStop(1, this.hexToRgba(color, 0.01));
-                    ctx.fillStyle = gr;
-                } else ctx.fillStyle = this.hexToRgba(color, stacked ? Math.max(fo, 0.6) : fo);
-                ctx.beginPath();
-                this._edge(ctx, tx, ty, top.length, curve, false);
-                this._edge(ctx, lx, ly, low.length, curve, true);
-                ctx.closePath(); ctx.fill();
-            }
-            ctx.strokeStyle = color; ctx.lineWidth = lw; ctx.lineJoin = "round"; ctx.lineCap = "round"; ctx.setLineDash(dashOf(s.dash));
-            ctx.beginPath(); this._edge(ctx, tx, ty, top.length, curve, false); ctx.stroke(); ctx.setLineDash([]);
-        }
-
-        // an edge of points as a path: straight or a monotone curve, forwards (moveTo first) or backwards (the lower edge of an area)
-        _edge(ctx, xs, ys, n, curve, backwards) {
+        // an edge of points as a path: straight or a monotone curve
+        _edge(ctx, xs, ys, n, curve) {
             if (!n) return;
-            if (!backwards) ctx.moveTo(xs[0], ys[0]); else ctx.lineTo(xs[n - 1], ys[n - 1]);
+            ctx.moveTo(xs[0], ys[0]);
             if (n < 2) return;
             if (curve === "smooth" && n > 2) {
                 const seg = monotoneSegments(xs, ys, n);
-                if (!backwards) for (let k = 0; k < n - 1; k++) { const o = k * 6; ctx.bezierCurveTo(seg[o], seg[o + 1], seg[o + 2], seg[o + 3], seg[o + 4], seg[o + 5]); }
-                else for (let k = n - 2; k >= 0; k--) { const o = k * 6; ctx.bezierCurveTo(seg[o + 2], seg[o + 3], seg[o], seg[o + 1], xs[k], ys[k]); }
-            } else if (!backwards) for (let i = 1; i < n; i++) ctx.lineTo(xs[i], ys[i]);
-            else for (let i = n - 2; i >= 0; i--) ctx.lineTo(xs[i], ys[i]);
+                for (let k = 0; k < n - 1; k++) { const o = k * 6; ctx.bezierCurveTo(seg[o], seg[o + 1], seg[o + 2], seg[o + 3], seg[o + 4], seg[o + 5]); }
+            } else for (let i = 1; i < n; i++) ctx.lineTo(xs[i], ys[i]);
         }
 
-        // a line / step / area / points series from its own points (data units): { x, y, n }
-        _drawLine(ctx, s, ln, mk, g) {
+        // a line series from its own points (data units): { x, y, n }
+        _drawLine(ctx, s, ln, g) {
             const { cpos, vpos, xy, a, color, plotY, plotH, labelDraw, labelsOn, time, horizontal } = g;
-            const lw = this._num(s.width, numOr(this.p.lineWidth, 2)), curve = mk === "step" ? "step" : this._curveOf(s);
+            const lw = this._num(s.width, numOr(this.p.lineWidth, 2)), curve = this._curveOf(s);
             // points -> canvas, runs broken at a NaN (a category x) or a gap (a time x: gapAfter)
-            const gap = time ? numOr(s.gapAfter, 0) : 0, connect = time || this._frame.xType !== "category";
+            const gap = time ? numOr(s.gapAfter, 0) : 0, connect = time || !this._align().cats;
             const runs = [];
             let cur = null;
             for (let i = 0; i < ln.n; i++) {
@@ -1326,37 +1325,33 @@ export const cartesianChart = defineUI({
                 cur.xs.push(p[0]); cur.ys.push(p[1]); cur.vs.push(yv); cur.lastX = ln.x[i];
             }
             const baseV = vpos(a, Math.max(a.lo, Math.min(0, a.hi)));
-            const fillKind = mk === "point" ? "none" : (s.fill || (mk === "area" ? (this.p.areaFill || "gradient") : "none"));
-            const trace = (r, fwd) => {
+            const trace = (r) => {
                 if (curve === "step") { const pts = stepPoints(r.xs, r.ys, r.xs.length, "after"); ctx.moveTo(pts[0], pts[1]); for (let i = 2; i < pts.length; i += 2) ctx.lineTo(pts[i], pts[i + 1]); }
-                else this._edge(ctx, Float64Array.from(r.xs), Float64Array.from(r.ys), r.xs.length, curve, false);
+                else this._edge(ctx, Float64Array.from(r.xs), Float64Array.from(r.ys), r.xs.length, curve);
             };
-            if (fillKind !== "none" && !horizontal) {
-                const fo = this._num(s.fillOpacity, numOr(this.p.fillOpacity, 0.3));
+            if (s.fill && s.fill !== "none" && !horizontal) {
                 const base = plotY + plotH - baseV;
-                if (fillKind === "gradient") { const gr = ctx.createLinearGradient(0, plotY, 0, plotY + plotH); gr.addColorStop(0, this.hexToRgba(color, fo)); gr.addColorStop(1, this.hexToRgba(color, 0.01)); ctx.fillStyle = gr; }
-                else ctx.fillStyle = this.hexToRgba(color, fo);
+                if (s.fill === "gradient") { const gr = ctx.createLinearGradient(0, plotY, 0, plotY + plotH); gr.addColorStop(0, this.hexToRgba(color, 0.3)); gr.addColorStop(1, this.hexToRgba(color, 0.01)); ctx.fillStyle = gr; }
+                else ctx.fillStyle = this.hexToRgba(color, 0.3);
                 runs.forEach((r) => {
                     if (r.xs.length < 2) return;
                     ctx.beginPath(); trace(r);
                     ctx.lineTo(r.xs[r.xs.length - 1], base); ctx.lineTo(r.xs[0], base); ctx.closePath(); ctx.fill();
                 });
             }
-            if (mk !== "point") {
-                ctx.strokeStyle = color; ctx.lineWidth = lw; ctx.lineJoin = "round"; ctx.lineCap = "round"; ctx.setLineDash(dashOf(s.dash));
-                runs.forEach((r) => {
-                    if (r.xs.length === 1) { ctx.fillStyle = color; ctx.beginPath(); ctx.arc(r.xs[0], r.ys[0], Math.max(3, lw * 1.5), 0, Math.PI * 2); ctx.fill(); return; }
-                    ctx.beginPath(); trace(r); ctx.stroke();
-                });
-                ctx.setLineDash([]);
-            }
-            const showPts = mk === "point" || s.points === "on" || (s.points !== "off" && !!this.p.markers);
-            const size = this._num(s.pointSize, numOr(this.p.pointSize, 4)) + (mk === "point" ? 1 : 0);
-            if (showPts && ln.n <= 5000) runs.forEach((r) => r.xs.forEach((x, i) => this._marker(ctx, s.pointShape, x, r.ys[i], size, color)));
+            ctx.strokeStyle = color; ctx.lineWidth = lw; ctx.lineJoin = "round"; ctx.lineCap = "round"; ctx.setLineDash(dashOf(s.dash));
+            runs.forEach((r) => {
+                if (r.xs.length === 1) { ctx.fillStyle = color; ctx.beginPath(); ctx.arc(r.xs[0], r.ys[0], Math.max(3, lw * 1.5), 0, Math.PI * 2); ctx.fill(); return; }
+                ctx.beginPath(); trace(r); ctx.stroke();
+            });
+            ctx.setLineDash([]);
+            const showPts = s.points === "on" || (s.points !== "off" && this.p.markers !== false);
+            const size = numOr(this.p.pointSize, 3.5);
+            if (showPts && ln.n <= 400) runs.forEach((r) => r.xs.forEach((x, i) => this._marker(ctx, s.pointShape, x, r.ys[i], size, color)));
             if (labelsOn(s) && ln.n <= 400) runs.forEach((r) => r.xs.forEach((x, i) => labelDraw.push({ s, x, y: r.ys[i], w: 0, h: 0, v: r.vs[i], color, line: true })));
         }
 
-        // the end of a pile in category i: no other series of the same pile reaches further out (its end is the rounded one)
+        // the end of a pile in category i: no other column of the pile reaches further out (its end is the rounded one)
         _isTop(list, s, i, stackOf, hiV) {
             const mine = stackOf.get(s._key);
             if (!mine) return true;
@@ -1366,12 +1361,6 @@ export const cartesianChart = defineUI({
                 if (!st || !(st.hi[i] === st.hi[i]) || st.hi[i] === st.lo[i]) return false;
                 return hiV >= 0 ? st.hi[i] > mine.hi[i] + 1e-9 : st.lo[i] < mine.lo[i] - 1e-9;
             });
-        }
-
-        _references() {
-            return (Array.isArray(this.p.references) ? this.p.references : []).filter((r) => r && typeof r === "object")
-                .map((r) => ({ kind: r.kind === "band" ? "band" : "line", axis: r.axis || "", value: numOr(r.value, NaN), to: numOr(r.to, NaN), label: r.label || "", color: r.color, dash: r.dash, width: numOr(r.width, 1.5), opacity: numOr(r.opacity, NaN) }))
-                .filter((r) => Number.isFinite(r.value));
         }
 
         _marker(ctx, shape, x, y, r, color) {
@@ -1384,16 +1373,7 @@ export const cartesianChart = defineUI({
             ctx.fill(); ctx.stroke();
         }
 
-        // black or white text on a colour (the data label inside a column)
-        _contrast(color) {
-            const m = /^#?([0-9a-f]{6})$/i.exec(String(color || "").trim());
-            let r = 0, g = 0, b = 0;
-            if (m) { const n = parseInt(m[1], 16); r = n >> 16 & 255; g = n >> 8 & 255; b = n & 255; }
-            else { const c = String(color).match(/\d+/g); if (c) { r = +c[0]; g = +c[1]; b = +c[2]; } }
-            return (r * 299 + g * 587 + b * 114) / 1000 > 150 ? "#161616" : "#ffffff";
-        }
-
-        _clip(ctx, t, maxW) {
+        _fit(ctx, t, maxW) {
             if (ctx.measureText(t).width <= maxW) return t;
             let s = t;
             while (s.length > 1 && ctx.measureText(s + "…").width > maxW) s = s.slice(0, -1);
@@ -1425,7 +1405,7 @@ export const cartesianChart = defineUI({
             return best;
         }
 
-        // the series whose mark is under the pointer in slot i (nearest in value)
+        // the series whose mark is under the pointer in slot i: a column whose box holds it, else the nearest in value
         _seriesAt(L, i) {
             const g = this._geo;
             let best = null, bd = Infinity;
@@ -1433,7 +1413,12 @@ export const cartesianChart = defineUI({
                 const ycol = g.slots.cols.get(s._data.key); if (!ycol) return;
                 const y = ycol[i]; if (!(y === y)) return;
                 const st = g.stackOf.get(s._key), a = g.axes.get(g.axisOf.get(s._key)); if (!a) return;
-                const v = st ? (st.lo[i] + st.hi[i]) / 2 : y;
+                const along = g.horizontal ? L.y - g.plotY : L.x - g.plotX;
+                if (this._markOf(s) === "column" && st) {
+                    const c0 = g.cpos(g.slots.xs[i]) - g.groupW / 2 + (g.place.get(s._key) || 0) * (g.each + numOr(this.p.barGap, 2));
+                    if (along < c0 || along > c0 + g.each) return;
+                }
+                const v = st && this._markOf(s) === "column" ? (st.lo[i] + st.hi[i]) / 2 : st && g.groupOf.get(s._key).id === "stack" ? st.hi[i] : y;
                 const p = g.xy(g.cpos(g.slots.xs[i]), g.vpos(a, v)), d = g.horizontal ? Math.abs(p[0] - L.x) : Math.abs(p[1] - L.y);
                 if (d < bd) { bd = d; best = s; }
             });
@@ -1461,27 +1446,30 @@ export const cartesianChart = defineUI({
             this._lastHover = now;
             const g = this._geo, values = {};
             this._visible().forEach((s) => { const y = g.slots.cols.get(s._data.key); if (y && y[i] === y[i]) values[s.id || s.name] = y[i]; });
-            this.emit("hover", { x: this._frame.xType === "category" ? this._frame.cats[i] : g.slots.xs[i], values });
+            this.emit("hover", { x: this._xValue(i), values });
         }
 
         // the tooltip of a category / number x
         _showPlain(L, i, single) {
-            const g = this._geo, f = this._frame;
-            const xText = f.xType === "category" ? this._xLabel(i) : formatValue(g.slots.xs[i], { notation: "standard", decimals: "auto" }, "");
+            const g = this._geo;
             const list = single ? [single] : g.vis;
-            const piled = !single && g.groups_piled !== false && Array.from(g.groupOf.values()).some((x) => x.mode === "stacked" || x.mode === "percent");
-            this._fillTooltip(L.x, L.y, xText, list.map((s) => ({ s, v: g.slots.cols.get(s._data.key)[i] })), piled);
+            this._fillTooltip(L.x, L.y, this._xLabel(i), list.map((s) => ({ s, v: g.slots.cols.get(s._data.key)[i] })), !single && this._stacks());
         }
 
-        // rows [{ s, v }] into the tooltip (a Line Chart tooltip: its time / label line, a swatch + text per series)
+        // rows [{ s, v }] into the tooltip (a Line Chart tooltip: its label line, a swatch + text per series); total: of the stack's columns
         _fillTooltip(px, py, title, rows, total) {
             const tip = this.renderRoot.querySelector(".tooltip");
             if (!tip) return;
             const shown = rows.filter((r) => r.v === r.v);
             if (!shown.length || this.p.tooltipShows === "off") { tip.style.display = "none"; return; }
-            let sum = 0;
-            const body = shown.map((r) => { sum += r.v; return `<div class="tooltip-row"><span class="tooltip-dot" style="background:${this.colorOf(r.s)}"></span><span class="tooltip-name">${this._esc(r.s.name || r.s.id)}</span><span class="tooltip-val">${this._esc(this._fmt(r.v, r.s))}</span></div>`; }).join("");
-            tip.innerHTML = `<div class="tooltip-time">${this._esc(title)}</div><div class="tooltip-rows">${body}${total && shown.length > 1 ? `<div class="tooltip-row" style="border-top:1px solid var(--bd);margin-top:3px;padding-top:3px"><span class="tooltip-name">Total</span><span class="tooltip-val">${this._esc(this._fmt(sum, shown[0].s))}</span></div>` : ""}</div>`;
+            let sum = 0, inSum = 0;
+            const body = shown.map((r) => {
+                if (total && this._inStack(r.s) && this._markOf(r.s) === "column") { sum += r.v; inSum++; }
+                const tag = this._markOf(r.s) === "target" ? " (target)" : "";
+                return `<div class="tooltip-row"><span class="tooltip-dot" style="background:${this.colorOf(r.s)}"></span><span class="tooltip-name">${this._esc((r.s.name || r.s.id) + tag)}</span><span class="tooltip-val">${this._esc(this._fmt(r.v, r.s))}</span></div>`;
+            }).join("");
+            const ref = shown.find((r) => this._inStack(r.s)) || shown[0];
+            tip.innerHTML = `<div class="tooltip-time">${this._esc(title)}</div><div class="tooltip-rows">${body}${total && inSum > 1 ? `<div class="tooltip-row" style="border-top:1px solid var(--bd);margin-top:3px;padding-top:3px"><span class="tooltip-name">Total</span><span class="tooltip-val">${this._esc(this._fmt(sum, ref.s))}</span></div>` : ""}</div>`;
             tip.style.display = "block";
             const plot = this._plotEl(), tw = tip.offsetWidth, th = tip.offsetHeight;
             let tx = px + 14, ty = py + 14;
@@ -1499,8 +1487,7 @@ export const cartesianChart = defineUI({
             if (i < 0) return;
             const s = this._seriesAt(L, i);
             if (!s) return;
-            const f = this._frame;
-            this.emit("pointClick", { x: f.xType === "category" ? f.cats[i] : this._geo.slots.xs[i], y: this._geo.slots.cols.get(s._data.key)[i], index: i, series: s.id || s.name }, this._target(s));
+            this.emit("pointClick", { x: this._xValue(i), y: this._geo.slots.cols.get(s._data.key)[i], index: i, series: s.id || s.name }, this._target(s));
         }
 
         // a time x ------------------------------------------------------------------------------------
@@ -1516,7 +1503,7 @@ export const cartesianChart = defineUI({
                 if (g.slots.cols.has(s._data.key)) {
                     if (si < 0) return;
                     const y = g.slots.cols.get(s._data.key)[si], st = g.stackOf.get(s._key);
-                    if (y === y) hits.push({ s, x: g.slots.xs[si], y, top: st ? st.hi[si] : y, slot: true });
+                    if (y === y) hits.push({ s, x: g.slots.xs[si], y, top: st ? st.hi[si] : y, slot: this._markOf(s) !== "line" });
                     return;
                 }
                 const buf = this._buf(s); if (!buf) return;
@@ -1554,10 +1541,9 @@ export const cartesianChart = defineUI({
         _showHitsTooltip(px, py, rectW) {
             const tip = this.renderRoot.querySelector(".tooltip");
             if (!tip) return;
-            const h = this.hover, g = this._geo;
+            const h = this.hover;
             if (!h || !h.hits.length || this.p.tooltipShows === "off") { tip.style.display = "none"; return; }
-            const piled = g && h.hits.length > 1 && h.hits.every((x) => x.slot) && h.hits.some((x) => { const gr = g.groupOf.get(x.s._key); return gr && (gr.mode === "stacked" || gr.mode === "percent"); });
-            this._fillTooltip(px, py, this.fmtTime(h.time), h.hits.map((x) => ({ s: x.s, v: x.y })), piled);
+            this._fillTooltip(px, py, this.fmtTime(h.time), h.hits.map((x) => ({ s: x.s, v: x.y })), this._stacks());
             // beside the cursor, flipped near the right edge (as the Line Chart's)
             const flip = px > rectW - 200;
             tip.style.left = `${Math.round(flip ? px - 12 : px + 12)}px`;
@@ -1569,33 +1555,33 @@ export const cartesianChart = defineUI({
         _table(range) {
             const vis = this.seriesList().filter((s) => s.visible !== false && !this._hidden.has(s._key) && this._has(s));
             if (this._time()) {
-                const span = this._exportSpan(range || this.p.exportRange || "visible");
+                const span = this._exportSpan(range || "visible");
                 const set = new Set();
                 vis.forEach((s) => { const b = this._buf(s); for (let i = 0; i < b.count; i++) { const x = b.getX(i); if (x >= span.from && x <= span.to) set.add(x); } });
                 const xs = Array.from(set).sort((a, b) => a - b), at = new Map();
                 xs.forEach((x, i) => at.set(x, i));
                 const cols = vis.map((s) => { const y = new Array(xs.length).fill(""); const b = this._buf(s); for (let i = 0; i < b.count; i++) { const k = at.get(b.getX(i)); if (k !== undefined) y[k] = b.getY(i); } return y; });
-                return { head: ["Time"].concat(vis.map((s) => s.name || s.id)), rows: xs.map((x, i) => [new Date(x).toISOString()].concat(cols.map((c) => c[i]))) };
+                return { head: ["Time"].concat(vis.map((s) => s.name || s.id)), rows: xs.map((x, i) => [x].concat(cols.map((c) => c[i]))), time: true };
             }
-            const f = this._frame, al = this._align();
+            const al = this._align();
             const head = [this.p.xField || "x"].concat(vis.map((s) => s.name || s.id));
             const rows = [];
-            for (let i = 0; i < al.xs.length; i++) rows.push([f.xType === "category" ? f.cats[i] : al.xs[i]].concat(vis.map((s) => { const v = this._col(s)[i]; return v === v ? v : ""; })));
-            return { head, rows };
+            for (let i = 0; i < al.xs.length; i++) rows.push([al.cats ? al.cats[i] : al.xs[i]].concat(vis.map((s) => { const v = this._col(s)[i]; return v === v ? v : ""; })));
+            return { head, rows, time: false };
         }
 
         exportData(params) {
-            const P = params && typeof params === "object" ? params : { format: params };
-            const fmt = String(P.format || "csv").toLowerCase();
-            if (fmt === "png") return this.exportPNG(P);
-            const { head, rows } = this._table(P.range);
+            const o = this._exportOpts(params);
+            if (o.format === "png") return this.exportPNG(params);
+            const { head, rows, time } = this._table(o.range);
             let blob;
-            if (fmt === "xlsx") blob = xlsxBlob(head, rows, this.p.timeZone === "utc", { textCols: [0] });
+            if (o.format === "xlsx") blob = xlsxBlob(head, rows, this.p.timeZone === "utc", time ? { timeCols: [0] } : { textCols: [0] });
             else {
                 const q = (t) => '"' + String(t).replace(/"/g, '""') + '"';
-                blob = new Blob(["﻿" + [head.map(q).join(",")].concat(rows.map((r) => r.map((v) => (typeof v === "number" ? String(v) : q(v))).join(","))).join("\r\n")], { type: "text/csv;charset=utf-8" });
+                const cell = (v, c) => (time && c === 0 ? new Date(v).toISOString() : typeof v === "number" ? String(v) : q(v));
+                blob = new Blob(["﻿" + [head.map(q).join(",")].concat(rows.map((r) => r.map(cell).join(","))).join("\r\n")], { type: "text/csv;charset=utf-8" });
             }
-            const name = this._getExportFileName(fmt === "xlsx" ? "xlsx" : "csv", P.range || "all");
+            const name = this._getExportFileName(o.format === "xlsx" ? "xlsx" : "csv", o.range || "all");
             this._download(blob, name);
             this._lastExport = { name, blob, rows: rows.length };
             return rows.length;
@@ -1603,21 +1589,21 @@ export const cartesianChart = defineUI({
 
         // ---- the view -----------------------------------------------------------------------------
         render() {
-            const p = this.p, at = p.legend || "bottom", time = this._time();
+            const p = this.p, time = this._time();
+            const { at, inside } = legendPlace(p);
             const list = this.seriesList().filter((s) => s.legend !== false && (s._data || (Array.isArray(p.series) && p.series.length)));
-            const inside = at.indexOf("inside") === 0, vertical = at === "left" || at === "right";
-            const legend = at === "none" || !list.length ? "" : html`
-                <div class="legend ${vertical ? "v" : ""} ${inside ? "inside " + at.slice(7) : ""}" part="legend" style="--lg-size:${numOr(p.legendSize, 12)}px">
-                    ${list.map((s) => html`<button type="button" class="lg-item ${this._hidden.has(s._key) || s.visible === false ? "off" : ""}" title="Click: show / hide. Alt+click: only this one." @click=${(e) => this._toggle(s, e)}>
-                        <span class="lg-swatch ${this._markOf(s) === "column" || this._markOf(s) === "area" ? "sw-sq" : this._markOf(s) === "point" ? "sw-dot" : ""}" style="background:${this.colorOf(s)}"></span><span class="lg-name">${s.name || s.id}</span>${p.legendValue && p.legendValue !== "none" ? html`<span class="lg-val">${this._legendValue(s)}</span>` : ""}
-                    </button>`)}
-                </div>`;
+            const legend = legendTemplate(p, list.map((s) => ({
+                key: s._key, name: s.name || s.id, color: this.colorOf(s), off: this._hidden.has(s._key) || s.visible === false,
+                swatch: this._markOf(s) === "column" ? "square" : "line"
+            })), (e, ev) => { const s = list.find((x) => x._key === e.key); if (s) this._toggle(s, ev); }, { stats: COL_STATS });
             const bg = this._tok(p.background);
             const style = `${bg ? "background:" + bg + ";" : ""}${p.border === false ? "border-color:transparent;" : ""}${this._textColor() ? "--fg:" + this._textColor() + ";" : ""}--ct-size:${numOr(p.titleSize, 14)}px`;
             const empty = !this._hasAny() && !(this._frame.series.length);
+            const bar = time ? this._renderRangeBar() : "";
             return html`
                 <div class="chart-container" part="chart" style=${style}>
                     ${p.title || p.subtitle ? html`<div class="c-head" style="text-align:${p.titleAlign || "left"}">${p.title ? html`<div class="c-title">${p.title}</div>` : ""}${p.subtitle ? html`<div class="c-sub">${p.subtitle}</div>` : ""}</div>` : ""}
+                    ${bar}
                     ${at === "top" ? legend : ""}
                     <div class="c-main">
                         ${at === "left" ? legend : ""}
@@ -1632,7 +1618,7 @@ export const cartesianChart = defineUI({
                             @click=${(e) => this.onPlotClick(e)}>
                             <canvas></canvas>
                             <div class="corner" style="right:${this._scale && this._scale.m ? this._scale.m.padRight + 6 : 14}px">
-                                ${time && this.viewRange ? html`<button class="btn-chip btn-reset-zoom" @click=${() => this.followLive()} title="Follow the newest data again (or double click the chart)"><span class="live-dot"></span> Reset Zoom</button>` : ""}
+                                ${time && this.viewRange && !bar ? html`<button class="btn-chip btn-reset-zoom" @click=${() => this.followLive()} title="Follow the newest data again (or double click the chart)"><span class="live-dot"></span> Reset Zoom</button>` : ""}
                                 ${this._renderMenu()}
                             </div>
                             <div class="tooltip" style="display:none"></div>
