@@ -550,27 +550,28 @@ return msg;
 
 ---
 
-### Sparkline (`nexa-ui-sparkline`)
+### KPI / Stat (`nexa-ui-kpi`)
 
-Compact micro-trend chart designed for space-constrained interfaces: KPI stat cards, table rows, equipment summary tiles, and status headers.
+Big values with their context (ISA-101: a value is never shown alone), one **tile** per value: a row of energy KPIs (kWh today, peak kW, power factor, cost), the output of a line against its plan. It replaces the old Sparkline (a KPI with the value hidden is a sparkline).
 
-**Types (`type`)**:
-- **Area (`area`)**: smooth filled micro-area trend with soft gradient baseline.
-- **Line (`line`)**: sharp, minimalist trend stroke.
-- **Bar (`bar`)**: micro vertical columns for discrete intervals or periodic deltas.
+**A tile is a Logic target** (its own Update node, message and events), like a series of the Line Chart:
+- **its value:** a **Live value** (a tag; every new value is a point, kept in a Float64 ring), or its Update node: **Set value** (`21.5` or `{ x, y }`), **Set history** (`[{ x, y }]`), **Clear**;
+- **the figure shown:** the last value, or the **average / min / max / sum / change / count over a window** (the last 15 min, hour, shift, 24 h, 7 days);
+- **numbers:** unit (drawn smaller after the value), notation, decimals, **value texts** (`0=Off, 1=Run`);
+- **delta ▲▼:** against the previous value, **the same figure some time ago** (a 24 h sum against the 24 h before), or the target; as a % or a value; *up is good* (green) or bad (red);
+- **context:** a **target** with a progress bar (`79 % of 12,000 pcs`), a **setpoint** (dashed on the sparkline), a **normal band** (shaded on the sparkline; outside it is a warning when there are no thresholds);
+- **sparkline:** area / line / bars / none over the window, on a **fixed scale** when set (0 – 100 for a %: a small change looks small);
+- **stale:** no data for N ms: the tile fades, *Stale · 5m*;
+- **events:** **On Tile Click** `{ value, name }`, **On State Change** `{ from, to, value }` (into another threshold step), **On Stale** / **On Resume**.
 
-**Smart Visual Highlights**:
-- **Dynamic Trend Coloring (`trendColor: true`)**: automatically styles the sparkline with success green (`#10b981`) if the overall trend is ascending ($Y_{last} \ge Y_{first}$) or danger red (`#ef4444`) if descending.
-- **End Value Glow Dot (`showLastDot: true`)**: glowing accent marker at the latest point.
-- **Min / Max Peak Markers (`showMinMax: true`)**: subtle indicator dots on the lowest and highest values in the sequence.
-- **Micro Tooltip**: lightweight floating tooltip showing point value and index on hover.
+**The chart:**
+- **Layout:** columns (0 = as many as fit, a tile at least 180 px), the space between tiles, a tile = the value **above** its sparkline, **beside** it, or the sparkline **behind** it; left or centred; a frame per tile.
+- **Value:** auto-fit (as big as the tile allows) or a size, its weight; the name's size; show the name / the value (off: a sparkline only).
+- **Thresholds:** steps *from a value on* with a theme status colour (Good / Warning / Alarm / Info / Neutral) or its own colour, for one tile or every tile; **the colour goes to** the value's text, the tile's background, the sparkline only, or nothing.
+- **Export:** CSV / Excel (a row per tile: value, unit, state, what is shown), PNG.
+- In the editor an empty tile shows sample data (marked *Sample data*); a page with no data shows the tiles empty (—).
 
-**Logic Actions**:
-- `setData({ data: [10, 20, 15, 30] })` or direct array `msg.payload = [10, 15, 22, 18, 35]`.
-- `appendPoint({ value })`.
-- `clear()`.
-
-#### Sparkline Function Node Examples
+### Sparkline Function Node Examples
 
 ##### 1. Direct Numeric Array
 ```js

@@ -7,6 +7,7 @@ import { xlsxBlob } from "./export.js";
 import { TimeChartElement } from "./time-chart.js";
 import { timeProps, zoomProps, rangeBarProps, annotationProps, exportProps, timeEvents, timeActions } from "./props.js";
 import { legendProps, legendTemplate, legendPlace, fillLegend, placeInsideLegend } from "./legend.js";
+import { parseValueMap } from "./readout.js";
 
 const common = chartCommon;
 
@@ -166,18 +167,6 @@ const THRESHOLD_FIELDS = {
     dash: { type: "enum", label: "Dash", default: "dashed", options: opt([["solid", "Solid"], ["dashed", "Dashed"], ["dotted", "Dotted"]]) }
 };
 
-// "0=Off, 1=Run" -> Map(0 => "Off", 1 => "Run") (null: none)
-function parseValueMap(text) {
-    if (typeof text !== "string" || !text.trim()) return null;
-    const m = new Map();
-    for (const part of text.split(/[,;\n]+/)) {
-        const i = part.indexOf("=");
-        if (i < 1) continue;
-        const v = Number(part.slice(0, i).trim()), t = part.slice(i + 1).trim();
-        if (Number.isFinite(v) && t) m.set(v, t);
-    }
-    return m.size ? m : null;
-}
 
 export const lineChart = defineUI({
     ...common,

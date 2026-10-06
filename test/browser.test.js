@@ -19,7 +19,7 @@ async function ok(label, fn) { if (only && !only.test(label)) return; await fn()
 const P = 'nexa-ui-';
 const ALL = ['button', 'input', 'textarea', 'number-input', 'password-input', 'checkbox', 'switch', 'radio-group', 'segmented', 'select', 'combobox', 'slider', 'tags-input', 'pin-input', 'rating',
     'text', 'heading', 'badge', 'tag', 'card', 'avatar', 'stat', 'alert', 'progress', 'spinner', 'skeleton', 'separator', 'empty-state', 'timeline', 'fieldset',
-    'tabs', 'iframe', 'datetime', 'daterange', 'pagination', 'line-chart', 'state-timeline', 'column-chart', 'pie-chart', 'gauge', 'area-chart', 'sparkline', 'histogram'];
+    'tabs', 'iframe', 'datetime', 'daterange', 'pagination', 'line-chart', 'state-timeline', 'column-chart', 'pie-chart', 'gauge', 'area-chart', 'kpi', 'histogram'];
 const TAG = '{sparkplug:Plant::Line1::Mixer::Speed}';
 
 withHarness({
@@ -1581,32 +1581,68 @@ withHarness({
         assert.ok(/\.xlsx$/.test(exp.name));
     });
 
-    // ---- Sparkline --------------------------------------------------------------------------
-    const spw = (name) => `NexaTest.wc(${JSON.stringify(name)})`;
+    // ---- KPI / Stat ----------------------------------------------------------------------------
+    const kw = (name) => `NexaTest.wc(${JSON.stringify(name)})`;
+    const KT = { list: 'tiles', id: 'k1' };
 
-    await ok('Sparkline: compact trend rendering with area fill, auto trend color, and actions', async () => {
-        await mount('sp-test', 'sparkline', {
-            type: 'area',
-            trendColor: true,
-            showLastDot: true,
-            data: [10, 15, 20, 35]
-        }, { width: 160, height: 40 });
+    await ok('KPI: a tile shows its figure (last / average / sum over a window), a delta (previous, some time ago: the same figure shifted, the target), a progress to the target', async () => {
+        const now = Date.now(), M = 60000;
+        // (half a minute off the minute: no point on a window's edge)
+        const pts = Array.from({ length: 120 }, (_, i) => ({ x: now - (120 - i) * M + 30000, y: i < 60 ? 10 : 20 }));
+        await mount('kp1', 'kpi', { tiles: [{ id: 'k1', name: 'Load', unit: 'kW', reduceBy: 'avg', window: '1h', deltaFrom: 'ago', deltaAgo: '1h', deltaAs: 'value' }] }, { width: 400, height: 150 });
+        await js(`${kw('kp1')}.setHistory(${JSON.stringify(pts)}, ${JSON.stringify(KT)})`); await settle();
+        const r = await js(`(function () { var w = ${kw('kp1')}, t = w.tileList()[0], st = w._state(t); return { avg: w._figure(t, st).v, ago: w._refValue(t, st), count: st.buf.count }; })()`);
+        assert.strictEqual(r.count, 120);
+        assert.strictEqual(r.avg, 20, 'the average of the last hour');
+        assert.strictEqual(r.ago, 10, 'the same average, one hour earlier');
+        await js(`NexaTest.setProps("kp1", { tiles: [{ id: "k1", name: "Load", reduceBy: "last", deltaFrom: "previous", target: 40 }] })`); await settle();
+        await js(`${kw('kp1')}.setValue(30, ${JSON.stringify(KT)})`); await settle();
+        const d = await js(`(function () { var w = ${kw('kp1')}, t = w.tileList()[0], st = w._state(t), v = w._figure(t, st).v; return { v: v, prev: w._refValue(t, st), delta: w._delta(v, w._refValue(t, st), true, true, {}, "") }; })()`);
+        assert.deepStrictEqual([d.v, d.prev], [30, 20]);
+        assert.ok(/^▲ 50/.test(d.delta.text) && d.delta.good === true, JSON.stringify(d.delta));
+        assert.ok(await pixels('kp1') > 1500);
+    });
 
-        const pts = await js(`(function () {
-            var w = ${spw('sp-test')};
-            w.draw();
-            return { count: w._points.length, lastVal: w._points[w._points.length - 1].val };
-        })()`);
-        assert.strictEqual(pts.count, 4);
-        assert.strictEqual(pts.lastVal, 35);
+    await ok('KPI: threshold steps colour a tile (theme status colours; a step for one tile), On State Change; outside its normal band is a warning; On Tile Click; stale', async () => {
+        await mount('kp2', 'kpi', { tiles: [{ id: 'k1', name: 'Temp', normalLow: 10, normalHigh: 30 }, { id: 'k2', name: 'Peak' }],
+            thresholds: [{ from: 0, status: 'success', tile: 'k2' }, { from: 80, status: 'warning', label: 'High', tile: 'k2' }, { from: 95, status: 'error', label: 'Alarm', tile: 'k2' }] }, { width: 500, height: 150 });
+        await js(`(function () { var w = ${kw('kp2')}; w.isEditor = false; window.__kev = []; var old = w.emit.bind(w); w.emit = function (n, p, t) { window.__kev.push([n, p, t && t.id]); return old(n, p, t); }; return 1; })()`);
+        for (const v of [50, 85, 99]) await js(`${kw('kp2')}.setValue(${v}, { list: "tiles", id: "k2" })`);
+        await js(`${kw('kp2')}.setValue(40, { list: "tiles", id: "k1" })`); await settle();
+        const r = await js(`(function () { var w = ${kw('kp2')}, l = w.tileList(); return { k2: w._stateColor(l[1], 99), err: w.statusColor("error"), ok: w._stateColor(l[1], 10), good: w.statusColor("success"), k1: w._stateColor(l[0], 40), warn: w.statusColor("warning"), k1in: w._stateColor(l[0], 20),
+            ev: window.__kev.filter(function (e) { return e[0] === "stateChange"; }).map(function (e) { return e[1].from + ">" + e[1].to + "@" + e[2]; }) }; })()`);
+        assert.strictEqual(r.k2, r.err, '99: the Alarm step');
+        assert.strictEqual(r.ok, r.good);
+        assert.strictEqual(r.k1, r.warn, 'outside the normal band: a warning');
+        assert.strictEqual(r.k1in, null, 'inside it: the text colour');
+        assert.deepStrictEqual(r.ev, ['success>High@k2', 'High>Alarm@k2']);
+        await js(`(function () { var w = ${kw('kp2')}; w.draw(); var q = w._rects[1], pl = w.renderRoot.querySelector(".plot"), b = pl.getBoundingClientRect(); pl.dispatchEvent(new MouseEvent("click", { bubbles: true, clientX: b.left + q.x + q.w / 2, clientY: b.top + q.y + q.h / 2 })); return 1; })()`);
+        assert.deepStrictEqual(await js('window.__kev.filter(function (e) { return e[0] === "tileClick"; }).map(function (e) { return [e[1].value, e[2]]; })'), [[99, 'k2']], 'On Tile Click: its value, its target');
+        await js(`NexaTest.setProps("kp2", { tiles: [{ id: "k1", name: "Temp", staleAfter: 1000 }, { id: "k2", name: "Peak" }] })`); await settle();
+        await js(`(function () { var w = ${kw('kp2')}, st = w._state(w.tileList()[0]); st.lastAt = Date.now() - 5000; w._checkStale(); return 1; })()`);
+        assert.deepStrictEqual(await js('window.__kev.filter(function (e) { return e[0] === "stale"; }).map(function (e) { return e[2]; })'), ['k1'], 'On Stale');
+    });
 
-        // Append point
-        await js(`(function () {
-            var w = ${spw('sp-test')};
-            w.appendPoint(42);
-        })()`);
-        const updatedCount = await js(`${spw('sp-test')}._getData().length`);
-        assert.strictEqual(updatedCount, 5);
+    await ok('KPI: the grid of tiles (columns automatic or fixed), the arrangements, the sparkline on a fixed scale, a sparkline only; export CSV / Excel / PNG', async () => {
+        const now = Date.now();
+        const pts = Array.from({ length: 30 }, (_, i) => ({ x: now - (30 - i) * 60000, y: 50 + i }));
+        const tiles = ['a', 'b', 'c'].map((id) => ({ id, name: id.toUpperCase(), sparkMin: 0, sparkMax: 100 }));
+        await mount('kp3', 'kpi', { tiles }, { width: 900, height: 140 });
+        for (const t of tiles) await js(`${kw('kp3')}.setHistory(${JSON.stringify(pts)}, { list: "tiles", id: "${t.id}" })`);
+        await settle();
+        const g = await js(`(function () { var w = ${kw('kp3')}; w.draw(); return w._rects.map(function (q) { return [Math.round(q.x), Math.round(q.y)]; }); })()`);
+        assert.strictEqual(new Set(g.map((q) => q[1])).size, 1, 'three tiles in one row: ' + JSON.stringify(g));
+        await js(`NexaTest.setProps("kp3", { columns: 1 })`); await settle();
+        assert.strictEqual(await js(`(function () { var w = ${kw('kp3')}; w.draw(); return new Set(w._rects.map(function (q) { return Math.round(q.x); })).size; })()`), 1, 'one column: a tile under the other');
+        for (const arrangement of ['side', 'background']) { await js(`NexaTest.setProps("kp3", { arrangement: "${arrangement}", columns: 0 })`); await settle(); assert.ok(await pixels('kp3') > 2000, arrangement); }
+        await js(`NexaTest.setProps("kp3", { showValue: false, arrangement: "stack" })`); await settle();
+        assert.ok(await pixels('kp3') > 1000, 'a sparkline only');
+        assert.strictEqual(await js(`${kw('kp3')}.exportData({ format: "csv" })`), 3);
+        const csv = await js(`${kw('kp3')}._lastExport.blob.text()`);
+        assert.ok(/"Tile","Value","Unit","State"/.test(csv) && /"A",79/.test(csv), csv);
+        assert.strictEqual(await js(`${kw('kp3')}.exportData({ format: "xlsx" })`), 3);
+        const png = await js(`${kw('kp3')}.exportPNG().then(function (x) { return x && x.width; })`);
+        assert.ok(png > 0, 'a PNG');
     });
 
     // ---- Histogram --------------------------------------------------------------------------
@@ -1993,10 +2029,11 @@ withHarness({
         await js('delete window.__big; 1');
     });
 
-    await ok('Sample data (Line, State Timeline, Column): only in the editor, for the user series, marked "Sample data"; on a page with no data the chart is empty; real data drops it', async () => {
+    await ok('Sample data (Line, State Timeline, Column, KPI): only in the editor, for the user series, marked "Sample data"; on a page with no data the chart is empty; real data drops it', async () => {
         const kinds = [['line-chart', { series: [{ id: 's1', name: 'Speed' }] }, 'appendPoints', [{ x: 1727852400000, y: 3 }], { list: 'series', id: 's1' }],
             ['state-timeline', { rows: [{ id: 'r1', name: 'Filler' }] }, 'appendChange', { time: 1727852400000, state: 1 }, { list: 'rows', id: 'r1' }],
-            ['column-chart', { series: [{ id: 's1', name: 'Load' }, { id: 's2', name: 'Temp', type: 'line' }] }, 'setData', { A: 3 }, { list: 'series', id: 's1' }]];
+            ['column-chart', { series: [{ id: 's1', name: 'Load' }, { id: 's2', name: 'Temp', type: 'line' }] }, 'setData', { A: 3 }, { list: 'series', id: 's1' }],
+            ['kpi', { tiles: [{ id: 'k1', name: 'Load' }] }, 'setValue', 21.5, { list: 'tiles', id: 'k1' }]];
         for (const [id, props, action, payload, target] of kinds) {
             await mount('sd-ed-' + id, id, props, { width: 500, height: 220, design: true });
             await js('new Promise(function (r) { setTimeout(r, 150); })');

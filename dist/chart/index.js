@@ -5,5 +5,5 @@ import "./column.js";
 import "./pie.js";
 import "./gauge.js";
 import "./area.js";
-import "./sparkline.js";
+import "./kpi.js";
 import "./histogram.js";
