@@ -285,7 +285,8 @@ export const columnChart = defineUI({
         _hoverAt = null;        // category / number x: { i, key } under the cursor
         _sl = null;
         _aligned = null;
-        _demoDone = false;
+        _demoDone = false;      // real data came (or Clear every series): no sample data any more
+        _demoSig = "";          // the sample data shown now: its series ("" = none)
         _lastHover = 0;
         _lastLive = new Map();
         decimator = new M4Decimator(2048);
@@ -339,6 +340,7 @@ export const columnChart = defineUI({
         // rows into the data. replace: they ARE the data (the x type is read again); else added to it
         _load(rows, replace) {
             rows = Array.isArray(rows) ? rows : [];
+            if (rows.length) this._dropDemo();
             const had = this._hasAny();
             const xt = replace || !had ? this._typeOf(rows) : this._xt;
             if (replace || xt !== this._xt) this._resetData();
@@ -398,6 +400,7 @@ export const columnChart = defineUI({
                 const v = it.live, key = String(it.id || it.name || "");
                 if (v === undefined || v === null || v === "" || v === "???" || (typeof v === "object" && !Array.isArray(v) && v.$bind) || v === this._lastLive.get(key)) continue;
                 this._lastLive.set(key, v);
+                this._dropDemo();
                 const pts = Array.isArray(v) ? v : [v];
                 if (!this._hasAny() || this._time()) { this._xt = "time"; this._pushTime(key, it.name, pts); }
                 else this.appendPoint(pts, { list: "series", id: key });
@@ -419,24 +422,35 @@ export const columnChart = defineUI({
             return added;
         }
 
-        // the editor shows sample data on an empty chart (it is known to be the editor only once the host has set it up: also checked at draw)
+        // The editor shows sample data on an empty chart, FOR the series the user listed (none listed: two examples). It is not
+        // data: a series added draws its own sample (the examples go), and the first real data (rows, Set data, a live value)
+        // drops it for good. (It is known to be the editor only once the host has set it up: also checked at draw.)
         _ensureDemo() {
-            if (this.isEditor && !this._hasAny() && !this._demoDone && !(Array.isArray(this.p.rows) && this.p.rows.length)) {
-                this._demoDone = true;
-                if (this.p.xType === "time") {
-                    this._xt = "time";
-                    const now = Date.now(), n = 240;
-                    ["Series 1", "Series 2"].forEach((name, si) => { const t = this._tbuf(name, name, n); for (let k = 0; k < n; k++) t.buf.push(now - (n - k) * 30000, Math.round((50 + si * 15 + 18 * Math.sin(k / 18 + si * 1.3) + 6 * Math.sin(k / 5 + si)) * 10) / 10); });
-                } else { this._xt = "category"; this._canon = this._demoRows(); }
-                return true;
-            }
-            return false;
+            if (!this.isEditor || this._demoDone || (Array.isArray(this.p.rows) && this.p.rows.length)) return false;
+            const items = (Array.isArray(this.p.series) ? this.p.series : []).filter((x) => x && typeof x === "object");
+            const names = items.length ? items.map((x, i) => String(x.id || x.name || "Series " + (i + 1))) : ["Lighting", "HVAC"];
+            const time = this.p.xType === "time", sig = names.join("\u0001") + "|" + time;
+            if (sig === this._demoSig) return false;
+            this._resetData();
+            this._demoSig = sig;
+            if (time) {
+                this._xt = "time";
+                const now = Date.now(), n = 240;
+                names.forEach((name, si) => { const t = this._tbuf(name, name, n); for (let k = 0; k < n; k++) t.buf.push(now - (n - k) * 30000, Math.round((50 + si * 15 + 18 * Math.sin(k / 18 + si * 1.3) + 6 * Math.sin(k / 5 + si)) * 10) / 10); });
+            } else { this._xt = "category"; this._canon = this._demoRows(names); }
+            return true;
         }
 
-        _demoRows() {
-            const rows = [], cats = ["Floor 1", "Floor 2", "Floor 3", "Floor 4"], v = [[42, 55, 38, 61], [30, 41, 47, 39]];
-            ["Lighting", "HVAC"].forEach((name, si) => cats.forEach((c, i) => rows.push({ x: c, y: v[si][i], s: name })));
+        _demoRows(names) {
+            const rows = [], cats = ["Floor 1", "Floor 2", "Floor 3", "Floor 4"];
+            names.forEach((name, si) => cats.forEach((c, i) => rows.push({ x: c, y: Math.round(30 + 12 * Math.sin(i * 1.7 + si * 2.1) + si * 6 + i * 3), s: name })));
             return rows;
+        }
+
+        // real data is coming: the sample goes first, and does not come back
+        _dropDemo() {
+            if (this._demoSig) { this._resetData(); this._demoSig = ""; }
+            this._demoDone = true;
         }
 
         _rebuild() {
@@ -570,7 +584,7 @@ export const columnChart = defineUI({
             if (rows) this._load(rows, false);
         }
 
-        clearAll() { this._resetData(); this._demoDone = true; this.viewRange = null; this.hover = null; this._rebuild(); }
+        clearAll() { this._resetData(); this._demoDone = true; this._demoSig = ""; this.viewRange = null; this.hover = null; this._rebuild(); }
 
         _own(s) { return s.id || s._key; }
         _dropSeries(key) { this._canon = this._canon.filter((r) => r.s !== key); this._tser.delete(key); }
@@ -582,6 +596,7 @@ export const columnChart = defineUI({
 
         setData(params, target) {
             const s = this.findSeries(target); if (!s) return;
+            this._dropDemo();
             const key = this._own(s);
             const v = params && !Array.isArray(params) && typeof params === "object" && params.data !== undefined ? params.data : params;
             if (Array.isArray(v) && (this._time() || (!this._hasAny() && this._looksTime(v)))) {
@@ -608,6 +623,7 @@ export const columnChart = defineUI({
 
         setPoint(params, target) {
             const s = this.findSeries(target); if (!s || !params || typeof params !== "object") return;
+            this._dropDemo();
             const key = this._own(s), x = params.x !== undefined ? params.x : params.category !== undefined ? params.category : params.name;
             const y = params.y !== undefined ? params.y : params.value;
             if (this._time()) { this._pushTime(key, s.name, [{ x, y }]); return; }
@@ -623,6 +639,7 @@ export const columnChart = defineUI({
 
         appendPoint(params, target) {
             const s = this.findSeries(target); if (!s) return;
+            this._dropDemo();
             const key = this._own(s), pts = Array.isArray(params) ? params : [params];
             if (this._time() || (!this._hasAny() && (this._looksTime(pts) || (typeof params === "number" && this.p.xType === "time")))) {
                 if (!this._time()) { this._resetData(); this._xt = "time"; }

@@ -1927,6 +1927,15 @@ withHarness({
         await js('new Promise(function (r) { setTimeout(r, 200); })');
         assert.ok(await painted('ch10') > 2000, 'sample data in the editor');
         assert.deepStrictEqual(await js(`${cw('ch10')}.seriesList().map(function (s) { return s.name; })`), ['Lighting', 'HVAC']);
+        // the sample is not data: a series added in the editor draws ITS sample (the examples go), real data drops it for good
+        await js(`NexaTest.setProps("ch10", { series: [{ id: "s1", name: "Load" }] })`); await settle();
+        assert.deepStrictEqual(await js(`${cw('ch10')}.seriesList().map(function (s) { return s.name; })`), ['Load'], 'adding a series: no Lighting / HVAC beside it');
+        assert.ok(await painted('ch10') > 2000, 'the new series has its sample');
+        await js(`NexaTest.setProps("ch10", { series: [{ id: "s1", name: "Load" }, { id: "s2", name: "Spare" }] })`); await settle();
+        assert.deepStrictEqual(await js(`${cw('ch10')}.seriesList().map(function (s) { return s.name; })`), ['Load', 'Spare']);
+        await js(`NexaTest.invoke("ch10", "setRows", [{ x: "A", y: 3 }])`); await settle();
+        assert.deepStrictEqual(await js(`(function () { var w = ${cw('ch10')}; return { cats: w._frame.cats, names: w.seriesList().map(function (s) { return s.name; }), demo: w._demoSig }; })()`),
+            { cats: ['A'], names: ['Load', 'Spare', 'y'], demo: '' }, 'real rows: the sample is gone (the listed series stay, empty)');
     });
 
     await ok('Column Chart: a TIME x keeps every point in Float64 rings (600 000), draws a frame fast, the time ruler, range buttons, zoom, Live, a tooltip; columns grouped to the width of the screen; a line in the stack', async () => {
