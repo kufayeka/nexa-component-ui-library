@@ -426,7 +426,10 @@ export const columnChart = defineUI({
         // data: a series added draws its own sample (the examples go), and the first real data (rows, Set data, a live value)
         // drops it for good. (It is known to be the editor only once the host has set it up: also checked at draw.)
         _ensureDemo() {
-            if (!this.isEditor || this._demoDone || (Array.isArray(this.p.rows) && this.p.rows.length)) return false;
+            // the editor only once the host SAID so (before it set the chart up, the mode is not known): on a page, none
+            const editor = !!(this._ctx && this._ctx.mode === "editor");
+            if (!editor && this._demoSig) { this._resetData(); this._demoSig = ""; return true; }
+            if (!editor || this._demoDone || (Array.isArray(this.p.rows) && this.p.rows.length)) return false;
             const items = (Array.isArray(this.p.series) ? this.p.series : []).filter((x) => x && typeof x === "object");
             const names = items.length ? items.map((x, i) => String(x.id || x.name || "Series " + (i + 1))) : ["Lighting", "HVAC"];
             const time = this.p.xType === "time", sig = names.join("\u0001") + "|" + time;
@@ -1639,6 +1642,7 @@ export const columnChart = defineUI({
                                 ${this._renderMenu()}
                             </div>
                             <div class="tooltip" style="display:none"></div>
+                            ${this._renderSampleBadge(!!this._demoSig)}
                             ${inside ? legend : ""}
                             ${empty ? html`<div class="empty"><span>${p.emptyText || "No data to display"}</span></div>` : ""}
                         </div>

@@ -456,7 +456,7 @@ export const lineChart = defineUI({
                 if (this._ctx && this._ctx.mode === "editor" && st.buf.count === 0) { this._demo(st, s._i); dirty = true; }
             }
             for (const k of Array.from(this._series.keys())) if (!live.has(k)) { this._series.delete(k); dirty = true; }
-            if (dirty) this.scheduleDraw();
+            if (dirty) { this.scheduleDraw(); this.requestUpdate(); }
         }
 
         // points into a series: {x, y} / a number (time = now); the newest one is checked against the
@@ -1385,6 +1385,7 @@ export const lineChart = defineUI({
                                 ${this._renderMenu()}
                             </div>
                             <div class="tooltip"><div class="tooltip-time"></div><div class="tooltip-rows"></div></div>
+                            ${this._renderSampleBadge(all.some((s) => this._state(s).demo))}
                             ${inside ? legend : ""}
                             ${!hasData ? html`
                                 <div class="empty">

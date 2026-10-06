@@ -1972,6 +1972,26 @@ withHarness({
         await js('delete window.__big; 1');
     });
 
+    await ok('Sample data (Line, State Timeline, Column): only in the editor, for the user series, marked "Sample data"; on a page with no data the chart is empty; real data drops it', async () => {
+        const kinds = [['line-chart', { series: [{ id: 's1', name: 'Speed' }] }, 'appendPoints', [{ x: 1727852400000, y: 3 }], { list: 'series', id: 's1' }],
+            ['state-timeline', { rows: [{ id: 'r1', name: 'Filler' }] }, 'appendChange', { time: 1727852400000, state: 1 }, { list: 'rows', id: 'r1' }],
+            ['column-chart', { series: [{ id: 's1', name: 'Load' }, { id: 's2', name: 'Temp', type: 'line' }] }, 'setData', { A: 3 }, { list: 'series', id: 's1' }]];
+        for (const [id, props, action, payload, target] of kinds) {
+            await mount('sd-ed-' + id, id, props, { width: 500, height: 220, design: true });
+            await js('new Promise(function (r) { setTimeout(r, 150); })');
+            const ed = await js(`(function () { var w = NexaTest.wc("sd-ed-${id}"); return { badge: !!w.renderRoot.querySelector(".sample-badge"), legend: Array.from(w.renderRoot.querySelectorAll(".lg-name")).map(function (e) { return e.textContent; }) }; })()`);
+            assert.strictEqual(ed.badge, true, id + ': the editor marks its sample');
+            if (id === 'column-chart') assert.deepStrictEqual(ed.legend, ['Load', 'Temp'], 'the sample is drawn for the user series: no Lighting / HVAC beside them');
+            assert.ok(await painted('sd-ed-' + id) > 1500, id + ': the sample is drawn in the editor');
+            await js(`NexaTest.wc("sd-ed-${id}")[${JSON.stringify(action)}](${JSON.stringify(payload)}, ${JSON.stringify(target)}); 1`); await settle();
+            assert.strictEqual(await js(`!!NexaTest.wc("sd-ed-${id}").renderRoot.querySelector(".sample-badge")`), false, id + ': real data drops the sample');
+            await mount('sd-pg-' + id, id, props, { width: 500, height: 220 });
+            await js('new Promise(function (r) { setTimeout(r, 150); })');
+            const pg = await js(`(function () { var w = NexaTest.wc("sd-pg-${id}"); w.draw(); return { badge: !!w.renderRoot.querySelector(".sample-badge"), data: w._hasData() }; })()`);
+            assert.deepStrictEqual(pg, { badge: false, data: false }, id + ': a page with no data is empty');
+        }
+    });
+
     await ok('Column Chart: the inspector is a Power BI style format pane: its cards in order, series as a list of items', async () => {
         const r = await js(`(function () { var m = NEXA.getComponent("${P}${COL}").nexa; var seen = []; Object.keys(m.props).forEach(function (k) { var g = m.props[k].group; if (g && seen.indexOf(g) === -1) seen.push(g); }); return { groups: seen, order: m.groupOrder, targets: m.targetList.map(function (t) { return [t.key, t.actionList.map(function (a) { return a.name; })]; }), label: m.label }; })()`);
         assert.deepStrictEqual(r.order.slice(0, 7), ['Data', 'Series', 'Columns', 'Lines', 'Y axis', 'Secondary Y axis', 'X axis']);

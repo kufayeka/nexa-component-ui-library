@@ -1002,6 +1002,7 @@ export const stateTimeline = defineUI({
                                 ${this._renderMenu()}
                             </div>
                             <div class="tooltip"><div class="tooltip-time"></div><div class="tooltip-rows"></div></div>
+                            ${this._renderSampleBadge(this.rowList().some((r) => this._row(r).demo))}
                             ${inside ? legend : ""}
                             ${!this._hasData() ? html`<div class="empty"><i class="fa fa-tasks" style="font-size: 24px; opacity: 0.4;"></i><span>No data received</span></div>` : ""}
                         </div>

@@ -278,6 +278,14 @@ export const CHART_CSS = css`
     .lg-row.off { opacity: 0.38; }
     .lg-name-cell { display: inline-flex; align-items: center; gap: 6px; }
 
+    /* the editor's sample data: a chip at the top middle (clear of the axes, the ruler, the menu and a corner legend) */
+    .sample-badge {
+        position: absolute; left: 50%; top: 6px; transform: translateX(-50%); z-index: 3; pointer-events: none; white-space: nowrap;
+        padding: 2px 7px; border-radius: var(--r, 4px); border: 1px dashed var(--bd, #2c3235);
+        background: color-mix(in srgb, var(--panel, #181b1f) 85%, transparent);
+        color: var(--fg-muted, #a0aec0); font: 500 10px/1.4 var(--nexa-fonts-body, "IBM Plex Sans", system-ui, sans-serif);
+    }
+
     /* the range buttons above a time chart (time-chart.js) */
     .range-bar { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; padding: 6px 10px 0; min-width: 0; }
     .rb-group { display: inline-flex; border: 1px solid var(--bd, #2c3235); border-radius: var(--r, 4px); overflow: hidden; flex-shrink: 1; min-width: 0; }
@@ -762,6 +770,15 @@ export class ChartElement extends UIElement {
          */
 
     // the ⋮ menu: the formats the Properties allow (exportCsv / exportXlsx / exportPng)
+    /**
+     * The editor's sample data is decoration (what the chart will look like when it is first put on the canvas): it is drawn
+     * for the series the user made, never becomes data (no series of its own, no export, no events) and never shows on a
+     * page. This chip says so while it is shown.
+     */
+    _renderSampleBadge(on) {
+        return on && this.isEditor ? html`<div class="sample-badge" title="Only in the editor: the page shows your data (empty until it comes)">Sample data</div>` : "";
+    }
+
     _renderMenu() {
         if (this.p.exportButton === false || (this.p.exportCsv === false && this.p.exportXlsx === false && this.p.exportPng === false)) return "";
         return html`
