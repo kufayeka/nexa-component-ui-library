@@ -881,7 +881,7 @@ export class HistogramElement extends ChartElement {
             if (this.p.target !== undefined) info.push(["Target", this.p.target]);
             if (this.p.usl !== undefined) info.push(["USL", this.p.usl]);
 
-            blob = xlsxBlob(header, rows, false, { info });
+            blob = xlsxBlob(header, rows, false, { info, timeCols: [] });
         } else {
             const q = (t) => '"' + String(t).replace(/"/g, '""') + '"';
             const lines = [header.map(q).join(",")];

@@ -13,7 +13,7 @@ function load(file) {
     const names = [...src.matchAll(/^export (?:var|let|const|function) (\w+)/gm)].map((m) => m[1]);
     return new Function(src.replace(/^export /gm, '') + '\nreturn {' + names.join(',') + '};')();
 }
-const R = load('rows.js'), S = load('stack.js'), C = load('curves.js'), F = load('fit.js');
+const R = load('rows.js'), S = load('stack.js'), C = load('curves.js'), F = load('fit.js'), Q = load('spc-core.js');
 
 let passed = 0;
 function ok(label, fn) { fn(); passed++; console.log('✔ ' + label); }
@@ -168,6 +168,97 @@ ok('ellipse: a cloud along y = x leans 45 degrees, centred at the means; hull: t
     assert.strictEqual(F.ellipse(xs, ys, [0, 1]), null);
     const hx = [0, 4, 4, 0, 2, 1], hy = [0, 0, 4, 4, 2, 3];
     assert.deepStrictEqual(F.hull(hx, hy, [0, 1, 2, 3, 4, 5]), [[0, 0], [4, 0], [4, 4], [0, 4]]);
+});
+
+ok('SPC constants: d2 / d3 / c4 and the textbook A2, D3, D4, A3, B3, B4', () => {
+    const near = (a, b, e, m) => assert.ok(Math.abs(a - b) < (e || 1e-3), m + ': ' + a + ' vs ' + b);
+    const k5 = Q.constants(5);
+    near(k5.A2, 0.577, 1e-3, 'A2(5)'); near(k5.D4, 2.114, 1e-3, 'D4(5)'); assert.strictEqual(k5.D3, 0);
+    near(k5.c4, 0.9400, 1e-4, 'c4(5)'); near(k5.A3, 1.427, 1e-3, 'A3(5)'); near(k5.B4, 2.089, 1e-3, 'B4(5)');
+    near(Q.constants(7).D3, 0.076, 1e-3, 'D3(7)'); near(Q.c4(2), 0.7979, 1e-4, 'c4(2)'); near(Q.c4(25), 0.9896, 1e-4, 'c4(25)');
+    near(Q.constants(2).D4, 3.267, 2e-3, 'D4(2), the MR chart');
+});
+
+ok('SPC subgroups: each its own, every N (never across a phase), by a field, per interval; autoType', () => {
+    const v = (arr, extra) => arr.map((x, i) => Object.assign({ t: 1000 * i, v: x }, extra ? extra(i) : {}));
+    assert.deepStrictEqual(Q.subgroups(v([1, 2, 3]), { by: 'none' }).map((g) => g.vals), [[1], [2], [3]]);
+    assert.deepStrictEqual(Q.subgroups(v([1, 2, 3, 4, 5, 6, 7]), { by: 'size', size: 3 }).map((g) => g.vals), [[1, 2, 3], [4, 5, 6], [7]]);
+    assert.deepStrictEqual(Q.subgroups(v([1, 2, 3, 4], (i) => ({ phase: i < 2 ? 'A' : 'B' })), { by: 'size', size: 3 }).map((g) => [g.phase, g.vals]), [['A', [1, 2]], ['B', [3, 4]]]);
+    assert.deepStrictEqual(Q.subgroups(v([1, 2, 3], (i) => ({ key: i < 2 ? 'L1' : 'L2' })), { by: 'field' }).map((g) => [g.key, g.vals]), [['L1', [1, 2]], ['L2', [3]]]);
+    assert.deepStrictEqual(Q.subgroups(v([1, 2, 3, 4, 5]), { by: 'time', interval: 2000 }).map((g) => [g.t, g.vals]), [[0, [1, 2]], [2000, [3, 4]], [4000, [5]]]);
+    assert.strictEqual(Q.subgroups([{ v: 'x' }, { v: NaN }, { v: 2 }], { by: 'none' }).length, 1, 'non-numbers skipped');
+    assert.strictEqual(Q.autoType([{ vals: [1] }], 'measure'), 'imr');
+    assert.strictEqual(Q.autoType([{ vals: [1, 2, 3, 4, 5] }], 'measure'), 'xbar-r');
+    assert.strictEqual(Q.autoType([{ vals: new Array(12).fill(1) }], 'measure'), 'xbar-s');
+    assert.strictEqual(Q.autoType([{ n: 50 }, { n: 50 }], 'count', 'defectives'), 'np');
+    assert.strictEqual(Q.autoType([{ n: 50 }, { n: 80 }], 'count', 'defectives'), 'p');
+    assert.strictEqual(Q.autoType([{ n: 1 }, { n: 1 }], 'count', 'defects'), 'c');
+    assert.strictEqual(Q.autoType([{ n: 4 }, { n: 6 }], 'count', 'defects'), 'u');
+});
+
+ok('SPC limits: I-MR = mean +- 2.66 MR-bar, MR UCL 3.267 MR-bar; X-bar-R = A2 R-bar; X-bar-S = A3 S-bar; p steps with n; c; an excluded point is out of the limits', () => {
+    const near = (a, b, m) => assert.ok(Math.abs(a - b) < 2e-3, m + ': ' + a + ' vs ' + b);
+    const g1 = [10, 12, 11, 13, 12].map((x, i) => ({ key: String(i), vals: [x] }));
+    const P = Q.analyse(g1, { type: 'imr' }).points;
+    near(P[0].cl, 11.6, 'centre'); near(P[0].ucl, 11.6 + 2.66 * 1.5, 'UCL'); near(P[0].lcl, 11.6 - 2.66 * 1.5, 'LCL');
+    assert.ok(Number.isNaN(P[0].y)); near(P[1].y, 2, 'MR'); near(P[1].cl2, 1.5, 'MR-bar'); assert.ok(Math.abs(P[1].ucl2 - 3.267 * 1.5) < 5e-3, 'MR UCL');
+    const sg = [[10, 11, 9, 10, 12], [11, 10, 10, 9, 11], [9, 10, 12, 11, 10]].map((vals, i) => ({ key: String(i), vals }));
+    const r = Q.analyse(sg, { type: 'xbar-r' }).points, rbar = (3 + 2 + 3) / 3, xbb = (10.4 + 10.2 + 10.4) / 3;
+    near(r[0].ucl, xbb + 0.577 * rbar, 'X-bar UCL = A2 R-bar'); near(r[0].ucl2, 2.114 * rbar, 'R UCL = D4 R-bar'); assert.strictEqual(r[0].lcl2, 0);
+    const s = Q.analyse(sg, { type: 'xbar-s' }).points;
+    const sbar = (Math.sqrt(1.3) + Math.sqrt(0.7) + Math.sqrt(1.3)) / 3;
+    near(s[0].ucl, xbb + 1.427 * sbar, 'X-bar UCL = A3 S-bar'); near(s[0].ucl2, 2.089 * sbar, 'S UCL = B4 S-bar');
+    const pc = Q.analyse([{ key: 'a', count: 2, n: 100 }, { key: 'b', count: 3, n: 200 }, { key: 'c', count: 1, n: 100 }], { type: 'p' }).points;
+    near(pc[0].cl, 0.015, 'p-bar'); near(pc[0].ucl, 0.015 + 3 * Math.sqrt(0.015 * 0.985 / 100), 'UCL n 100'); assert.ok(pc[1].ucl < pc[0].ucl, 'a larger n: tighter'); assert.strictEqual(pc[0].lcl, 0);
+    const cc = Q.analyse([4, 6, 5].map((c, i) => ({ key: String(i), count: c, n: 1 })), { type: 'c' }).points;
+    near(cc[0].ucl, 5 + 3 * Math.sqrt(5), 'c UCL');
+    const ex = Q.analyse([10, 10, 10, 10, 50].map((x, i) => ({ key: String(i), vals: [x], excluded: i === 4 })), { type: 'imr' }).points;
+    near(ex[0].cl, 10, 'the excluded 50 is not in the centre'); assert.deepStrictEqual(ex[4].rules, [], 'nor flagged');
+});
+
+ok('SPC baselines and phases: limits from the first N (locked), a time range, manual; each phase its own limits', () => {
+    const vals = [10, 11, 10, 11, 10, 11, 20, 21, 20, 21];
+    const g = vals.map((x, i) => ({ key: String(i), t: i, vals: [x], phase: i < 6 ? 'Before' : 'After' }));
+    const a = Q.analyse(g, { type: 'imr' });
+    assert.deepStrictEqual(a.segments.map((s) => [s.phase, s.from, s.to, s.center]), [['Before', 0, 5, 10.5], ['After', 6, 9, 20.5]]);
+    const flat = vals.map((x, i) => ({ key: String(i), t: i, vals: [x] }));
+    const f = Q.analyse(flat, { type: 'imr', baseline: { mode: 'first', count: 4 } });
+    assert.strictEqual(f.points[9].cl, 10.5, 'the first 4 only: the later shift does not move the centre');
+    assert.ok(f.points[8].rules.includes('N1'), 'so the shift is flagged');
+    assert.deepStrictEqual(f.points.map((p) => p.base), [true, true, true, true, false, false, false, false, false, false]);
+    assert.strictEqual(Q.analyse(flat, { type: 'imr', baseline: { mode: 'range', from: 6, to: 9 } }).points[0].cl, 20.5);
+    const m = Q.analyse(flat, { type: 'imr', baseline: { mode: 'manual', mean: 12, sigma: 2 } }).points[0];
+    assert.deepStrictEqual([m.cl, m.ucl, m.lcl], [12, 18, 6]);
+});
+
+ok('SPC rules: each Nelson pattern at the point that completes it; Western Electric 4 = 8 on a side', () => {
+    const all = Q.RULE_SETS.nelson.concat(['WE4']), at = (z, rule) => Q.checkRules(z, all).map((r, i) => (r.includes(rule) ? i : -1)).filter((i) => i >= 0);
+    assert.deepStrictEqual(at([0, 0, 0, 4, -3.5], 'N1'), [3, 4]);
+    assert.deepStrictEqual(at(new Array(10).fill(0.5), 'N2'), [8, 9]);
+    assert.deepStrictEqual(at(new Array(9).fill(-0.5), 'WE4'), [7, 8]);
+    assert.deepStrictEqual(at([-1, -0.5, 0, 0.5, 1, 1.5], 'N3'), [5]);
+    assert.deepStrictEqual(at([2, 1.5, 1, 0.5, 0, -0.5, -1], 'N3'), [5, 6]);
+    const alt = Array.from({ length: 15 }, (_, i) => (i % 2 ? 0.1 : -0.1));
+    assert.deepStrictEqual(at(alt, 'N4'), [13, 14]);
+    assert.deepStrictEqual(at(alt, 'N7'), [14]);
+    assert.deepStrictEqual(at([0, 2.5, 0, 2.5], 'N5'), [3]);
+    assert.deepStrictEqual(at([0, 2.5, -2.5, 0], 'N5'), [], 'opposite sides');
+    assert.deepStrictEqual(at([1.5, 1.5, 0, 1.5, 1.5], 'N6'), [4]);
+    assert.deepStrictEqual(at(Array.from({ length: 8 }, (_, i) => (i % 2 ? 1.5 : -1.5)), 'N8'), [7]);
+    assert.deepStrictEqual(Q.checkRules([4], ['N2']), [[]], 'only the enabled rules');
+});
+
+ok('SPC capability: Cp, Cpk (within), Pp, Ppk (overall), one-sided, the expected PPM', () => {
+    const v = [9, 10, 11, 9, 10, 11, 9, 10, 11];
+    const c = Q.capability(v, { usl: 13, lsl: 7, sigmaWithin: 1 });
+    assert.strictEqual(c.n, 9); assert.ok(Math.abs(c.mean - 10) < 1e-12);
+    assert.ok(Math.abs(c.cp - 1) < 1e-9 && Math.abs(c.cpk - 1) < 1e-9, 'within: Cp = Cpk = 1');
+    assert.ok(Math.abs(c.pp - 6 / (6 * c.sdOverall)) < 1e-9 && c.ppk > 1);
+    const one = Q.capability(v, { usl: 12, sigmaWithin: 1 });
+    assert.ok(Number.isNaN(one.cp) && Math.abs(one.cpk - 2 / 3) < 1e-9, 'one-sided: Cpk = CPU');
+    assert.ok(Math.abs(Q.normCdf(1.96) - 0.975) < 1e-4 && Math.abs(Q.normCdf(0) - 0.5) < 1e-7);
+    const shifted = Q.capability([12, 12.5, 13, 13.5, 14], { usl: 13, lsl: 7 });
+    assert.strictEqual(shifted.outAbove, 2); assert.ok(shifted.ppm > 400000);
 });
 
 console.log(`\n${passed} passed\nALL OK`);

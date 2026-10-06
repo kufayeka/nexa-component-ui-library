@@ -19,7 +19,7 @@ async function ok(label, fn) { if (only && !only.test(label)) return; await fn()
 const P = 'nexa-ui-';
 const ALL = ['button', 'input', 'textarea', 'number-input', 'password-input', 'checkbox', 'switch', 'radio-group', 'segmented', 'select', 'combobox', 'slider', 'tags-input', 'pin-input', 'rating',
     'text', 'heading', 'badge', 'tag', 'card', 'avatar', 'stat', 'alert', 'progress', 'spinner', 'skeleton', 'separator', 'empty-state', 'timeline', 'fieldset',
-    'tabs', 'iframe', 'datetime', 'daterange', 'pagination', 'line-chart', 'state-timeline', 'column-chart', 'pie', 'pareto', 'scatter', 'gauge', 'bar-gauge', 'area-chart', 'kpi', 'histogram'];
+    'tabs', 'iframe', 'datetime', 'daterange', 'pagination', 'line-chart', 'state-timeline', 'column-chart', 'pie', 'pareto', 'scatter', 'spc', 'gauge', 'bar-gauge', 'area-chart', 'kpi', 'histogram'];
 const TAG = '{sparkplug:Plant::Line1::Mixer::Speed}';
 
 withHarness({
@@ -44,7 +44,7 @@ withHarness({
         await settle();
     };
 
-    await ok('all 46 components register (UI · Form / Display / Layout / Embed / Charts), each mounts and draws', async () => {
+    await ok('all 47 components register (UI · Form / Display / Layout / Embed / Charts), each mounts and draws', async () => {
         const reg = await js(`${JSON.stringify(ALL)}.map(function (id) { var d = NEXA.getComponent("${P}" + id); return d ? d.category : "MISSING " + id; })`);
         assert.deepStrictEqual(reg.filter((c) => c !== 'UI · Form' && c !== 'UI · Display' && c !== 'UI · Layout' && c !== 'UI · Embed' && c !== 'UI · Charts'), []);
         for (const id of ALL) await mount('all-' + id, id, {}, { width: 320, height: 120 });
@@ -1422,6 +1422,54 @@ withHarness({
         }
     });
 
+    // ---- SPC --------------------------------------------------------------------------------------
+    const spw = (name) => `NexaTest.wc(${JSON.stringify(name)})`;
+
+    await ok('SPC: I-MR from rows (auto), limits locked from the first N, the shift flagged, phases, X-bar-R every 5, p with n, the capability panel', async () => {
+        const t0 = 1727852400000, rows = [];
+        for (let i = 0; i < 40; i++) rows.push({ time: t0 + i * 60000, value: 10 + ((i * 7) % 5 - 2) * 0.1 + (i >= 30 ? 2 : 0), id: 'S' + i });
+        await mount('sp1', 'spc', { rows, idField: 'id', limitsFrom: 'first', baselineCount: 20, usl: 11, lsl: 9 }, { width: 760, height: 380 });
+        const r = await js(`(function () { var w = ${spw('sp1')}; w.draw(); var m = w._model(), P = m.a.points; return { type: m.type, n: P.length, cl: Math.round(P[39].cl * 1000) / 1000, flagged: P.filter(function (q) { return q.rules.indexOf("N1") !== -1; }).map(function (q) { return q.key; }).length, first: P.findIndex(function (q) { return q.rules.length; }), cap: w._cap && w._cap.n, head: w.renderRoot.querySelector(".spc-head").textContent }; })()`);
+        assert.strictEqual(r.type, 'imr'); assert.strictEqual(r.n, 40);
+        assert.strictEqual(r.cl, 10, 'the centre from the first 20 only');
+        assert.strictEqual(r.flagged, 10, 'the 10 shifted points beyond 3 sigma'); assert.strictEqual(r.first, 30);
+        assert.ok(r.cap > 0, 'the capability panel'); assert.ok(/I-MR chart/.test(r.head) && /out of control/.test(r.head));
+        assert.ok(await pixels('sp1') > 8000);
+        await js(`NexaTest.setProps("sp1", { limitsFrom: "all", phases: [{ name: "After fix", from: "${t0 + 30 * 60000}" }] })`); await settle();
+        assert.deepStrictEqual(await js(`(function () { var w = ${spw('sp1')}; w.draw(); return w._model().a.segments.map(function (s) { return [s.phase, s.from, s.to]; }); })()`), [['', 0, 29], ['After fix', 30, 39]]);
+        await js(`NexaTest.setProps("sp1", { subgroupBy: "size", subgroupSize: 5, phases: [], capability: false })`); await settle();
+        assert.deepStrictEqual(await js(`(function () { var w = ${spw('sp1')}; w.draw(); var m = w._model(); return [m.type, m.a.points.length, m.a.points[0].n]; })()`), ['xbar-r', 8, 5]);
+        assert.ok(await pixels('sp1') > 5000);
+        const cnt = [];
+        for (let i = 0; i < 25; i++) cnt.push({ time: t0 + i * 36e5, defects: 4 + (i % 3), n: i % 2 ? 200 : 150 });
+        await mount('sp2', 'spc', { rows: cnt, dataKind: 'count' }, { width: 700, height: 300 });
+        assert.deepStrictEqual(await js(`(function () { var w = ${spw('sp2')}; w.draw(); var P = w._model().a.points; return [w._model().type, P[0].ucl > P[1].ucl, !!w._cap.rate]; })()`), ['p', true, true]);
+        for (const t of ['np', 'c', 'u']) { await js(`NexaTest.setProps("sp2", { chartType: "${t}" })`); await settle(); assert.ok(await pixels('sp2') > 3000, t); }
+    });
+
+    await ok('SPC: a click gives its subgroup, notes and exclusions come back from props (the chart keeps nothing), a new violation fires On Violation once, Append value, the export', async () => {
+        const t0 = 1727852400000, rows = [];
+        for (let i = 0; i < 25; i++) rows.push({ time: t0 + i * 60000, value: 10 + ((i * 3) % 4 - 1.5) * 0.1, id: 'B' + i });
+        await mount('sp3', 'spc', { rows, idField: 'id', ruleSet: 'nelson', limitsFrom: 'first', baselineCount: 20 }, { width: 760, height: 360 });
+        await js(`(function () { var w = ${spw('sp3')}; window.__spev = []; var old = w.emit.bind(w); w.emit = function (n, p, t) { window.__spev.push([n, p]); return old(n, p, t); }; w.draw(); return 1; })()`);
+        const click = await js(`(function () { var w = ${spw('sp3')}, g = w._geo, pl = w.renderRoot.querySelector(".plot"), b = pl.getBoundingClientRect(), x = b.left + g.X(4), y = b.top + g.up.Y(w._model().a.points[4].x);
+            ["pointerdown", "pointerup"].forEach(function (t) { pl.dispatchEvent(new PointerEvent(t, { bubbles: true, button: 0, pointerId: 1, clientX: x, clientY: y })); });
+            var e = window.__spev.filter(function (e) { return e[0] === "pointClick"; })[0]; return e ? [e[1].key, e[1].time, e[1].excluded] : null; })()`);
+        assert.deepStrictEqual(click, ['B4', t0 + 4 * 60000, false]);
+        assert.strictEqual(await js('window.__spev.filter(function (e) { return e[0] === "violation"; }).length'), 0, 'the points there at load fire nothing');
+        await js(`NexaTest.setProps("sp3", { notes: [{ key: "B4", text: "Tool changed" }], excluded: ["B5"] })`); await settle();
+        assert.deepStrictEqual(await js(`(function () { var m = ${spw('sp3')}._model(); return [m.noteAt.get(4)[0].text, m.a.points[5].excluded]; })()`), ['Tool changed', true]);
+        await js(`NexaTest.invoke("sp3", "appendValue", { value: 25, time: ${t0 + 30 * 60000} })`); await settle();
+        await js('new Promise(function (r) { setTimeout(r, 50); })');
+        const v = await js('window.__spev.filter(function (e) { return e[0] === "violation"; }).map(function (e) { return [e[1].value, e[1].chart, e[1].rules.map(function (r) { return r.rule; }).join()]; })');
+        assert.deepStrictEqual(v.filter((x) => x[1] === 'upper'), [[25, 'upper', 'N1']], JSON.stringify(v));
+        const before = v.length;
+        await js(`${spw('sp3')}.draw(); NexaTest.setProps("sp3", { title: "again" })`); await settle();
+        assert.strictEqual(await js('window.__spev.filter(function (e) { return e[0] === "violation"; }).length'), before, 'once, not on every redraw');
+        assert.strictEqual(await js(`${spw('sp3')}.exportData({ format: "csv" })`), 26);
+        assert.strictEqual(await js(`${spw('sp3')}.exportData({ format: "xlsx" })`), 26);
+    });
+
     // ---- Scatter --------------------------------------------------------------------------------
     const scw = (name) => `NexaTest.wc(${JSON.stringify(name)})`;
 
@@ -2057,7 +2105,7 @@ withHarness({
         await js('delete window.__big; 1');
     });
 
-    await ok('Sample data (Line, State Timeline, Column, KPI, Gauge, Bar Gauge, Pie, Scatter): only in the editor, for the user series, marked "Sample data"; on a page with no data the chart is empty; real data drops it', async () => {
+    await ok('Sample data (Line, State Timeline, Column, KPI, Gauge, Bar Gauge, Pie, Scatter, SPC): only in the editor, for the user series, marked "Sample data"; on a page with no data the chart is empty; real data drops it', async () => {
         const kinds = [['line-chart', { series: [{ id: 's1', name: 'Speed' }] }, 'appendPoints', [{ x: 1727852400000, y: 3 }], { list: 'series', id: 's1' }],
             ['state-timeline', { rows: [{ id: 'r1', name: 'Filler' }] }, 'appendChange', { time: 1727852400000, state: 1 }, { list: 'rows', id: 'r1' }],
             ['column-chart', { series: [{ id: 's1', name: 'Load' }, { id: 's2', name: 'Temp', type: 'line' }] }, 'setData', { A: 3 }, { list: 'series', id: 's1' }],
@@ -2065,7 +2113,8 @@ withHarness({
             ['gauge', { gauges: [{ id: 'g1', name: 'Load' }] }, 'setValue', 21.5, { list: 'gauges', id: 'g1' }],
             ['bar-gauge', { bars: [{ id: 'b1', name: 'Load' }] }, 'setValue', 21.5, { list: 'bars', id: 'b1' }],
             ['pie', { slices: [{ id: 's1', name: 'Load' }] }, 'setValue', 21.5, { list: 'slices', id: 's1' }],
-            ['scatter', {}, 'setRows', [{ x: 1, y: 2 }], null]];
+            ['scatter', {}, 'setRows', [{ x: 1, y: 2 }], null],
+            ['spc', {}, 'setRows', [{ time: 1727852400000, value: 2 }, { time: 1727852460000, value: 3 }], null]];
         for (const [id, props, action, payload, target] of kinds) {
             await mount('sd-ed-' + id, id, props, { width: 500, height: 220, design: true });
             await js('new Promise(function (r) { setTimeout(r, 150); })');

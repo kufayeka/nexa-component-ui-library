@@ -557,7 +557,7 @@ export const scatter = defineUI({
             const rows = Array.from(idx, (i) => [d.x[i], d.y[i], d.groups[d.g[i]]].concat(p.timeField ? [d.t[i] === d.t[i] ? new Date(d.t[i]).toISOString() : ""] : []));
             const fits = (this._fits || []).map((f) => [f.group || "All", f.model, f.text, Math.round(f.r2 * 10000) / 10000, f.n]);
             let blob;
-            if (o.format === "xlsx") blob = xlsxBlob(head, rows, false, { textCols: [2, 3], sheets: fits.length ? [{ name: "Fit", header: ["Group", "Model", "Equation", "R²", "Points"], rows: fits, textCols: [0, 1, 2] }] : [] });
+            if (o.format === "xlsx") blob = xlsxBlob(head, rows, false, { timeCols: [], textCols: [2, 3], sheets: fits.length ? [{ name: "Fit", header: ["Group", "Model", "Equation", "R²", "Points"], rows: fits, timeCols: [], textCols: [0, 1, 2] }] : [] });
             else {
                 const q = (x) => '"' + String(x).replace(/"/g, '""') + '"';
                 blob = new Blob(["﻿" + [head.map(q).join(",")].concat(rows.map((r) => r.map((x) => (typeof x === "number" ? String(x) : q(x))).join(","))).join("\r\n")], { type: "text/csv;charset=utf-8" });

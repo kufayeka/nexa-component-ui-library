@@ -345,6 +345,18 @@ Which causes to fix **first**: downtime by reason, defects by type, scrap by cau
 
 **Screenshots:** every chart in light and dark is in [`screenshots/`](screenshots/); `npm run screenshots` draws them again from the current code (the scripts are in `screenshots/scripts/`, one per chart, on the dashboard testkit's harness browser).
 
+### SPC / Control Chart (`nexa-ui-spc`)
+
+Is the process stable (in control), and is it capable? Measurements or counts from rows (a query) or a live tag.
+
+- **Chart:** I-MR, X̄-R, X̄-S, p, np, c, u, or **Automatic** (n = 1: I-MR, 2 – 9: X̄-R, 10+: X̄-S; defectives: p / np, defects: c / u). Subgroups: each reading, every N, by a field, per interval. The MR / R / S chart under it (can be off).
+- **Limits from the process, not the spec:** σ within the subgroups (MR̄ / 1.128, R̄ / d2, S̄ / c4); from every subgroup, **the first N or a time range (locked**: a drifting process does not drag its limits along), or set values. A varying n: stepped limits. **Phases** (a field, or a list of names from a time): each its own limits, a divider.
+- **Zones A / B / C**, ±1σ / ±2σ lines; **rules**: Western Electric, Nelson 1 – 8, or picked one by one; a point that breaks one in red with its number; the tooltip says it in words.
+- **Spec** USL / LSL / target (on I-MR only: a subgroup mean is not a part). **Capability panel** (can be off): histogram, the within and overall curves, Cp, Cpk, Pp, Ppk (coloured by your thresholds), expected PPM, out of spec; for counts: % defective, PPM, yield / DPU.
+- **Notes and exclusions live in your DB:** **On Point Click** `{ key, time, phase, value, rules, excluded, note }` → Logic saves → the `notes` / `excluded` props (or **Set notes** / **Set excluded**) bring them back: a flag on the point (**On Note Click**), an excluded point hollow and out of the limits. The chart keeps nothing.
+- **On Violation** `{ key, time, value, chart, rules }` for a NEW point breaking a rule (not the ones there at load, once per point and rule): an andon, a mail.
+- Logic: Set rows, Append rows, **Append value**, Reset the zoom, Clear. Drag pans, Ctrl + wheel zooms. Export CSV / Excel (Data, Capability, Rules sheets) / PNG. In the editor an empty SPC shows a sample process with a shift (*Sample data*).
+
 ### Scatter (`nexa-ui-scatter`)
 
 How two variables move together and where the process window is: oven temperature against the reject rate, a motor's power against its temperature, pressure against flow.
