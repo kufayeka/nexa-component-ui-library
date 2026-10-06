@@ -343,6 +343,18 @@ Which causes to fix **first**: downtime by reason, defects by type, scrap by cau
 
 **Look:** vertical or **horizontal** (long names), the bar / faded / Others colours, the gap, rounded corners; the cumulative line straight / smooth / step / none, an area under it, markers, its % at each point; labels on the bars (value / % / both); axis titles, gridlines, unit, decimals. **Tooltip:** value, %, cumulative %, rank (Others: what is in it; stacked: its parts). **On Bar Click** `{ name, value, percent, cumulative, rank, group }` (a listed category also its own On Click). Export CSV / Excel (rank, value, %, cumulative %, vital few) / PNG. In the editor an empty Pareto shows sample causes (*Sample data*).
 
+### Scatter (`nexa-ui-scatter`)
+
+How two variables move together and where the process window is: oven temperature against the reject rate, a motor's power against its temperature, pressure against flow.
+
+- **Data:** rows (X / Y fields; group, size, colour value, label and time fields) over a window (window buttons, **Set the window**), or **two live tags**: a point each time one of them changes (kept up to a limit). Logic: **Set rows**, **Append rows**, **Reset the zoom**, **Clear**.
+- **Every point is drawn**, not a sample: past a limit (20 000 by default, or always / never) the cloud is drawn as its **density** and the **outliers** (points with nothing near them) still as dots.
+- **Points:** colour by group (the palette), by a value (a gradient) or by **time** (old points fade, a drift shows its trail); bubbles from a size field; circle / square / triangle / one shape per group; opacity; the newest live point marked.
+- **Fit:** a line, a parabola, exponential or logarithmic, per group or for all, with its **equation and R²**; a line's 95 % confidence band. Around each group its 2 σ **ellipse** or its **hull**.
+- **Reference lines and bands** on X or Y (a spec limit, the good window); **quadrants** at the means or at set values, with their names.
+- **Axes:** linear or log, min / max, titles and units, gridlines.
+- **Interaction:** tooltip (label, group, X, Y, time) and the nearest point ringed; **On Point Click** `{ x, y, group, label, index, row }`; **Shift + drag a box: On Select** `{ count, x0, x1, y0, y1, rows }` with **every** row inside it (the first 1 000 in `rows`); drag pans, **Ctrl + wheel** zooms (a plain wheel scrolls the page), a double click resets. Legend part (points per group, R²; click hides a group, Alt+click shows it alone). Export CSV / Excel (the fits on their own sheet) / PNG. In the editor an empty Scatter shows sample points (*Sample data*).
+
 ### Gauge (`nexa-ui-gauge`)
 
 A dial per value (pressure, temperature, speed, load), several side by side. A **gauge** is an item of the shared value model, the same as a KPI tile (a Logic target: **Set value**, **Set history**, **Clear**; **On Gauge Click**, **On State Change**, **On Stale** / **On Resume**; a live tag; the figure over a window; value texts; a delta; a target, a setpoint, a normal band; threshold steps; stale), plus its **scale**: min / max, each **soft** (it grows with the data to a round number), and **the ghost**: the lowest .. highest over the window, faint on the track (the peak the value now hides).

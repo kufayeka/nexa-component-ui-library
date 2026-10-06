@@ -19,7 +19,7 @@ async function ok(label, fn) { if (only && !only.test(label)) return; await fn()
 const P = 'nexa-ui-';
 const ALL = ['button', 'input', 'textarea', 'number-input', 'password-input', 'checkbox', 'switch', 'radio-group', 'segmented', 'select', 'combobox', 'slider', 'tags-input', 'pin-input', 'rating',
     'text', 'heading', 'badge', 'tag', 'card', 'avatar', 'stat', 'alert', 'progress', 'spinner', 'skeleton', 'separator', 'empty-state', 'timeline', 'fieldset',
-    'tabs', 'iframe', 'datetime', 'daterange', 'pagination', 'line-chart', 'state-timeline', 'column-chart', 'pie', 'pareto', 'gauge', 'bar-gauge', 'area-chart', 'kpi', 'histogram'];
+    'tabs', 'iframe', 'datetime', 'daterange', 'pagination', 'line-chart', 'state-timeline', 'column-chart', 'pie', 'pareto', 'scatter', 'gauge', 'bar-gauge', 'area-chart', 'kpi', 'histogram'];
 const TAG = '{sparkplug:Plant::Line1::Mixer::Speed}';
 
 withHarness({
@@ -44,7 +44,7 @@ withHarness({
         await settle();
     };
 
-    await ok('all 45 components register (UI · Form / Display / Layout / Embed / Charts), each mounts and draws', async () => {
+    await ok('all 46 components register (UI · Form / Display / Layout / Embed / Charts), each mounts and draws', async () => {
         const reg = await js(`${JSON.stringify(ALL)}.map(function (id) { var d = NEXA.getComponent("${P}" + id); return d ? d.category : "MISSING " + id; })`);
         assert.deepStrictEqual(reg.filter((c) => c !== 'UI · Form' && c !== 'UI · Display' && c !== 'UI · Layout' && c !== 'UI · Embed' && c !== 'UI · Charts'), []);
         for (const id of ALL) await mount('all-' + id, id, {}, { width: 320, height: 120 });
@@ -1422,6 +1422,70 @@ withHarness({
         }
     });
 
+    // ---- Scatter --------------------------------------------------------------------------------
+    const scw = (name) => `NexaTest.wc(${JSON.stringify(name)})`;
+
+    await ok('Scatter: every point drawn, a group per field (a legend entry each), a fit per group with its R2; past the limit the density with the outliers as dots', async () => {
+        const rows = [];
+        for (let i = 0; i < 200; i++) { const x = i / 10; rows.push({ temp: x, reject: 2 * x + 1 + ((i * 37) % 7 - 3) * 0.05, oven: i % 2 ? 'Oven 2' : 'Oven 1' }); }
+        await mount('sc1', 'scatter', { rows, xField: 'temp', yField: 'reject', groupField: 'oven', fit: 'linear', fitBand: true, shapeAround: 'ellipse', quadrants: 'mean', quadNames: 'A,B,C,D', references: [{ axis: 'y', kind: 'line', value: 30, label: 'USL' }] }, { width: 600, height: 320 });
+        const r = await js(`(function () { var w = ${scw('sc1')}; w.draw(); return { n: w._geo.idx.length, groups: w._data().groups, fits: w._fits.map(function (f) { return [f.group, f.model, Math.round(f.coef[1] * 10) / 10, f.r2 > 0.99]; }), dense: w._dense,
+            legend: Array.from(w.renderRoot.querySelectorAll(".lg-name")).map(function (e) { return e.textContent; }) }; })()`);
+        assert.strictEqual(r.n, 200);
+        assert.deepStrictEqual(r.groups, ['Oven 1', 'Oven 2']);
+        assert.deepStrictEqual(r.fits, [['Oven 1', 'linear', 2, true], ['Oven 2', 'linear', 2, true]]);
+        assert.deepStrictEqual(r.legend, ['Oven 1', 'Oven 2']);
+        assert.strictEqual(r.dense, false);
+        assert.ok(await pixels('sc1') > 5000);
+        // a big cloud: its density, the sparse points still as dots
+        const big = [];
+        for (let i = 0; i < 30000; i++) { const a = (i * 2.399) % 6.283, rr = Math.sqrt((i % 997) / 997); big.push({ x: 50 + 10 * rr * Math.cos(a), y: 50 + 10 * rr * Math.sin(a) }); }
+        big.push({ x: 90, y: 10 });
+        await mount('sc2', 'scatter', { rows: big, densityLimit: 20000 }, { width: 600, height: 320 });
+        assert.strictEqual(await js(`(function () { var w = ${scw('sc2')}; w.draw(); return [w._dense, w._geo.idx.length]; })()`).then((v) => JSON.stringify(v)), JSON.stringify([true, 30001]));
+        assert.ok(await pixels('sc2') > 5000);
+        await js(`NexaTest.setProps("sc2", { density: "off" })`); await settle();
+        assert.strictEqual(await js(`(function () { var w = ${scw('sc2')}; w.draw(); return w._dense; })()`), false);
+        for (const look of [{ colorBy: 'time', timeField: 't' }, { shape: 'group', fit: 'poly2', fitPer: 'all' }, { xLog: true, yLog: true, fit: 'exp' }, { shapeAround: 'hull', fit: 'log' }]) {
+            await js(`NexaTest.setProps("sc1", ${JSON.stringify(look)})`); await settle();
+            assert.ok(await pixels('sc1') > 3000, JSON.stringify(look));
+        }
+    });
+
+    await ok('Scatter: Shift + drag selects EVERY row in the box (On Select), a click gives its point and row, Ctrl + wheel zooms (a plain wheel does not), two live tags add points, the export', async () => {
+        const rows = [];
+        for (let i = 0; i < 100; i++) rows.push({ x: i, y: i % 10, batch: 'B' + i });
+        await mount('sc3', 'scatter', { rows, labelField: 'batch' }, { width: 600, height: 320 });
+        await js(`(function () { var w = ${scw('sc3')}; window.__scev = []; var old = w.emit.bind(w); w.emit = function (n, p, t) { window.__scev.push([n, p]); return old(n, p, t); }; w.draw(); return 1; })()`);
+        // a box from (x 9.5, y 9.5) to (x 30.5, y 4.5): x 10..30 with y 5..9
+        const sel = await js(`(function () { var w = ${scw('sc3')}, g = w._geo, pl = w.renderRoot.querySelector(".plot"), b = pl.getBoundingClientRect();
+            var ev = function (t, x, y) { pl.dispatchEvent(new PointerEvent(t, { bubbles: true, button: 0, shiftKey: true, pointerId: 1, clientX: b.left + g.X(x), clientY: b.top + g.Y(y) })); };
+            ev("pointerdown", 9.5, 9.5); ev("pointermove", 20, 7); ev("pointermove", 30.5, 4.5); ev("pointerup", 30.5, 4.5);
+            var e = window.__scev.filter(function (e) { return e[0] === "select"; })[0]; return e ? { count: e[1].count, first: e[1].rows[0].batch } : null; })()`);
+        // x 10..30 with y (x mod 10) 5..9: 15-19 and 25-29
+        assert.deepStrictEqual(sel, { count: 10, first: 'B15' });
+        const click = await js(`(function () { var w = ${scw('sc3')}, g = w._geo, pl = w.renderRoot.querySelector(".plot"), b = pl.getBoundingClientRect();
+            var ev = function (t) { pl.dispatchEvent(new PointerEvent(t, { bubbles: true, button: 0, pointerId: 1, clientX: b.left + g.X(42), clientY: b.top + g.Y(2) })); };
+            ev("pointerdown"); ev("pointerup");
+            var e = window.__scev.filter(function (e) { return e[0] === "pointClick"; })[0]; return e ? [e[1].x, e[1].y, e[1].label, e[1].index, e[1].row.batch] : null; })()`);
+        assert.deepStrictEqual(click, [42, 2, 'B42', 42, 'B42']);
+        const zoom = (ctrl) => js(`(function () { var w = ${scw('sc3')}, g = w._geo, pl = w.renderRoot.querySelector(".plot"), b = pl.getBoundingClientRect();
+            pl.dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, ctrlKey: ${ctrl}, deltaY: -100, clientX: b.left + g.px + g.pw / 2, clientY: b.top + g.py + g.ph / 2 })); return w._view ? Math.round(w._view.x1 - w._view.x0) : null; })()`);
+        assert.strictEqual(await zoom(false), null, 'a plain wheel scrolls the page');
+        const span = await zoom(true);
+        assert.ok(span > 0 && span < 105, 'zoomed: ' + span);
+        await js(`NexaTest.invoke("sc3", "resetZoom", {})`); await settle();
+        assert.strictEqual(await js(`${scw('sc3')}._view`), null);
+        assert.strictEqual(await js(`${scw('sc3')}.exportData({ format: "csv" })`), 100);
+        await js(`NexaTest.setProps("sc3", { fit: "linear" })`); await settle();
+        assert.strictEqual(await js(`(function () { var w = ${scw('sc3')}; w.draw(); return w.exportData({ format: "xlsx" }); })()`), 100);
+        // two live tags: a point when either changes
+        await mount('sc4', 'scatter', { liveName: 'Motor 1' }, { width: 500, height: 260 });
+        for (const v of [{ liveX: 5, liveY: 7 }, { liveX: 6 }, { liveX: 6 }, { liveY: 9 }]) { await js(`NexaTest.setProps("sc4", ${JSON.stringify(v)})`); await settle(); }
+        assert.deepStrictEqual(await js(`(function () { var w = ${scw('sc4')}, d = w._data(); w.draw(); return [d.n, Array.from(d.x.subarray(0, d.n)), Array.from(d.y.subarray(0, d.n)), d.groups]; })()`), [3, [5, 6, 6], [7, 7, 9], ['Motor 1']]);
+        assert.ok(await pixels('sc4') > 1000);
+    });
+
     // ---- Pareto ---------------------------------------------------------------------------------
     const paw = (name) => `NexaTest.wc(${JSON.stringify(name)})`;
 
@@ -1993,14 +2057,15 @@ withHarness({
         await js('delete window.__big; 1');
     });
 
-    await ok('Sample data (Line, State Timeline, Column, KPI, Gauge, Bar Gauge, Pie): only in the editor, for the user series, marked "Sample data"; on a page with no data the chart is empty; real data drops it', async () => {
+    await ok('Sample data (Line, State Timeline, Column, KPI, Gauge, Bar Gauge, Pie, Scatter): only in the editor, for the user series, marked "Sample data"; on a page with no data the chart is empty; real data drops it', async () => {
         const kinds = [['line-chart', { series: [{ id: 's1', name: 'Speed' }] }, 'appendPoints', [{ x: 1727852400000, y: 3 }], { list: 'series', id: 's1' }],
             ['state-timeline', { rows: [{ id: 'r1', name: 'Filler' }] }, 'appendChange', { time: 1727852400000, state: 1 }, { list: 'rows', id: 'r1' }],
             ['column-chart', { series: [{ id: 's1', name: 'Load' }, { id: 's2', name: 'Temp', type: 'line' }] }, 'setData', { A: 3 }, { list: 'series', id: 's1' }],
             ['kpi', { tiles: [{ id: 'k1', name: 'Load' }] }, 'setValue', 21.5, { list: 'tiles', id: 'k1' }],
             ['gauge', { gauges: [{ id: 'g1', name: 'Load' }] }, 'setValue', 21.5, { list: 'gauges', id: 'g1' }],
             ['bar-gauge', { bars: [{ id: 'b1', name: 'Load' }] }, 'setValue', 21.5, { list: 'bars', id: 'b1' }],
-            ['pie', { slices: [{ id: 's1', name: 'Load' }] }, 'setValue', 21.5, { list: 'slices', id: 's1' }]];
+            ['pie', { slices: [{ id: 's1', name: 'Load' }] }, 'setValue', 21.5, { list: 'slices', id: 's1' }],
+            ['scatter', {}, 'setRows', [{ x: 1, y: 2 }], null]];
         for (const [id, props, action, payload, target] of kinds) {
             await mount('sd-ed-' + id, id, props, { width: 500, height: 220, design: true });
             await js('new Promise(function (r) { setTimeout(r, 150); })');

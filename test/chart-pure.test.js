@@ -13,7 +13,7 @@ function load(file) {
     const names = [...src.matchAll(/^export (?:var|let|const|function) (\w+)/gm)].map((m) => m[1]);
     return new Function(src.replace(/^export /gm, '') + '\nreturn {' + names.join(',') + '};')();
 }
-const R = load('rows.js'), S = load('stack.js'), C = load('curves.js');
+const R = load('rows.js'), S = load('stack.js'), C = load('curves.js'), F = load('fit.js');
 
 let passed = 0;
 function ok(label, fn) { fn(); passed++; console.log('✔ ' + label); }
@@ -137,6 +137,37 @@ ok('monotoneSegments: ends at the points, never overshoots a peak or a valley (a
     assert.deepStrictEqual(C.stepPoints([0, 10, 20], [1, 2, 3], 3, 'after'), [0, 1, 10, 1, 10, 2, 20, 2, 20, 3]);
     assert.deepStrictEqual(C.stepPoints([0, 10], [1, 2], 2, 'before'), [0, 1, 0, 2, 10, 2]);
     assert.deepStrictEqual(C.stepPoints([0, 10], [1, 2], 2, 'center'), [0, 1, 5, 1, 5, 2, 10, 2]);
+});
+
+ok('fit: a line, a parabola, exponential and logarithmic recover their coefficients with R2 = 1; the band is narrowest at the mean; too few points: null', () => {
+    const xs = Float64Array.from([1, 2, 3, 4, 5, 6, 7, 8]), near = (a, b, msg) => assert.ok(Math.abs(a - b) < 1e-6, msg + ': ' + a + ' vs ' + b);
+    const lin = F.fit(xs, xs.map((x) => 2 * x + 1), 8, 'linear');
+    near(lin.coef[0], 1, 'a'); near(lin.coef[1], 2, 'b'); near(lin.r2, 1, 'r2'); assert.strictEqual(lin.text, 'y = 2x + 1');
+    const p2 = F.fit(xs, xs.map((x) => x * x - 3 * x + 2), 8, 'poly2');
+    near(p2.coef[0], 2, 'a'); near(p2.coef[1], -3, 'b'); near(p2.coef[2], 1, 'c'); near(p2.r2, 1, 'r2');
+    const ex = F.fit(xs, xs.map((x) => 3 * Math.exp(0.5 * x)), 8, 'exp');
+    near(ex.coef[0], 3, 'a'); near(ex.coef[1], 0.5, 'b');
+    const lg = F.fit(xs, xs.map((x) => 1 + 2 * Math.log(x)), 8, 'log');
+    near(lg.coef[0], 1, 'a'); near(lg.coef[1], 2, 'b');
+    const noisy = F.fit(xs, Float64Array.from([3, 5.5, 6.8, 9.4, 10.6, 13.3, 15.1, 16.8]), 8, 'linear');
+    assert.ok(noisy.r2 > 0.98 && noisy.r2 < 1, 'a noisy line');
+    assert.ok(noisy.band(4.5) < noisy.band(1) && noisy.band(4.5) < noisy.band(8), 'the band widens away from the mean');
+    assert.strictEqual(F.fit(Float64Array.from([1]), Float64Array.from([1]), 1, 'linear'), null);
+    assert.strictEqual(F.fit(Float64Array.from([2, 2, 2]), Float64Array.from([1, 2, 3]), 3, 'linear'), null, 'every x the same');
+    assert.strictEqual(F.fit(xs, xs.map((x) => -x), 8, 'exp'), null, 'exp needs y > 0');
+    const nan = F.fit(Float64Array.from([1, 2, NaN, 3]), Float64Array.from([2, 4, 5, 6]), 4, 'linear');
+    assert.strictEqual(nan.n, 3, 'NaN points skipped');
+});
+
+ok('ellipse: a cloud along y = x leans 45 degrees, centred at the means; hull: the corners only, counter-clockwise', () => {
+    const xs = [0, 1, 2, 3, 4, 5], ys = [0.1, 0.9, 2.1, 2.9, 4.1, 4.9], idx = [0, 1, 2, 3, 4, 5];
+    const e = F.ellipse(xs, ys, idx);
+    assert.ok(Math.abs(e.cx - 2.5) < 1e-9 && Math.abs(e.cy - 2.5) < 1e-9);
+    assert.ok(Math.abs(e.angle - Math.PI / 4) < 0.05, 'angle ' + e.angle);
+    assert.ok(e.rx > e.ry * 5, 'long and thin');
+    assert.strictEqual(F.ellipse(xs, ys, [0, 1]), null);
+    const hx = [0, 4, 4, 0, 2, 1], hy = [0, 0, 4, 4, 2, 3];
+    assert.deepStrictEqual(F.hull(hx, hy, [0, 1, 2, 3, 4, 5]), [[0, 0], [4, 0], [4, 4], [0, 4]]);
 });
 
 console.log(`\n${passed} passed\nALL OK`);
