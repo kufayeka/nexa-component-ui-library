@@ -266,6 +266,9 @@ Machine states along time (Running / Stopped / Idle…): one bar per machine, a 
   - a **share bar**: each state's part of the time, in its colour (availability at a glance).
 
   The state the statistics are about is selectable.
+- **The look of the statistics:** the titles' size and colour, the figures' size and colour, and **a column's own look** (a list: pick a column, give it its size, weight and colour: the % big, bold and green as the focus point).
+- **Widths:** the name column and the statistics as a % of the width (0 = as wide as their texts); the timeline takes the rest. **Show the timeline** off: only the names and the statistics, two columns (a table of availability per machine).
+- **The names:** size, weight, colour, alignment (left / right), and **Wrap a long name** onto the next lines (as many as the lane is high; off: cut with …).
 - **Tooltip** on a block: state, start → end, duration, note. On a touchscreen: a tap.
 - **On Segment Click** `{ row, state, value, start, end, duration, note }` (the whole block), for drill-down.
 - v1 charts: *The state's label in its bar* off becomes *Text in a bar: None*.

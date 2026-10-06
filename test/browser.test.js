@@ -1284,6 +1284,27 @@ withHarness({
         assert.deepStrictEqual([mp.barText, 'showLabels' in mp], ['none', false]);
     });
 
+    await ok('State Timeline: the look of the names and the statistics (a column of its own: size, weight, colour), the widths, names and statistics only, a long name wrapped', async () => {
+        const rows = [{ id: 'm1', name: 'Filler line one north station' }, { id: 'm2', name: 'Capper' }];
+        const hist = `[{ time: ${T0}, state: 1 }, { time: ${T0 + H}, state: 0 }, { time: ${T0 + 2 * H}, state: null }]`;
+        await mount('st-look', 'state-timeline', Object.assign({ rows, nameWidth: 25, statsWidth: 30, nameWrap: true, rowHeight: 60, statsHeadColor: '#123456',
+            statsStyles: [{ column: 'statsPercent', size: 22, weight: '700', color: '#00aa00' }] }, ST), { width: 800, height: 240 });
+        const r = await js(`(function () { var w = ${stw('st-look')}; w.setStates(${hist}, { list: "rows", id: "m1" }); w.setStates(${hist}, { list: "rows", id: "m2" }); w.draw();
+            var L = w._scale.layout, ctx = w.canvas.getContext("2d"); ctx.font = w._font(11, "400", w._colors());
+            return { W: w._layoutSize().w, labelW: L.labelW, statsW: Math.round(L.statsW), pct: w._statStyle("statsPercent"), time: w._statStyle("statsDuration"), lines: w._nameLines(ctx, "Filler line one north station", 90, 60, 14).length, plotW: w._scale.m.plotW }; })()`);
+        assert.strictEqual(r.labelW, Math.round(r.W * 0.25), 'the name column: 25 % of the width');
+        assert.strictEqual(r.statsW, Math.round(r.W * 0.3), 'the statistics: 30 % of the width');
+        assert.deepStrictEqual(r.pct, { size: 22, weight: '700', color: '#00aa00' }, 'the % column: its own look');
+        assert.deepStrictEqual(r.time, { size: 11, weight: '400', color: '' }, 'the others: the look of the statistics');
+        assert.ok(r.lines >= 2, 'a long name wraps: ' + r.lines);
+        assert.ok(r.plotW > 200, 'the timeline takes the rest');
+        await mount('st-tab', 'state-timeline', Object.assign({ rows, showChart: false }, ST), { width: 800, height: 200 });
+        const t = await js(`(function () { var w = ${stw('st-tab')}; w.setStates(${hist}, { list: "rows", id: "m1" }); w.draw(); var m = w._scale.m;
+            return { plotW: m.plotW, ruler: m.rulerH, statsW: Math.round(w._scale.layout.statsW), labelW: w._scale.layout.labelW }; })()`);
+        assert.deepStrictEqual([t.plotW, t.ruler], [0, 0], 'names and statistics only: no timeline, no ruler');
+        assert.ok(t.statsW + t.labelW > 700, 'the statistics take the rest of the width: ' + JSON.stringify(t));
+    });
+
     await ok('State Timeline: hover shows the segment (state, start, end, duration, note); a click: On Segment Click', async () => {
         await mount('st-d', 'state-timeline', Object.assign({ rows: [{ id: 'm1', name: 'Filler' }], showStats: false }, ST), { width: 600, height: 200 });
         await js(`(function () { var w = ${stw('st-d')}; w.setStates([{ start: ${T0}, end: ${T0 + H}, state: 1, note: "Batch 7" }, { start: ${T0 + H}, end: ${T0 + 2 * H}, state: 0 }], { list: "rows", id: "m1" }); w.setRange({ from: ${T0}, to: ${T0 + 2 * H} }); return 1; })()`);

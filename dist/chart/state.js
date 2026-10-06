@@ -73,6 +73,15 @@ export function fmtDuration(ms) {
 }
 
 const STATS = [["statsPercent", "%"], ["statsDuration", "Time"], ["statsCount", "Count"], ["statsFirst", "First"], ["statsLast", "Last"], ["statsCurrent", "Now"]];
+const WEIGHTS = [["400", "Normal"], ["600", "Semibold"], ["700", "Bold"]];
+
+// a statistics column styled on its own (a focus point: the availability big, bold, green)
+const STAT_STYLE_FIELDS = {
+    column: { type: "enum", label: "Column", default: "statsPercent", options: opt([["statsPercent", "% of the time"], ["statsDuration", "Total time"], ["statsCount", "Times entered"], ["statsFirst", "First start"], ["statsLast", "Last end"], ["statsCurrent", "Its state now"]]) },
+    size: { type: "number", label: "Text size", default: 14, min: 8, max: 48, unit: "px" },
+    weight: { type: "enum", label: "Weight", default: "700", options: opt(WEIGHTS) },
+    color: { type: "color", label: "Colour", default: "", tokens: "colors", help: "A hex colour, or a theme token (◆). Empty: the statistics' colour." }
+};
 
 export const stateTimeline = defineUI({
     ...chartCommon,
@@ -140,6 +149,23 @@ export const stateTimeline = defineUI({
         },
         rowHeight: { type: "number", group: "Layout", label: "Lane height", default: 0, min: 0, max: 200, unit: "px", help: "0: the lanes share the height." },
         laneGap: { type: "number", group: "Layout", label: "Gap between lanes", default: 4, min: 0, max: 40, unit: "px" },
+        showChart: {
+            type: "boolean", group: "Layout", label: "Show the timeline", default: true,
+            help: "Off: only the names and the statistics, two columns (a table of availability per machine)."
+        },
+        nameWidth: {
+            type: "number", group: "Layout", section: "Widths", label: "Name column (% of the width)", default: 0, min: 0, max: 70, step: 1, unit: "%",
+            help: "0 = as wide as the longest name (at most 40 %)."
+        },
+        statsWidth: {
+            type: "number", group: "Layout", section: "Widths", label: "Statistics (% of the width)", default: 0, min: 0, max: 80, step: 1, unit: "%",
+            help: "0 = as wide as the figures. The timeline takes the rest. Without the timeline the statistics take all that is left.", visibleWhen: (p) => p.showChart !== false
+        },
+        nameSize: { type: "number", group: "Layout", section: "Name", label: "Text size", default: 11, min: 8, max: 40, unit: "px" },
+        nameWeight: { type: "enum", group: "Layout", section: "Name", label: "Weight", default: "400", options: opt(WEIGHTS) },
+        nameColor: { type: "color", group: "Layout", section: "Name", label: "Colour", default: "", tokens: "colors", help: "Empty: the theme's text." },
+        nameAlign: { type: "enum", group: "Layout", section: "Name", label: "Alignment", default: "right", options: opt([["right", "Right (next to the timeline)"], ["left", "Left"]]) },
+        nameWrap: { type: "boolean", group: "Layout", section: "Name", label: "Wrap a long name", default: false, help: "Off: a long name is cut with …. On: it continues on the next lines (as many as the lane is high)." },
         barText: {
             type: "enum", group: "Layout", label: "Text in a bar (when it fits)", default: "label",
             options: opt([["label", "The state (Running)"], ["both", "The state and its duration (Running · 2h 15m)"], ["duration", "The duration (2h 15m)"], ["value", "The value (1, RUN)"], ["none", "None"]])
@@ -172,6 +198,14 @@ export const stateTimeline = defineUI({
         statsFirst: { type: "boolean", group: "Statistics", label: "First start", default: false, visibleWhen: (p) => p.showStats !== false },
         statsLast: { type: "boolean", group: "Statistics", label: "Last end", default: false, visibleWhen: (p) => p.showStats !== false },
         statsCurrent: { type: "boolean", group: "Statistics", label: "Its state now, since when", default: false, visibleWhen: (p) => p.showStats !== false },
+        statsHeadSize: { type: "number", group: "Statistics", section: "Look", label: "Titles: text size", default: 10, min: 8, max: 32, unit: "px", visibleWhen: (p) => p.showStats !== false },
+        statsHeadColor: { type: "color", group: "Statistics", section: "Look", label: "Titles: colour", default: "", tokens: "colors", help: "Empty: the theme's muted text.", visibleWhen: (p) => p.showStats !== false },
+        statsSize: { type: "number", group: "Statistics", section: "Look", label: "Figures: text size", default: 11, min: 8, max: 40, unit: "px", visibleWhen: (p) => p.showStats !== false },
+        statsColor: { type: "color", group: "Statistics", section: "Look", label: "Figures: colour", default: "", tokens: "colors", help: "Empty: the theme's text.", visibleWhen: (p) => p.showStats !== false },
+        statsStyles: {
+            type: "list", group: "Statistics", label: "A column's own look", noun: "column style", default: [], visibleWhen: (p) => p.showStats !== false,
+            help: "Make one column the focus: its size, weight and colour (e.g. the % big, bold and green).", item: { fields: STAT_STYLE_FIELDS, noun: "column style" }
+        },
         statsBar: {
             type: "boolean", group: "Statistics", label: "Share bar (each state's part of the time)", default: false, visibleWhen: (p) => p.showStats !== false,
             help: "A small bar per lane split into its states' colours: availability without reading numbers."
@@ -578,14 +612,17 @@ export const stateTimeline = defineUI({
         }
 
         // ---- geometry ------------------------------------------------------------------------------
+        // no timeline (names and statistics only): no ruler
+        _rulerHeight(h) { return this.p.showChart === false ? 0 : super._rulerHeight(h); }
+
         getPlotMetrics(width, height, layout) {
             const L = layout || (this._scale && this._scale.layout) || { labelW: 80, statsW: 0, lanes: 1 };
             const rh = this._rulerHeight(height), rulerGap = rh ? 6 : 0;
-            const head = L.statsW ? 18 : 6;
+            const head = L.statsW ? Math.max(18, (L.headH || 10) + 8) : 6;
             const plotX = L.labelW + 8, plotY = head;
-            const plotW = Math.max(1, width - plotX - (L.statsW ? L.statsW + 12 : 12));
+            const plotW = this.p.showChart === false ? 0 : Math.max(1, width - plotX - (L.statsW ? L.statsW + 12 : 12));
             const plotH = Math.max(1, height - plotY - rh - rulerGap - 6);
-            return { plotX, plotY, plotW, plotH, padRight: width - plotX - plotW, rulerX: plotX, rulerY: plotY + plotH + rulerGap, rulerW: plotW, rulerH: rh, statsX: plotX + plotW + 12 };
+            return { plotX, plotY, plotW, plotH, padRight: width - plotX - plotW, rulerX: plotX, rulerY: plotY + plotH + rulerGap, rulerW: plotW, rulerH: rh, statsX: plotX + plotW + (this.p.showChart === false ? 4 : 12) };
         }
 
         _laneBoxes(m, lanes) {
@@ -593,6 +630,27 @@ export const stateTimeline = defineUI({
             const fixed = numOr(this.p.rowHeight, 0);
             const h = fixed > 0 ? Math.min(fixed, (m.plotH - gap * (n - 1)) / n) : (m.plotH - gap * (n - 1)) / n;
             return lanes.map((l, i) => ({ lane: l, y: m.plotY + i * (h + gap), h: Math.max(2, h) }));
+        }
+
+        // the fonts: the name's, the statistics' titles, a column's figures (its own look, else the statistics')
+        _font(size, weight, c) { return (weight || "400") + " " + size + "px " + c.font; }
+        _statStyle(k) {
+            const own = (Array.isArray(this.p.statsStyles) ? this.p.statsStyles : []).filter((x) => x && x.column === k).pop();
+            return { size: numOr(own && own.size, numOr(this.p.statsSize, 11)), weight: own ? own.weight || "700" : "400", color: (own && this._tok(own.color)) || this._tok(this.p.statsColor) };
+        }
+
+        // a name in the lane's height: one line cut with …, or (wrap) as many lines as fit, the last cut
+        _nameLines(ctx, text, w, h, lineH) {
+            if (this.p.nameWrap !== true) return [this._fit(ctx, text, w)];
+            const max = Math.max(1, Math.floor(h / lineH)), lines = [];
+            let cur = "";
+            for (const word of String(text).split(/\s+/)) {
+                const t = cur ? cur + " " + word : word;
+                if (ctx.measureText(t).width <= w || !cur) cur = t; else { lines.push(cur); cur = word; }
+            }
+            if (cur) lines.push(cur);
+            if (lines.length > max) { lines.length = max; lines[max - 1] = this._fit(ctx, lines[max - 1] + "…", w); }
+            return lines.map((l) => this._fit(ctx, l, w));
         }
 
         // ---- drawing ----------------------------------------------------------------------------------
@@ -607,24 +665,37 @@ export const stateTimeline = defineUI({
             const { vMinX, vMaxX } = range || this.getEffectiveTimeRange(fb);
             const c = this._colors();
             // the label column (the name, and the current state's chip) and the statistics: as wide as their texts
-            ctx.font = "11px " + c.font;
+            const nameSize = numOr(this.p.nameSize, 11), nameFont = this._font(nameSize, this.p.nameWeight, c);
+            const headSize = numOr(this.p.statsHeadSize, 10), headFont = this._font(headSize, "400", c);
+            const chart = this.p.showChart !== false;
+            ctx.font = nameFont;
             const badges = this.p.rowBadge === true ? lanes.map((l) => (l.state ? null : this._badgeOf(l.row))) : [];
             let nameW = 40, chipW = 0;
             for (const l of lanes) nameW = Math.max(nameW, Math.ceil(ctx.measureText(l.label).width));
             ctx.font = "600 10px " + c.font;
             for (const bd of badges) if (bd) chipW = Math.max(chipW, Math.ceil(ctx.measureText(bd.text).width) + 18);
-            const labelW = Math.min(nameW + (chipW ? chipW + 8 : 0), Math.round(width * 0.4));
-            ctx.font = "11px " + c.font;
+            // the name column: the % chosen, else as wide as the longest name (and the chip), at most 40 %
+            const nameShare = numOr(this.p.nameWidth, 0);
+            const labelW = nameShare > 0 ? Math.round((width * Math.min(70, nameShare)) / 100) : Math.min(nameW + (chipW ? chipW + 8 : 0), Math.round(width * 0.4));
             const cols = this._statCols(), span = vMaxX - vMinX;
             const stats = lanes.map((l) => this.statsOf(l, vMinX, vMaxX));
-            const colW = cols.map(([k, title], j) => {
-                let w = ctx.measureText(j === 0 && k === "statsPercent" && this.p.lanes !== "split" ? "% " + (stats[0] && stats[0].label || "") : title).width;
-                stats.forEach((st) => { w = Math.max(w, ctx.measureText(this._statText(k, st, span)).width); });
-                return Math.ceil(w) + 12;
+            const headOf = (k, title) => (k === "statsPercent" && this.p.lanes !== "split" ? "% " + (stats[0] && stats[0].label || "") : title);
+            const colW = cols.map(([k, title]) => {
+                const st = this._statStyle(k);
+                ctx.font = headFont;
+                let w = ctx.measureText(headOf(k, title)).width;
+                ctx.font = this._font(st.size, st.weight, c);
+                stats.forEach((sv) => { w = Math.max(w, ctx.measureText(this._statText(k, sv, span)).width); });
+                return Math.ceil(w) + 14;
             });
             const barW = this.p.showStats !== false && this.p.statsBar === true ? 96 : 0;
-            const statsW = colW.reduce((a, b) => a + b, 0) + barW;
-            const layout = { labelW, statsW, colW, cols, barW };
+            // the statistics: as wide as the figures, or the % chosen (the room shared by the columns); no timeline: all the rest
+            const natural = colW.reduce((a, b) => a + b, 0) + barW;
+            const statsShare = numOr(this.p.statsWidth, 0);
+            const want = !chart ? width - labelW - 16 - (this.p.exportButton !== false ? 24 : 0) : statsShare > 0 ? Math.round((width * Math.min(80, statsShare)) / 100) : natural;
+            if (want > natural && colW.length) { const extra = (want - natural) / colW.length; for (let j = 0; j < colW.length; j++) colW[j] += extra; }
+            const statsW = cols.length || barW ? Math.max(natural, want) : 0;
+            const layout = { labelW, statsW, colW, cols, barW, headH: headSize };
             const m = this.getPlotMetrics(width, height, layout);
             const { plotX, plotY, plotW, plotH } = m;
             const xSpan = Math.max(1, vMaxX - vMinX);
@@ -633,10 +704,10 @@ export const stateTimeline = defineUI({
             this._scale = { vMinX, vMaxX, toX, m, layout, boxes, stats };
             // the corner (Live, ⋮) at the plot's top-right, not over the statistics
             const corner = !this._exporting && this.renderRoot && this.renderRoot.querySelector(".corner");
-            if (corner) corner.style.right = (m.padRight + 6) + "px";
+            if (corner) corner.style.right = (chart ? m.padRight + 6 : 6) + "px";
 
             // the time grid, the lanes' backgrounds
-            if (this.p.showGrid !== false) {
+            if (chart && this.p.showGrid !== false) {
                 const step = this._timeStep(xSpan, plotW);
                 ctx.beginPath();
                 ctx.strokeStyle = c.grid;
@@ -647,7 +718,8 @@ export const stateTimeline = defineUI({
             ctx.textBaseline = "middle";
             boxes.forEach((b, i) => {
                 ctx.fillStyle = c.band;
-                ctx.fillRect(plotX, b.y, plotW, b.h);
+                if (chart) ctx.fillRect(plotX, b.y, plotW, b.h);
+                else ctx.fillRect(0, b.y, width, b.h);
                 const bd = badges[i];
                 let right = plotX - 8;
                 if (bd) {
@@ -666,10 +738,14 @@ export const stateTimeline = defineUI({
                     ctx.restore();
                     right = x - 8;
                 }
-                ctx.fillStyle = c.strong;
-                ctx.textAlign = "right";
-                ctx.font = "11px " + c.font;
-                ctx.fillText(this._fit(ctx, b.lane.label, Math.max(20, right - 4)), right, b.y + b.h / 2);
+                // the name: its size, weight, colour, alignment; one line cut, or wrapped into the lane's height
+                ctx.font = nameFont;
+                ctx.fillStyle = this._tok(this.p.nameColor) || c.strong;
+                const left = this.p.nameAlign === "left", lineH = Math.round(nameSize * 1.25);
+                const lines = this._nameLines(ctx, b.lane.label, Math.max(20, right - 8), b.h, lineH);
+                ctx.textAlign = left ? "left" : "right";
+                const y0 = b.y + b.h / 2 - ((lines.length - 1) * lineH) / 2;
+                lines.forEach((t, k) => ctx.fillText(t, left ? 8 : right, y0 + k * lineH));
             });
 
             // the segments
@@ -683,7 +759,7 @@ export const stateTimeline = defineUI({
                 ctx.fillRect(a, plotY, z - a, plotH);
             }
             const hov = this.hover && this.hover.seg, how = this.p.barText || "label";
-            for (const b of boxes) {
+            for (const b of chart ? boxes : []) {
                 // gaps and the stale stretch: hatched, a word in them when it fits
                 for (const g of this.gapsOf(b.lane.row, vMinX, vMaxX)) {
                     const x0 = toX(g.start), x1 = Math.max(toX(g.end), x0 + 1);
@@ -737,9 +813,9 @@ export const stateTimeline = defineUI({
             // the share bar: each state's part of the time shown, in its colour
             if (layout.barW) {
                 const bx = m.statsX + 4, bw = layout.barW - 12;
-                ctx.font = "10px " + c.font;
+                ctx.font = headFont;
                 ctx.textAlign = "left";
-                ctx.fillStyle = c.text;
+                ctx.fillStyle = this._tok(this.p.statsHeadColor) || c.text;
                 ctx.fillText("Share", bx, plotY - 9);
                 boxes.forEach((b) => {
                     const h = Math.min(12, b.h), y = b.y + (b.h - h) / 2, sh = this._shares(b.lane, vMinX, vMaxX);
@@ -757,21 +833,21 @@ export const stateTimeline = defineUI({
             }
             // the statistics: a header, a column per figure, a row per lane
             if (cols.length) {
-                ctx.font = "10px " + c.font;
                 ctx.textAlign = "right";
                 let x = m.statsX + layout.barW;
+                const headColor = this._tok(this.p.statsHeadColor) || c.text;
                 cols.forEach(([k, title], j) => {
                     x += colW[j];
-                    ctx.fillStyle = c.text;
-                    const head = k === "statsPercent" && this.p.lanes !== "split" ? "% " + (stats[0] ? stats[0].label : "") : title;
-                    ctx.fillText(head, x - 4, plotY - 9);
-                    boxes.forEach((b, i) => {
-                        ctx.fillStyle = c.strong;
-                        ctx.fillText(this._statText(k, stats[i], span), x - 4, b.y + b.h / 2);
-                    });
+                    ctx.font = headFont;
+                    ctx.fillStyle = headColor;
+                    ctx.fillText(headOf(k, title), x - 4, plotY - 4 - headSize / 2);
+                    const st = this._statStyle(k);
+                    ctx.font = this._font(st.size, st.weight, c);
+                    ctx.fillStyle = st.color || c.strong;
+                    boxes.forEach((b, i) => ctx.fillText(this._statText(k, stats[i], span), x - 4, b.y + b.h / 2));
                 });
             }
-            this._drawRuler(ctx, m, vMinX, vMaxX, boxes);
+            if (chart) this._drawRuler(ctx, m, vMinX, vMaxX, boxes);
             if (!this._exporting) {
                 const tot = this._stateTotals(vMinX, vMaxX);
                 fillLegend(this.renderRoot, (key, k) => {
