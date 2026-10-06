@@ -37,8 +37,9 @@ This is a Nexa component plugin (`@kufayeka/nexa-component-ui-library`). Every c
   - `dist/`: containers.js core.js datetime.js display.js embed.js form.js pagination.js ui-library.js;
   - `dist/chart/`:
     - core.js (ChartElement: the shared look, numbers, times, the export menu);
-    - time-chart.js (TimeChartElement: time, ruler, zoom / pan, annotations, gestures, the frozen clock, print);
+    - time-chart.js (TimeChartElement: time, ruler, zoom / pan, the range buttons, annotations, gestures, the frozen clock, print);
     - props.js (the shared props / events / actions);
+    - legend.js (the legend part: props, list / table markup, placement around / inside the plot; its look is in core.js CHART_CSS);
     - time.js, buffer.js, export.js (the xlsx writer);
     - rows.js, stack.js (pure: rows -> columns split by a field, stacking, nice ticks; test/chart-pure.test.js, no browser), cartesian.js (the layered Chart: NOT imported by index.js, hidden from the palette since 2026-10-06; its engine is reused by the per-type charts, see .agents/CHART_FAMILIES_DESIGN.md section 0);
     - line.js (Line Chart), state.js (State Timeline), bar.js (Bar / Column Chart), pie.js (Pie / Donut Chart), gauge.js (Radial & Linear Gauge), area.js (Area & Stacked Area Chart), sparkline.js (Sparkline), histogram.js (Histogram);

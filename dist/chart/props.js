@@ -54,6 +54,20 @@ export function refreshProps(def) {
     };
 }
 
+/** The range buttons above the plot (1 h, 8 h, 24 h …) and Now / Live. */
+export function rangeBarProps() {
+    return {
+        rangeBar: {
+            type: "boolean", group: "Zoom & pan", label: "Range buttons above the chart", default: false,
+            help: "The viewer picks the time shown with one click (it follows live), and Now brings a zoomed or panned chart back to the newest data."
+        },
+        rangeChoices: {
+            type: "string", group: "Zoom & pan", label: "Buttons", default: "15m, 1h, 8h, 24h, 7d", bindable: false, visibleWhen: (p) => p.rangeBar === true,
+            help: "Spans, comma separated: 30s, 15m, 1h, 8h, 24h, 7d, 30d (at most 8)."
+        }
+    };
+}
+
 /** Zoom & pan, and their limits. */
 export function zoomProps() {
     return {
@@ -151,6 +165,10 @@ export function timeEvents() {
 export function timeActions() {
     return {
         followLive: { label: "Follow live", help: "Shows the newest data again (as Live / a double click)." },
+        showLast: {
+            label: "Show the last …", params: { span: "string" }, help: "Follows live, showing the last span (as a range button): 15m, 1h, 8h, 24h, 7d.",
+            example: "{ \"span\": \"8h\" }"
+        },
         setRange: {
             label: "Show a time range", params: { from: "number", to: "number" }, help: "Pauses live and shows that time.",
             example: "{ \"from\": 1727852400000, \"to\": 1727856000000 }"

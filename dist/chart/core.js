@@ -8,7 +8,7 @@
 //     {tokens}), the download, the options from Logic over the Properties, a PNG (2×, a title,
 //     the span, the legend) — a chart gives its own data / legend through a few hooks.
 // A chart's view extends ChartElement and implements prepareData() and draw(target).
-import { html, css, evaluateExpression } from "../../../nexa-sdk/nexa-component-sdk.js";
+import { html, css, evaluateExpression, theme } from "../../../nexa-sdk/nexa-component-sdk.js";
 import { BASE_CSS, UIElement } from "../core.js";
 import { parts, pad2, clock, relative, MONTHS, DAYS } from "./time.js";
 
@@ -242,6 +242,56 @@ export const CHART_CSS = css`
         color: var(--fg, #fff);
         font-variant-numeric: tabular-nums;
     }
+
+    /* the legend part (legend.js): around the plot (.c-main holds left / plot / right), inside it,
+       or a table */
+    .c-main { flex: 1 1 auto; min-height: 0; min-width: 0; display: flex; flex-direction: row; }
+    .c-main > .plot { flex: 1 1 auto; min-width: 0; }
+    .legend .lg-item { font-size: var(--lg-size, 11px); }
+    .lg-swatch.sw-sq { width: 10px; height: 10px; border-radius: 2px; }
+    .lg-swatch.sw-dot { width: 9px; height: 9px; border-radius: 50%; }
+    .legend.v { padding: 8px 10px; max-height: none; max-width: 40%; flex-direction: column; flex-wrap: nowrap; align-items: stretch; overflow: auto; }
+    .legend.inside {
+        position: absolute; z-index: 4; max-width: 60%; max-height: 60%; padding: 4px 8px;
+        background: color-mix(in srgb, var(--panel, #181b1f) 88%, transparent);
+        border: 1px solid var(--bd, #2c3235); border-radius: var(--r, 4px);
+    }
+    .legend.inside.tl { left: var(--lg-l, 52px); top: var(--lg-t, 20px); }
+    .legend.inside.tr { right: calc(var(--lg-r, 14px) + 28px); top: var(--lg-t, 20px); }
+    .legend.inside.bl { left: var(--lg-l, 52px); bottom: var(--lg-b, 50px); }
+    .legend.inside.br { right: var(--lg-r, 14px); bottom: var(--lg-b, 50px); }
+    .legend.table { display: block; padding: 4px 10px 6px; }
+    .legend.v.table { max-width: 50%; }
+    .legend.table.inside { padding: 2px 4px; }
+    .lg-table { border-collapse: collapse; font-size: var(--lg-size, 11px); width: auto; }
+    .legend.table:not(.inside):not(.v) .lg-table { width: 100%; }
+    .lg-table th {
+        font-weight: 600; color: var(--fg-muted, #a0aec0); text-align: right; padding: 2px 6px;
+        border-bottom: 1px solid var(--bd, #2c3235); white-space: nowrap;
+    }
+    .lg-table th.lg-th-name { text-align: left; }
+    .lg-table td { padding: 2px 6px; white-space: nowrap; }
+    .lg-table td.lg-val { text-align: right; }
+    .lg-row { display: table-row; cursor: pointer; }
+    .lg-row:hover { background: var(--panel-bg-subtle, rgba(127, 127, 127, 0.12)); }
+    .lg-row:hover .lg-name { color: var(--fg, #fff); }
+    .lg-row.off { opacity: 0.38; }
+    .lg-name-cell { display: inline-flex; align-items: center; gap: 6px; }
+
+    /* the range buttons above a time chart (time-chart.js) */
+    .range-bar { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; padding: 6px 10px 0; min-width: 0; }
+    .rb-group { display: inline-flex; border: 1px solid var(--bd, #2c3235); border-radius: var(--r, 4px); overflow: hidden; flex-shrink: 1; min-width: 0; }
+    .rb-btn {
+        border: 0; border-right: 1px solid var(--bd, #2c3235); background: none; color: var(--fg-muted, #a0aec0);
+        font: 500 11px/1 var(--nexa-fonts-body, "IBM Plex Sans", system-ui, sans-serif);
+        padding: 5px 9px; cursor: pointer; white-space: nowrap; font-variant-numeric: tabular-nums;
+    }
+    .rb-group .rb-btn:last-child { border-right: 0; }
+    .rb-btn:hover { background: var(--panel-bg-subtle, rgba(127, 127, 127, 0.12)); color: var(--fg, #fff); }
+    .rb-btn.on { background: var(--cp-solid, #0f62fe); color: var(--cp-contrast, #fff); }
+    .rb-fill { flex: 1 1 auto; }
+    .rb-now { border: 1px solid var(--bd, #2c3235); border-radius: var(--r, 4px); color: var(--fg, #fff); }
+    .rb-live { display: inline-flex; align-items: center; gap: 5px; font: 500 11px/1 var(--nexa-fonts-body, "IBM Plex Sans", system-ui, sans-serif); color: var(--fg-muted, #a0aec0); padding: 0 2px; }
 
     .tooltip-rows {
         display: flex;
@@ -508,6 +558,16 @@ export class ChartElement extends UIElement {
         seriesColor(i) {
             const n = ((Math.max(0, Math.floor(i) || 0)) % SERIES_PALETTE.length) + 1;
             return getComputedStyle(this).getPropertyValue("--nexa-colors-chart-" + n).trim() || SERIES_PALETTE[n - 1];
+        }
+
+        // a colour as saved: a hex / rgb as it is, a {token:colors.…} as the theme's value now (the host resolves the
+        // chart's own props, not the fields of the items inside a list: a series' or a threshold's colour comes here)
+        _tok(v) {
+            if (typeof v !== "string") return "";
+            const m = /^\s*\{token:([^}]+)\}\s*$/.exec(v);
+            if (!m) return v.trim();
+            const r = theme.token(m[1].trim());
+            return typeof r === "string" ? r : "";
         }
 
         /** A status colour from the theme (error / warning / success / info / neutral): thresholds, states, alarms. */

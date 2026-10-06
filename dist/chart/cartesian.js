@@ -16,7 +16,7 @@
 // Float64 ring buffers (the Line Chart's: M4 + LOD), drawn at pixel accuracy (10^6 points a series); columns and stacks group
 // the points into columns of the width the screen allows. The time ruler, zoom / pan, Live, annotations and the refresh
 // ticker are TimeChartElement's. See .agents/CHART_FAMILIES_DESIGN.md.
-import { html, css, formatValue, theme } from "../../../nexa-sdk/nexa-component-sdk.js";
+import { html, css, formatValue } from "../../../nexa-sdk/nexa-component-sdk.js";
 import { PREFIX, part, defineUI } from "../core.js";
 import { chartCommon, opt, NOTATIONS, DECIMALS, DASHES, numOr } from "./core.js";
 import { xlsxBlob } from "./export.js";
@@ -579,16 +579,6 @@ export const cartesianChart = defineUI({
         }
 
         _modeOf(s) { const g = this._stackOf(s); return g ? g.mode : (this.p.stacking || "clustered"); }
-
-        // a colour as saved: a hex / rgb as it is, a {token:colors.…} as the theme's value now (the host resolves the props of the
-        // chart itself, not the fields of the items inside a list)
-        _tok(v) {
-            if (typeof v !== "string") return "";
-            const m = /^\s*\{token:([^}]+)\}\s*$/.exec(v);
-            if (!m) return v.trim();
-            const r = theme.token(m[1].trim());
-            return typeof r === "string" ? r : "";
-        }
 
         colorOf(s) {
             const own = s ? this._tok(s.color) : "";

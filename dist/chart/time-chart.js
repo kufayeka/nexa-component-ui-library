@@ -12,11 +12,14 @@
 //   _showHitsTooltip(px, py, w)  its tooltip (an annotation's is drawn here)
 //   _navTraces(ctx, g, list)  its miniature in the navigator; _pngLegend(span)  its PNG legend
 //   _exportSpan(range)       { list, from, to } an export covers
+// It also renders the range buttons (_renderRangeBar(), rangeBarProps()): a chart puts them above its plot.
+import { html } from "../../../nexa-sdk/nexa-component-sdk.js";
 import { ChartElement, numOr } from "./core.js";
 import { getNiceTimeStep, parseTimeWindow, spanMs, timeOf, parts } from "./time.js";
 
 export class TimeChartElement extends ChartElement {
     viewRange = null;         // null = live
+    _preset = 0;              // a range button's span (ms) while live; 0 = the Time range prop
     drag = null;              // { kind: "pan" | "ruler" | "nav" | "navL" | "navR" | "select" | "click", x0, min0, max0, moved }
     hover = null;
     _selection = null;        // { from, to } (Shift + drag)
@@ -70,6 +73,41 @@ export class TimeChartElement extends ChartElement {
         this._rangeChanged("live");
     }
 
+    // a range button / Logic's Show the last: live, that span (the viewer's choice, not saved)
+    showLast(params) {
+        const span = params && typeof params === "object" ? params.span : params;
+        const ms = spanMs(span) || parseTimeWindow(span);
+        if (!(ms > 0)) return;
+        this._preset = ms;
+        this.viewRange = null;
+        this._selection = null;
+        this._tickClock();
+        this.draw();
+        this.requestUpdate();
+        this._rangeChanged("preset");
+    }
+
+    _rangeChoices() {
+        return String(this.p.rangeChoices || "").split(/[\s,;]+/).filter(Boolean)
+            .map((t) => ({ label: t, ms: spanMs(t) || parseTimeWindow(t) })).filter((c) => c.ms > 0).slice(0, 8);
+    }
+
+    /** The range buttons and Now / Live ("" when the chart has none). */
+    _renderRangeBar() {
+        if (this.p.rangeBar !== true) return "";
+        const live = !this.viewRange, cur = this._preset || parseTimeWindow(this.p.timeWindow);
+        return html`
+            <div class="range-bar" part="range-bar">
+                <div class="rb-group" role="group" aria-label="Time shown">
+                    ${this._rangeChoices().map((c) => html`<button type="button" class="rb-btn ${live && c.ms === cur ? "on" : ""}" aria-pressed=${live && c.ms === cur ? "true" : "false"}
+                        title="The last ${c.label}, live" @click=${() => this.showLast(c.label)}>${c.label}</button>`)}
+                </div>
+                <span class="rb-fill"></span>
+                ${live ? html`<span class="rb-live"><span class="live-dot"></span>Live</span>`
+                    : html`<button type="button" class="rb-btn rb-now" title="Back to the newest data (or double click the chart)" @click=${() => this.followLive()}>Now ⏵</button>`}
+            </div>`;
+    }
+
     setRange(params) {
         const from = numOr(params && params.from, NaN), to = numOr(params && params.to, NaN);
         if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from) return;
@@ -100,7 +138,7 @@ export class TimeChartElement extends ChartElement {
             const c = this.clampViewRange(this.viewRange.minX, this.viewRange.maxX, fb);
             return { vMinX: c.minX, vMaxX: c.maxX };
         }
-        const windowMs = parseTimeWindow(this.p.timeWindow);
+        const windowMs = this._preset || parseTimeWindow(this.p.timeWindow);
         let vMinX = windowMs > 0 ? Math.max(fb.minX, fb.maxX - windowMs) : fb.minX, vMaxX = fb.maxX;
         const margin = numOr(this.p.futureMargin, 0);
         if (margin > 0) vMaxX += (vMaxX - vMinX) * margin;
