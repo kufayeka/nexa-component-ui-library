@@ -235,7 +235,12 @@ Machine states along time (Running / Stopped / Idle…): one bar per machine, a 
 
 **States** are defined in the props: a label, a colour, and a match.
 - The match is either an exact **value** (`"1"`) or a **range** (`min`–`max`, e.g. 80–1000 = "High").
-- A value nobody defined shows grey, with its own text.
+- The colour is a hex or a theme token (the defaults: the theme's green / red / yellow); empty: the theme's chart palette.
+- A value nobody defined shows in the theme's neutral colour, **hatched**, with its own text.
+
+**One block per state.** The same state twice in a row is one block, from its first start to the next change:
+- a repeated value is not stored again (Live state or **Append change** `run, run, run` = one Running block); a late change equal to the change after it takes that change's place (the block starts earlier); the first note is kept;
+- values of the same state (81 and 85, both "High") draw as one block and count once.
 
 **Rows** (one per machine) are Logic targets. Each row has its own Update node and its own events.
 - **Live state:** a tag or a variable. Every *change* becomes a block; the same value again is ignored.
@@ -248,17 +253,24 @@ Machine states along time (Running / Stopped / Idle…): one bar per machine, a 
 
 **The chart:**
 - **Lanes:** one lane per row (combined), or one lane per row and state (split: every state on its own line).
+- **Text in a bar** (when it fits): the state, the state and its duration (`Running · 2h 15m`), the duration, the value, or none.
+- **Hide blips shorter than** N ms: a state shorter than that (a sensor chattering Run-Stop-Run) is drawn as part of the block before it. Only the drawing: statistics, the legend and exports keep every change.
+- **Gaps and stale rows are hatched:** the time between intervals says *No data*; a row with **Stale after** N ms (its Data section) that got no value (or Append) for that long ends its state there and is hatched *Stale* up to now, instead of looking like it still runs. A source that sends changes only needs a heartbeat (an Append of the same state: it merges).
+- **Current state chip** beside each row's name (`Stopped · 12m`, in the state's colour; *Stale* when stale). **The chip blinks in** a state you pick (Stopped, Fault): on a page, on screen, while a row is in it.
 - **Statistics column** for each lane, over the time shown. Pick any of:
   - **%** of the time;
   - **total time**;
   - **count** (how often it entered the state);
   - **first** and **last**;
-  - **now** (the current state and how long it has lasted).
+  - **now** (the current state and how long it has lasted);
+  - a **share bar**: each state's part of the time, in its colour (availability at a glance).
 
   The state the statistics are about is selectable.
 - **Tooltip** on a block: state, start → end, duration, note. On a touchscreen: a tap.
-- **On Segment Click** `{ row, state, value, start, end, duration, note }`, for drill-down.
-- **Annotations**, **zoom & pan**, the **time ruler / navigator**, **Follow live**: the same as the Line Chart.
+- **On Segment Click** `{ row, state, value, start, end, duration, note }` (the whole block), for drill-down.
+- v1 charts: *The state's label in its bar* off becomes *Text in a bar: None*.
+- **Legend** (the shared part): below / above / right / left / inside the plot; a list, or a **table of the states** with **%**, **Time** and **Count** over every row in the time shown. A click hides a state's blocks (Alt+click: only this one); the statistics keep it.
+- **Range buttons** above the chart (15m … 7d) and **Now**, **annotations**, **zoom & pan**, the **time ruler / navigator**, **Follow live**: the same as the Line Chart.
 - **Refresh:** On new data (the default), or Every 100 ms … 30 s. With a ticker, the current block keeps growing up to now. It pauses while you hover, zoom or pan, and when the chart is off screen.
 - **Export:**
   - CSV: one row per block (row, state, value, start, end, duration in seconds, note);

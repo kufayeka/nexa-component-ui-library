@@ -13,16 +13,22 @@
 // The states (Properties): a value (or a range of numbers) -> a label and a colour.
 // Layout: a lane per row (its states one after another) or a lane per row AND state (each state on
 // its own line). Statistics per lane (optional): % of the time, total time, times entered, first
-// start, last end, the current state and since when — over the time shown.
+// start, last end, the current state and since when, a share bar — over the time shown.
+// The same state twice in a row is ONE block: a repeated value is not stored again (a late one
+// that repeats its neighbour merges too), and values of the same state (81, 85: "High") draw as one.
+// What is drawn may hide blips shorter than N (statistics and exports keep them); a gap, an unknown
+// value and a row gone stale are hatched.
 import { html, formatValue } from "../../../nexa-sdk/nexa-component-sdk.js";
 import { PREFIX, part, defineUI } from "../core.js";
 import { chartCommon, opt, numOr } from "./core.js";
 import { timeOf, parts, pad2, clock } from "./time.js";
 import { xlsxBlob } from "./export.js";
 import { TimeChartElement } from "./time-chart.js";
-import { timeProps, refreshProps, zoomProps, annotationProps, exportProps, timeEvents, timeActions } from "./props.js";
+import { timeProps, refreshProps, zoomProps, rangeBarProps, annotationProps, exportProps, timeEvents, timeActions } from "./props.js";
+import { legendProps, legendTemplate, legendPlace, fillLegend, placeInsideLegend } from "./legend.js";
 
-const UNKNOWN = ["#9ca3af", "#a8a29e", "#94a3b8", "#a1a1aa"];
+// the legend's figures for a state (over every row, the time shown)
+const STATE_STATS = [["pct", "% of the time", "%"], ["time", "Total time", "Time"], ["count", "Times entered", "Count"]];
 
 const ROW_FIELDS = {
     name: { type: "string", label: "Name", default: "Row" },
@@ -32,7 +38,11 @@ const ROW_FIELDS = {
         type: "tag", access: "read", section: "Data", label: "Live state",
         help: "A tag or a variable: every new value is a change of state, now. A history from Logic: this row's Update node (Set states / Append change)."
     },
-    maxChanges: { type: "number", section: "Data", label: "Changes kept", default: 5000, min: 50, max: 500000, step: 100, help: "The oldest go past it." }
+    maxChanges: { type: "number", section: "Data", label: "Changes kept", default: 5000, min: 50, max: 500000, step: 100, help: "The oldest go past it." },
+    staleAfter: {
+        type: "number", section: "Data", label: "Stale after (ms without data)", default: 0, min: 0, step: 1000,
+        help: "0 = never. No new value (or Append) for this long: its state stops there and the rest, up to now, is hatched (Stale) instead of looking like it still runs. A source that sends changes only needs a heartbeat (an Append of the same state)."
+    }
 };
 
 const STATE_FIELDS = {
@@ -41,7 +51,7 @@ const STATE_FIELDS = {
     value: { type: "string", label: "Value", default: "", help: "The value of the live state / of a change: 1, \"RUN\", true…", visibleWhen: (s) => s.match !== "range" },
     min: { type: "number", label: "From (≥)", default: "", visibleWhen: (s) => s.match === "range" },
     max: { type: "number", label: "To (<)", default: "", visibleWhen: (s) => s.match === "range" },
-    color: { type: "color", label: "Colour", default: "#10b981" }
+    color: { type: "color", label: "Colour", default: "", tokens: "colors", help: "A hex colour, or a theme token (◆). Empty: a colour of the theme's chart palette." }
 };
 
 function rowDefaults() {
@@ -71,7 +81,16 @@ export const stateTimeline = defineUI({
     icon: "fa fa-tasks",
     size: { w: 640, h: 260 },
     help: "What each machine / line / order was doing, along time: a lane per row (or per row and state), the states and their colours in the Properties, statistics per lane. Every row has its own Update node, message and events.",
-    version: 1,
+    version: 2,
+
+    // v1: "The state's label in its bar" off -> the bar's text None
+    migrate(p, from) {
+        if (from < 2) {
+            if (p.showLabels === false && p.barText === undefined) p.barText = "none";
+            delete p.showLabels;
+        }
+        return p;
+    },
 
     groups: ["Rows", "States", "Layout", "Statistics", "Data", "Time axis", "Tooltip", "Legend", "Annotations", "Zoom & pan", "Export", "Style"],
 
@@ -107,7 +126,8 @@ export const stateTimeline = defineUI({
         states: {
             type: "list", group: "States", label: "States", noun: "state",
             help: "A value (or a range of numbers) -> a label and a colour. A value with no state: grey, its own text.",
-            default: [{ label: "Running", match: "value", value: "1", color: "#10b981" }, { label: "Stopped", match: "value", value: "0", color: "#ef4444" }, { label: "Idle", match: "value", value: "2", color: "#f59e0b" }],
+            default: [{ label: "Running", match: "value", value: "1", color: "{token:colors.green.solid}" }, { label: "Stopped", match: "value", value: "0", color: "{token:colors.red.solid}" },
+                { label: "Idle", match: "value", value: "2", color: "{token:colors.yellow.solid}" }],
             item: {
                 fields: STATE_FIELDS, noun: "state",
                 create: (items) => ({ label: "State " + (items.length + 1), match: "value", value: String(items.length), color: "{token:colors.chart." + ((items.length % 14) + 1) + "}" })
@@ -120,7 +140,23 @@ export const stateTimeline = defineUI({
         },
         rowHeight: { type: "number", group: "Layout", label: "Lane height", default: 0, min: 0, max: 200, unit: "px", help: "0: the lanes share the height." },
         laneGap: { type: "number", group: "Layout", label: "Gap between lanes", default: 4, min: 0, max: 40, unit: "px" },
-        showLabels: { type: "boolean", group: "Layout", label: "The state's label in its bar (when it fits)", default: true },
+        barText: {
+            type: "enum", group: "Layout", label: "Text in a bar (when it fits)", default: "label",
+            options: opt([["label", "The state (Running)"], ["both", "The state and its duration (Running · 2h 15m)"], ["duration", "The duration (2h 15m)"], ["value", "The value (1, RUN)"], ["none", "None"]])
+        },
+        minDuration: {
+            type: "number", group: "Layout", label: "Hide blips shorter than (ms)", default: 0, min: 0, step: 500,
+            help: "0 = show every change. A state shorter than this (a sensor chattering Run-Stop-Run) is drawn as part of the one before it. Only the drawing: statistics, the legend and exports keep every change."
+        },
+        rowBadge: {
+            type: "boolean", group: "Layout", label: "Current state next to the name", default: false,
+            help: "A chip in the state's colour beside each row's name: its state now and for how long (an andon at a glance)."
+        },
+        blinkState: {
+            type: "enum", group: "Layout", label: "The chip blinks in", default: "",
+            options: (p) => [{ value: "", label: "Never" }].concat((Array.isArray(p && p.states) ? p.states : []).filter((x) => x && x.label).map((x) => ({ value: x.label, label: x.label }))),
+            visibleWhen: (p) => p.rowBadge === true, help: "A row in this state (Stopped, Fault) blinks its chip on a page (never in the editor)."
+        },
 
         showStats: { type: "boolean", group: "Statistics", label: "Statistics column", default: true, help: "Over the time shown (zoom / pan): what each lane did." },
         statsState: {
@@ -136,14 +172,19 @@ export const stateTimeline = defineUI({
         statsFirst: { type: "boolean", group: "Statistics", label: "First start", default: false, visibleWhen: (p) => p.showStats !== false },
         statsLast: { type: "boolean", group: "Statistics", label: "Last end", default: false, visibleWhen: (p) => p.showStats !== false },
         statsCurrent: { type: "boolean", group: "Statistics", label: "Its state now, since when", default: false, visibleWhen: (p) => p.showStats !== false },
+        statsBar: {
+            type: "boolean", group: "Statistics", label: "Share bar (each state's part of the time)", default: false, visibleWhen: (p) => p.showStats !== false,
+            help: "A small bar per lane split into its states' colours: availability without reading numbers."
+        },
 
         tooltip: { type: "boolean", group: "Tooltip", label: "Tooltip", default: true },
-        legend: { type: "enum", group: "Legend", label: "Legend", default: "bottom", options: opt([["bottom", "Below"], ["top", "Above"], ["none", "None"]]) },
+        ...legendProps({ value: "none", what: "state", stats: STATE_STATS }),
         showGrid: { type: "boolean", default: true, group: "Style", label: "Grid" },
 
         ...timeProps(),
         ...refreshProps("data"),
         ...zoomProps(),
+        ...rangeBarProps(),
         ...exportProps({ thresholds: false }),
         ...annotationProps()
     },
@@ -165,10 +206,22 @@ export const stateTimeline = defineUI({
     },
 
     view: class extends TimeChartElement {
-        _rows = new Map();   // key -> { ch: [{ t, v, note }] sorted, lastLive, demo }
+        _rows = new Map();   // key -> { ch: [{ t, v, note }] sorted, lastLive, demo, lastAt }
+        _hiddenStates = new Set();
+        _blinkOn = true;
 
-        // the last state lasts until now: it grows on the Refresh ticker (or when data comes in)
-        mounted() { this._startRefresh(); }
+        // the last state lasts until now: it grows on the Refresh ticker (or when data comes in).
+        // A chip that blinks (Layout › The chip blinks in): only on a page, on screen, while a row is in that state.
+        mounted() {
+            this._startRefresh();
+            this.every(500, () => {
+                const want = this.p.rowBadge === true && this.p.blinkState;
+                if (!want || this.isEditor || this._inView === false || document.hidden) { if (!this._blinkOn) { this._blinkOn = true; this.draw(); } return; }
+                if (!this._visible().some((r) => this._currentOf(r).label === want)) { if (!this._blinkOn) { this._blinkOn = true; this.draw(); } return; }
+                this._blinkOn = !this._blinkOn;
+                this.draw();
+            });
+        }
 
         propsChanged() { this.prepareData(); }
 
@@ -185,24 +238,37 @@ export const stateTimeline = defineUI({
 
         stateList() { return Array.isArray(this.p.states) ? this.p.states.filter((s) => s && typeof s === "object") : []; }
 
-        /** The state a value is: { label, color, def } (a value no state matches: grey, its text; null: a gap). */
+        // a state's colour: its own (hex or theme token), else the theme's chart palette by its place
+        _stateColor(s, i) { return this._tok(s && s.color) || this.seriesColor(i); }
+
+        /** The state a value is: { label, color, def } (a value no state matches: neutral and hatched, its text; null: a gap). */
         stateOf(v) {
             if (v === null || v === undefined) return null;
-            const sv = String(v), nv = Number(v);
-            for (const s of this.stateList()) {
+            const sv = String(v);
+            // cached per value while the states (and the theme) are the same
+            const key = this.p.states;
+            if (!this._sc || this._sc.key !== key || this._sc.theme !== this._themeStamp()) this._sc = { key, theme: this._themeStamp(), map: new Map() };
+            let r = this._sc.map.get(sv);
+            if (r) return r;
+            const nv = Number(v), list = this.stateList();
+            for (let i = 0; i < list.length && !r; i++) {
+                const s = list[i];
                 if (s.match === "range") {
                     const lo = numOr(s.min, -Infinity), hi = numOr(s.max, Infinity);
-                    if (Number.isFinite(nv) && nv >= lo && nv < hi) return { label: s.label || sv, color: s.color || "#10b981", def: s };
-                } else if (String(s.value) === sv) return { label: s.label || sv, color: s.color || "#10b981", def: s };
+                    if (Number.isFinite(nv) && nv >= lo && nv < hi) r = { label: s.label || sv, color: this._stateColor(s, i), def: s };
+                } else if (String(s.value) === sv) r = { label: s.label || sv, color: this._stateColor(s, i), def: s };
             }
-            let h = 0;
-            for (let i = 0; i < sv.length; i++) h = (h * 31 + sv.charCodeAt(i)) | 0;
-            return { label: sv, color: UNKNOWN[Math.abs(h) % UNKNOWN.length], def: null };
+            if (!r) r = { label: sv, color: this.statusColor("neutral"), def: null };
+            if (this._sc.map.size < 5000) this._sc.map.set(sv, r);
+            return r;
         }
+
+        // light / dark changes the resolved colours
+        _themeStamp() { return document.documentElement.getAttribute("data-nexa-mode") || ""; }
 
         _row(r) {
             let st = this._rows.get(r._key);
-            if (!st) { st = { ch: [], lastLive: undefined, demo: false }; this._rows.set(r._key, st); }
+            if (!st) { st = { ch: [], lastLive: undefined, demo: false, lastAt: 0 }; this._rows.set(r._key, st); }
             return st;
         }
 
@@ -216,14 +282,20 @@ export const stateTimeline = defineUI({
             return list.find((r) => r.id && r.id === String(ref)) || list.find((r) => r.name === String(ref)) || byIndex || null;
         }
 
-        // a change of state into a row, in time order (an equal time replaces); -> whether it is the newest
+        // a change of state into a row, in time order (an equal time replaces). The same state twice in a
+        // row is one block: a value equal to the one before it is not kept (Run Run Run = one Run from
+        // the first), and a late change equal to the one after it takes its place (that block starts
+        // earlier). A note is kept (the first one). -> whether it is (in) the newest block
         _insert(st, t, v, note, cap) {
             const ch = st.ch;
+            const same = (a, b) => a && b && a.v !== null && b.v !== null && String(a.v) === String(b.v);
             let i = ch.length;
             while (i > 0 && ch[i - 1].t > t) i--;
             const c = { t, v, note: note || "" };
-            if (i > 0 && ch[i - 1].t === t) ch[i - 1] = c; else ch.splice(i, 0, c);
-            if (ch.length > cap) ch.splice(0, ch.length - cap);
+            if (i > 0 && ch[i - 1].t === t) ch[--i] = c; else ch.splice(i, 0, c);
+            if (same(ch[i - 1], c)) { if (!ch[i - 1].note && c.note) ch[i - 1].note = c.note; ch.splice(i, 1); i--; }
+            else if (same(c, ch[i + 1])) { if (!c.note) c.note = ch[i + 1].note; ch.splice(i + 1, 1); }
+            if (ch.length > cap) { const cut = ch.length - cap; ch.splice(0, cut); i -= cut; }
             return i >= ch.length - 1;
         }
 
@@ -254,6 +326,7 @@ export const stateTimeline = defineUI({
             if (st.demo) { st.ch = []; st.demo = false; }
             const cap = Math.max(50, numOr(r.maxChanges, 5000));
             let n = 0;
+            if (list.length) st.lastAt = Date.now();
             const starts = new Set(list.filter((c) => !c.end).map((c) => c.t));
             for (const c of list) {
                 if (c.end && starts.has(c.t)) continue;
@@ -310,6 +383,7 @@ export const stateTimeline = defineUI({
             st.demo = false;
             const list = Array.isArray(params) ? params : params && Array.isArray(params.states) ? params.states : [];
             const n = this._addChanges(r, st, this._changesOf(list), false);
+            st.lastAt = Date.now();
             this.scheduleDraw();
             this.requestUpdate();
             return n;
@@ -346,17 +420,65 @@ export const stateTimeline = defineUI({
 
         _open() { return this._visible().some((r) => { const ch = this._row(r).ch; return ch.length && ch[ch.length - 1].v !== null; }); }
 
-        // a row's segments within [a, b]: { start, end, v, note } (clipped), gaps left out
-        segmentsOf(r, a, b) {
-            const ch = this._row(r).ch, out = [], now = this._now();
+        // when a row went stale (Stale after: no data for that long): its state ends there (null: not stale)
+        _staleAt(r) {
+            const after = numOr(r.staleAfter, 0), st = this._row(r), ch = st.ch;
+            if (!(after > 0) || !st.lastAt || st.demo || !ch.length || ch[ch.length - 1].v === null) return null;
+            const at = st.lastAt + after;
+            return this._now() > at ? Math.max(at, ch[ch.length - 1].t) : null;
+        }
+
+        /**
+         * A row's segments within [a, b]: { start, end, v, note, fullStart, fullEnd, info } (clipped; gaps
+         * left out). Neighbours of the same state are one segment (81 and 85 are both "High"). display:
+         * what is drawn (blips shorter than Hide blips go into the segment before them).
+         */
+        segmentsOf(r, a, b, display) {
+            const ch = this._row(r).ch, now = this._now(), stale = this._staleAt(r);
+            const min = display ? numOr(this.p.minDuration, 0) : 0;
+            const full = [];
             for (let i = 0; i < ch.length; i++) {
                 const c = ch[i];
                 if (c.v === null) continue;
-                const end = i + 1 < ch.length ? ch[i + 1].t : Math.max(now, c.t);
-                if (end <= a || c.t >= b) continue;
-                out.push({ start: Math.max(c.t, a), end: Math.min(end, b), v: c.v, note: c.note, fullStart: c.t, fullEnd: end });
+                let end = i + 1 < ch.length ? ch[i + 1].t : Math.max(now, c.t);
+                if (i + 1 === ch.length && stale !== null) end = stale;
+                if (end <= c.t && i + 1 < ch.length) continue;
+                const info = this.stateOf(c.v), prev = full[full.length - 1];
+                const touching = prev && prev.fullEnd === c.t;
+                if (touching && (prev.info.label === info.label || (min > 0 && end - c.t < min))) { prev.fullEnd = end; continue; }
+                // a blip absorbed before: the next one of the same state joins too
+                full.push({ v: c.v, note: c.note, fullStart: c.t, fullEnd: end, info });
+            }
+            const out = [];
+            for (const g of full) {
+                if (g.fullEnd <= a || g.fullStart >= b) continue;
+                out.push(Object.assign(g, { start: Math.max(g.fullStart, a), end: Math.min(g.fullEnd, b) }));
             }
             return out;
+        }
+
+        // a row's hatched stretches within [a, b]: gaps (an interval's end until the next state) and the
+        // time since it went stale: [{ start, end, kind: "gap" | "stale" }]
+        gapsOf(r, a, b) {
+            const ch = this._row(r).ch, now = this._now(), out = [];
+            const push = (s, e, kind) => { if (e > a && s < b && e > s) out.push({ start: Math.max(s, a), end: Math.min(e, b), kind }); };
+            for (let i = 0; i < ch.length; i++) if (ch[i].v === null && i + 1 < ch.length) push(ch[i].t, ch[i + 1].t, "gap");
+            const stale = this._staleAt(r);
+            if (stale !== null) push(stale, Math.max(now, stale), "stale");
+            return out;
+        }
+
+        // a row's state now: { label, color, since } (stale: "Stale")
+        _currentOf(r) {
+            const ch = this._row(r).ch, last = ch[ch.length - 1];
+            if (!last || last.v === null) return { label: "—", color: null, since: null };
+            const stale = this._staleAt(r);
+            if (stale !== null) return { label: "Stale", color: this.statusColor("neutral"), since: stale, stale: true };
+            // since: the start of the block it is in (the same state merged)
+            const info = this.stateOf(last.v);
+            let k = ch.length - 1;
+            while (k > 0 && ch[k - 1].v !== null && ch[k - 1].t < ch[k].t && this.stateOf(ch[k - 1].v).label === info.label) k--;
+            return { label: info.label, color: info.color, since: ch[k].t };
         }
 
         _fullBounds() {
@@ -366,7 +488,7 @@ export const stateTimeline = defineUI({
                 const ch = this._row(r).ch;
                 if (!ch.length) continue;
                 lo = Math.min(lo, ch[0].t);
-                hi = Math.max(hi, ch[ch.length - 1].v === null ? ch[ch.length - 1].t : Math.max(now, ch[ch.length - 1].t));
+                hi = Math.max(hi, ch[ch.length - 1].v === null && !this._row(r).demo ? ch[ch.length - 1].t : Math.max(now, ch[ch.length - 1].t));
             }
             return Number.isFinite(lo) ? { minX: lo, maxX: hi > lo ? hi : lo + 1000 } : null;
         }
@@ -380,7 +502,7 @@ export const stateTimeline = defineUI({
             const out = [];
             for (const r of rows) {
                 const seen = new Map();
-                for (const s of this.stateList()) seen.set(s.label, { label: s.label, color: s.color, def: s });
+                this.stateList().forEach((s, i) => seen.set(s.label, { label: s.label, color: this._stateColor(s, i), def: s }));
                 for (const c of this._row(r).ch) { const s = this.stateOf(c.v); if (s && !seen.has(s.label)) seen.set(s.label, s); }
                 for (const s of seen.values()) out.push({ row: r, key: r._key + "|" + s.label, label: (r.name || r.id) + " · " + s.label, state: s });
             }
@@ -402,19 +524,48 @@ export const stateTimeline = defineUI({
             let covered = 0, ms = 0, count = 0, first = null, last = null;
             for (const s of segs) {
                 covered += s.end - s.start;
-                const st = this.stateOf(s.v);
-                if (!st || st.label !== label) continue;
+                if (s.info.label !== label) continue;
                 ms += s.end - s.start;
                 count++;
                 if (first === null) first = s.start;
                 last = s.end;
             }
-            const ch = this._row(lane.row).ch, lastC = ch[ch.length - 1];
-            const cur = lastC && lastC.v !== null ? this.stateOf(lastC.v) : null;
-            return { label, pct: covered > 0 ? ms / covered : NaN, ms, count, first, last, now: cur ? cur.label : "—", since: cur ? lastC.t : null };
+            const cur = this._currentOf(lane.row);
+            return { label, pct: covered > 0 ? ms / covered : NaN, ms, count, first, last, now: cur.label, since: cur.since };
         }
 
         _statCols() { return this.p.showStats === false ? [] : STATS.filter(([k]) => this.p[k] === true || (this.p[k] !== false && (k === "statsPercent" || k === "statsDuration"))); }
+
+        // each state's time in a lane over [a, b] (the share bar): [{ label, color, ms }], covered
+        _shares(lane, a, b) {
+            const by = new Map();
+            let covered = 0;
+            for (const s of this.segmentsOf(lane.row, a, b)) {
+                const d = s.end - s.start;
+                covered += d;
+                if (lane.state && s.info.label !== lane.state.label) continue;
+                const e = by.get(s.info.label) || { label: s.info.label, color: s.info.color, ms: 0 };
+                e.ms += d;
+                by.set(s.info.label, e);
+            }
+            return { list: Array.from(by.values()), covered };
+        }
+
+        // the legend's figures per state over every row shown: label -> { pct, time, count }
+        _stateTotals(a, b) {
+            const by = new Map();
+            let covered = 0;
+            for (const r of this._visible()) for (const s of this.segmentsOf(r, a, b)) {
+                const d = s.end - s.start, e = by.get(s.info.label) || { ms: 0, count: 0 };
+                covered += d;
+                e.ms += d;
+                e.count++;
+                by.set(s.info.label, e);
+            }
+            const out = new Map();
+            for (const [k, e] of by) out.set(k, { pct: covered ? e.ms / covered : NaN, time: e.ms, count: e.count });
+            return out;
+        }
 
         _statText(k, st, span) {
             const t = (x) => (x === null ? "—" : span >= 86400000 ? this.fmtDateShort(x) + " " + clock(parts(x, this._tf().utc), this._tf().h12, false) : clock(parts(x, this._tf().utc), this._tf().h12, true));
@@ -455,11 +606,15 @@ export const stateTimeline = defineUI({
             this._newest = fb.maxX;
             const { vMinX, vMaxX } = range || this.getEffectiveTimeRange(fb);
             const c = this._colors();
-            // the label column and the statistics column: as wide as their texts
+            // the label column (the name, and the current state's chip) and the statistics: as wide as their texts
             ctx.font = "11px " + c.font;
-            let labelW = 40;
-            for (const l of lanes) labelW = Math.max(labelW, Math.ceil(ctx.measureText(l.label).width));
-            labelW = Math.min(labelW, Math.round(width * 0.3));
+            const badges = this.p.rowBadge === true ? lanes.map((l) => (l.state ? null : this._badgeOf(l.row))) : [];
+            let nameW = 40, chipW = 0;
+            for (const l of lanes) nameW = Math.max(nameW, Math.ceil(ctx.measureText(l.label).width));
+            ctx.font = "600 10px " + c.font;
+            for (const bd of badges) if (bd) chipW = Math.max(chipW, Math.ceil(ctx.measureText(bd.text).width) + 18);
+            const labelW = Math.min(nameW + (chipW ? chipW + 8 : 0), Math.round(width * 0.4));
+            ctx.font = "11px " + c.font;
             const cols = this._statCols(), span = vMaxX - vMinX;
             const stats = lanes.map((l) => this.statsOf(l, vMinX, vMaxX));
             const colW = cols.map(([k, title], j) => {
@@ -467,8 +622,9 @@ export const stateTimeline = defineUI({
                 stats.forEach((st) => { w = Math.max(w, ctx.measureText(this._statText(k, st, span)).width); });
                 return Math.ceil(w) + 12;
             });
-            const statsW = colW.reduce((a, b) => a + b, 0);
-            const layout = { labelW, statsW, colW, cols };
+            const barW = this.p.showStats !== false && this.p.statsBar === true ? 96 : 0;
+            const statsW = colW.reduce((a, b) => a + b, 0) + barW;
+            const layout = { labelW, statsW, colW, cols, barW };
             const m = this.getPlotMetrics(width, height, layout);
             const { plotX, plotY, plotW, plotH } = m;
             const xSpan = Math.max(1, vMaxX - vMinX);
@@ -489,14 +645,32 @@ export const stateTimeline = defineUI({
                 ctx.stroke();
             }
             ctx.textBaseline = "middle";
-            for (const b of boxes) {
+            boxes.forEach((b, i) => {
                 ctx.fillStyle = c.band;
                 ctx.fillRect(plotX, b.y, plotW, b.h);
+                const bd = badges[i];
+                let right = plotX - 8;
+                if (bd) {
+                    // the chip: the state now, in its colour, for how long (blinking: faint every other tick)
+                    ctx.font = "600 10px " + c.font;
+                    const w = Math.ceil(ctx.measureText(bd.text).width) + 12, h = Math.min(18, b.h), y = b.y + (b.h - h) / 2, x = right - w;
+                    ctx.save();
+                    ctx.globalAlpha = bd.label === this.p.blinkState && !this._blinkOn ? 0.3 : 1;
+                    ctx.fillStyle = bd.color || c.band;
+                    ctx.beginPath();
+                    if (ctx.roundRect) ctx.roundRect(x, y, w, h, h / 2); else ctx.rect(x, y, w, h);
+                    ctx.fill();
+                    ctx.fillStyle = bd.color ? this._onColor(bd.color) : c.strong;
+                    ctx.textAlign = "left";
+                    ctx.fillText(bd.text, x + 6, y + h / 2 + 0.5);
+                    ctx.restore();
+                    right = x - 8;
+                }
                 ctx.fillStyle = c.strong;
                 ctx.textAlign = "right";
                 ctx.font = "11px " + c.font;
-                ctx.fillText(this._fit(ctx, b.lane.label, labelW), plotX - 8, b.y + b.h / 2);
-            }
+                ctx.fillText(this._fit(ctx, b.lane.label, Math.max(20, right - 4)), right, b.y + b.h / 2);
+            });
 
             // the segments
             ctx.save();
@@ -508,24 +682,38 @@ export const stateTimeline = defineUI({
                 ctx.fillStyle = "rgba(59, 130, 246, 0.14)";
                 ctx.fillRect(a, plotY, z - a, plotH);
             }
-            const hov = this.hover && this.hover.seg;
+            const hov = this.hover && this.hover.seg, how = this.p.barText || "label";
             for (const b of boxes) {
-                for (const s of this.segmentsOf(b.lane.row, vMinX, vMaxX)) {
-                    const st = this.stateOf(s.v);
-                    if (!st || (b.lane.state && st.label !== b.lane.state.label)) continue;
+                // gaps and the stale stretch: hatched, a word in them when it fits
+                for (const g of this.gapsOf(b.lane.row, vMinX, vMaxX)) {
+                    const x0 = toX(g.start), x1 = Math.max(toX(g.end), x0 + 1);
+                    this._hatch(ctx, x0, b.y, x1 - x0, b.h, c);
+                    const word = g.kind === "stale" ? "Stale" : "No data";
+                    ctx.font = "10.5px " + c.font;
+                    if (b.h >= 12 && ctx.measureText(word).width + 8 < x1 - x0) { ctx.fillStyle = c.text; ctx.textAlign = "left"; ctx.fillText(word, Math.max(x0, plotX) + 4, b.y + b.h / 2); }
+                }
+                for (const s of this.segmentsOf(b.lane.row, vMinX, vMaxX, true)) {
+                    const st = s.info;
+                    if (b.lane.state && st.label !== b.lane.state.label) continue;
+                    if (this._hiddenStates.has(st.label)) continue;
                     const x0 = toX(s.start), x1 = Math.max(toX(s.end), x0 + 1);
                     ctx.fillStyle = st.color;
                     ctx.fillRect(x0, b.y, x1 - x0, b.h);
+                    // a value no state matches: neutral and hatched (it is not a state you defined)
+                    if (!st.def) this._hatch(ctx, x0, b.y, x1 - x0, b.h, c);
                     if (hov && hov.lane === b.lane.key && hov.fullStart === s.fullStart) {
                         ctx.strokeStyle = c.strong;
                         ctx.lineWidth = 2;
                         ctx.strokeRect(x0 + 1, b.y + 1, x1 - x0 - 2, b.h - 2);
                     }
-                    if (this.p.showLabels !== false && b.h >= 12) {
+                    if (how !== "none" && b.h >= 12) {
                         ctx.font = "10.5px " + c.font;
-                        const text = st.label, tw = ctx.measureText(text).width;
-                        if (tw + 8 < x1 - x0) {
-                            ctx.fillStyle = this._contrast(st.color);
+                        const d = fmtDuration(s.fullEnd - s.fullStart);
+                        const full = how === "duration" ? d : how === "value" ? String(s.v) : how === "both" ? st.label + " · " + d : st.label;
+                        // "both" too long: the state alone
+                        const text = how === "both" && ctx.measureText(full).width + 8 >= x1 - x0 ? st.label : full;
+                        if (ctx.measureText(text).width + 8 < x1 - x0) {
+                            ctx.fillStyle = this._onColor(st.color);
                             ctx.textAlign = "left";
                             ctx.fillText(text, Math.max(x0, plotX) + 4, b.y + b.h / 2);
                         }
@@ -546,11 +734,32 @@ export const stateTimeline = defineUI({
             }
             ctx.restore();
 
+            // the share bar: each state's part of the time shown, in its colour
+            if (layout.barW) {
+                const bx = m.statsX + 4, bw = layout.barW - 12;
+                ctx.font = "10px " + c.font;
+                ctx.textAlign = "left";
+                ctx.fillStyle = c.text;
+                ctx.fillText("Share", bx, plotY - 9);
+                boxes.forEach((b) => {
+                    const h = Math.min(12, b.h), y = b.y + (b.h - h) / 2, sh = this._shares(b.lane, vMinX, vMaxX);
+                    ctx.fillStyle = c.band;
+                    ctx.fillRect(bx, y, bw, h);
+                    let x = bx;
+                    for (const e of sh.list) {
+                        if (!sh.covered) break;
+                        const w = (e.ms / sh.covered) * bw;
+                        ctx.fillStyle = e.color;
+                        ctx.fillRect(x, y, w, h);
+                        x += w;
+                    }
+                });
+            }
             // the statistics: a header, a column per figure, a row per lane
             if (cols.length) {
                 ctx.font = "10px " + c.font;
                 ctx.textAlign = "right";
-                let x = m.statsX;
+                let x = m.statsX + layout.barW;
                 cols.forEach(([k, title], j) => {
                     x += colW[j];
                     ctx.fillStyle = c.text;
@@ -563,6 +772,37 @@ export const stateTimeline = defineUI({
                 });
             }
             this._drawRuler(ctx, m, vMinX, vMaxX, boxes);
+            if (!this._exporting) {
+                const tot = this._stateTotals(vMinX, vMaxX);
+                fillLegend(this.renderRoot, (key, k) => {
+                    const e = tot.get(key);
+                    if (!e) return "";
+                    return k === "pct" ? (Number.isFinite(e.pct) ? formatValue(e.pct * 100, { decimals: 1, separators: "dot" }) + "%" : "") : k === "time" ? fmtDuration(e.time) : e.count + "×";
+                });
+                if (legendPlace(this.p).inside) placeInsideLegend(this._plotEl(), m, width, height);
+            }
+        }
+
+        // the chip beside a row's name: { label, color, text, stale }
+        _badgeOf(r) {
+            const cur = this._currentOf(r);
+            if (cur.since === null) return { label: "—", color: null, text: "—" };
+            return { label: cur.label, color: cur.color, stale: !!cur.stale, text: cur.label + " · " + fmtDuration(this._now() - cur.since) };
+        }
+
+        // diagonal hatching over a box (a gap, stale, a value no state matches)
+        _hatch(ctx, x, y, w, h, c) {
+            if (w <= 0 || h <= 0) return;
+            ctx.save();
+            ctx.beginPath();
+            ctx.rect(x, y, w, h);
+            ctx.clip();
+            ctx.strokeStyle = this.hexToRgba(c.text, 0.45);
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            for (let k = x - h; k < x + w; k += 6) { ctx.moveTo(k, y + h); ctx.lineTo(k + h, y); }
+            ctx.stroke();
+            ctx.restore();
         }
 
         _fit(ctx, text, w) {
@@ -572,23 +812,15 @@ export const stateTimeline = defineUI({
             return t + "…";
         }
 
-        // text on a colour: dark on light, light on dark
-        _contrast(color) {
-            const m = /^#?([0-9a-f]{6})$/i.exec(String(color).trim().length === 4 ? String(color).replace(/^#?(.)(.)(.)$/, "#$1$1$2$2$3$3") : String(color).trim());
-            if (!m) return "#fff";
-            const n = parseInt(m[1], 16), r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
-            return (r * 299 + g * 587 + b * 114) / 1000 > 150 ? "#111827" : "#ffffff";
-        }
-
         // the navigator: every lane, small
         _navTraces(ctx, g, boxes) {
             const lanes = (boxes || []).map((b) => b.lane);
             if (!lanes.length) return;
             const lh = (g.h - 4) / lanes.length;
             lanes.forEach((l, i) => {
-                for (const s of this.segmentsOf(l.row, g.full.minX, g.full.maxX)) {
-                    const st = this.stateOf(s.v);
-                    if (!st || (l.state && st.label !== l.state.label)) continue;
+                for (const s of this.segmentsOf(l.row, g.full.minX, g.full.maxX, true)) {
+                    const st = s.info;
+                    if (l.state && st.label !== l.state.label) continue;
                     ctx.fillStyle = this.hexToRgba(st.color, 0.85);
                     const a = g.toX(s.start);
                     ctx.fillRect(a, g.y + 2 + i * lh, Math.max(1, g.toX(s.end) - a), Math.max(1, lh - 1));
@@ -602,11 +834,8 @@ export const stateTimeline = defineUI({
             if (!sc) return null;
             const b = sc.boxes.find((x) => py >= x.y && py <= x.y + x.h);
             if (!b) return null;
-            const s = this.segmentsOf(b.lane.row, sc.vMinX, sc.vMaxX).find((x) => {
-                const st = this.stateOf(x.v);
-                return time >= x.start && time <= x.end && st && (!b.lane.state || st.label === b.lane.state.label);
-            });
-            return s ? Object.assign({ lane: b.lane.key, row: b.lane.row, stateInfo: this.stateOf(s.v) }, s) : { lane: b.lane.key, row: b.lane.row, stateInfo: null };
+            const s = this.segmentsOf(b.lane.row, sc.vMinX, sc.vMaxX, true).find((x) => time >= x.start && time <= x.end && !this._hiddenStates.has(x.info.label) && (!b.lane.state || x.info.label === b.lane.state.label));
+            return s ? Object.assign({ lane: b.lane.key, row: b.lane.row, stateInfo: s.info }, s) : { lane: b.lane.key, row: b.lane.row, stateInfo: null };
         }
 
         _plotHover(L, time) {
@@ -667,12 +896,26 @@ export const stateTimeline = defineUI({
 
         _legendStates() {
             const seen = new Map();
-            for (const s of this.stateList()) seen.set(s.label, { label: s.label, color: s.color });
+            this.stateList().forEach((s, i) => seen.set(s.label, { label: s.label, color: this._stateColor(s, i) }));
             for (const r of this._visible()) for (const c of this._row(r).ch) { const s = this.stateOf(c.v); if (s && !seen.has(s.label)) seen.set(s.label, s); }
             return Array.from(seen.values());
         }
 
-        _pngLegend() { return this._legendStates().map((s) => ({ color: s.color, text: s.label })); }
+        _pngLegend() { return this._legendStates().filter((s) => !this._hiddenStates.has(s.label)).map((s) => ({ color: s.color, text: s.label })); }
+
+        // a legend click: hides / shows a state's bars (Alt+click: only this one); the statistics keep it
+        _toggleState(label, e) {
+            const all = this._legendStates().map((s) => s.label);
+            if (e && (e.altKey || e.metaKey)) {
+                const alone = all.every((l) => l === label || this._hiddenStates.has(l)) && !this._hiddenStates.has(label);
+                all.forEach((l) => { if (l !== label) { if (alone) this._hiddenStates.delete(l); else this._hiddenStates.add(l); } });
+                this._hiddenStates.delete(label);
+            } else if (this._hiddenStates.has(label)) this._hiddenStates.delete(label);
+            else this._hiddenStates.add(label);
+            this.hover = null;
+            this.requestUpdate();
+            this.scheduleDraw();
+        }
 
         /**
          * Download: { format: "csv" | "xlsx" | "png", range, annotations }. A row per state's segment
@@ -688,7 +931,7 @@ export const stateTimeline = defineUI({
             const rows = [], fills = [];
             for (const r of this._visible()) {
                 for (const s of this.segmentsOf(r, from, to)) {
-                    const st = this.stateOf(s.v);
+                    const st = s.info;
                     rows.push([r.name || r.id, st.label, s.v === null ? "" : (typeof s.v === "number" ? s.v : String(s.v)), s.start, s.end, Math.round(s.end - s.start) / 1000, s.note || ""]);
                     fills.push([null, st.color, null, null, null, null, null]);
                 }
@@ -705,7 +948,7 @@ export const stateTimeline = defineUI({
                     const covered = segs.reduce((a, s) => a + (s.end - s.start), 0);
                     const by = new Map();
                     for (const s of segs) {
-                        const st = this.stateOf(s.v), e = by.get(st.label) || { ms: 0, n: 0, first: s.start, last: s.end };
+                        const st = s.info, e = by.get(st.label) || { ms: 0, n: 0, first: s.start, last: s.end };
                         e.ms += s.end - s.start; e.n++; e.last = s.end;
                         by.set(st.label, e);
                     }
@@ -732,35 +975,39 @@ export const stateTimeline = defineUI({
         }
 
         render() {
-            const legendAt = this.p.legend || "bottom";
-            const states = this._legendStates();
-            const legend = legendAt === "none" || !states.length ? "" : html`
-                <div class="legend" part="legend">
-                    ${states.map((s) => html`<span class="lg-item"><span class="lg-swatch" style="background:${s.color};height:10px;width:10px"></span><span class="lg-name">${s.label}</span></span>`)}
-                </div>`;
+            const { at, inside } = legendPlace(this.p);
+            const legend = legendTemplate(this.p, this._legendStates().map((st) => ({ key: st.label, name: st.label, color: st.color, off: this._hiddenStates.has(st.label), swatch: "square" })),
+                (e, ev) => this._toggleState(e.key, ev), { stats: STATE_STATS, head: "State" });
+            const bar = this._renderRangeBar();
             return html`
                 <div class="chart-container" part="chart">
-                    ${legendAt === "top" ? legend : ""}
-                    <div class="plot"
-                        @wheel=${(e) => this.onWheel(e)}
-                        @pointerdown=${(e) => this.onPointerDown(e)}
-                        @pointermove=${(e) => this.onPointerMove(e)}
-                        @pointerup=${(e) => this.onPointerUp(e)}
-                        @pointercancel=${(e) => this.onPointerCancel(e)}
-                        @pointerleave=${(e) => this.onPointerLeave(e)}
-                        @dblclick=${() => this.followLive()}>
-                        <canvas></canvas>
-                        <div class="corner" style="right:${this._scale && this._scale.m ? this._scale.m.padRight + 6 : 20}px">
-                            ${this.viewRange ? html`
-                                <button class="btn-chip btn-reset-zoom" @click=${() => this.followLive()} title="Follow the newest data again (or double click the chart)">
-                                    <span class="live-dot"></span> Reset Zoom
-                                </button>` : ""}
-                            ${this._renderMenu()}
+                    ${bar}
+                    ${at === "top" ? legend : ""}
+                    <div class="c-main">
+                        ${at === "left" ? legend : ""}
+                        <div class="plot"
+                            @wheel=${(e) => this.onWheel(e)}
+                            @pointerdown=${(e) => this.onPointerDown(e)}
+                            @pointermove=${(e) => this.onPointerMove(e)}
+                            @pointerup=${(e) => this.onPointerUp(e)}
+                            @pointercancel=${(e) => this.onPointerCancel(e)}
+                            @pointerleave=${(e) => this.onPointerLeave(e)}
+                            @dblclick=${() => this.followLive()}>
+                            <canvas></canvas>
+                            <div class="corner" style="right:${this._scale && this._scale.m ? this._scale.m.padRight + 6 : 20}px">
+                                ${this.viewRange && !bar ? html`
+                                    <button class="btn-chip btn-reset-zoom" @click=${() => this.followLive()} title="Follow the newest data again (or double click the chart)">
+                                        <span class="live-dot"></span> Reset Zoom
+                                    </button>` : ""}
+                                ${this._renderMenu()}
+                            </div>
+                            <div class="tooltip"><div class="tooltip-time"></div><div class="tooltip-rows"></div></div>
+                            ${inside ? legend : ""}
+                            ${!this._hasData() ? html`<div class="empty"><i class="fa fa-tasks" style="font-size: 24px; opacity: 0.4;"></i><span>No data received</span></div>` : ""}
                         </div>
-                        <div class="tooltip"><div class="tooltip-time"></div><div class="tooltip-rows"></div></div>
-                        ${!this._hasData() ? html`<div class="empty"><i class="fa fa-tasks" style="font-size: 24px; opacity: 0.4;"></i><span>No data received</span></div>` : ""}
+                        ${at === "right" ? legend : ""}
                     </div>
-                    ${legendAt !== "top" ? legend : ""}
+                    ${at === "bottom" ? legend : ""}
                 </div>`;
         }
     }
