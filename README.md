@@ -329,6 +329,8 @@ Parts of a whole: downtime by reason, energy by area, output by product. **The r
 
 **Legend** (the shared part): any position, a list (the % or the value) or a **table** (Value, %); a click hides a slice and the % are of the rest (**On Slice Toggle**). **On Slice Click** `{ name, value, percent, group, id }` (a listed slice also fires its own On Click). Export CSV / Excel (a row per slice) / PNG. In the editor: sample slices (*Sample data*). It replaces the old Pie & Donut Chart (2026-10-06, no migration).
 
+**Rose (Pie, Shape):** *Radius by value* makes a Nightingale rose (equal angles, the radius by the value) or a pie whose angle and radius both follow the value (largest first: a spiral). The **area** follows the value (the radius by its square root), so twice the value looks twice as big; *The smallest slice keeps* a minimum radius. Labels, Others, the legend and clicks work as on a pie.
+
 ### Pareto (`nexa-ui-pareto`)
 
 Which causes to fix **first**: downtime by reason, defects by type, scrap by cause. The rules of a Pareto are built in, with no DAX:
@@ -344,6 +346,18 @@ Which causes to fix **first**: downtime by reason, defects by type, scrap by cau
 **Look:** vertical or **horizontal** (long names), the bar / faded / Others colours, the gap, rounded corners; the cumulative line straight / smooth / step / none, an area under it, markers, its % at each point; labels on the bars (value / % / both); axis titles, gridlines, unit, decimals. **Tooltip:** value, %, cumulative %, rank (Others: what is in it; stacked: its parts). **On Bar Click** `{ name, value, percent, cumulative, rank, group }` (a listed category also its own On Click). Export CSV / Excel (rank, value, %, cumulative %, vital few) / PNG. In the editor an empty Pareto shows sample causes (*Sample data*).
 
 **Screenshots:** every chart in light and dark is in [`screenshots/`](screenshots/); `npm run screenshots` draws them again from the current code (the scripts are in `screenshots/scripts/`, one per chart, on the dashboard testkit's harness browser).
+
+### Radar (`nexa-ui-radar`)
+
+Several measures of one thing at a glance, and where it leans: a line's OEE parts, a shift against its target, production per tariff period. The rules that keep a radar honest are built in:
+
+- **The axes in your order** (the order changes the shape; it is never re-sorted to look better), clockwise from the top. From the Axes list, or the rows' fields (wide) / axis names (long) in their order.
+- **A fixed scale from 0** (a radar that rescales itself, or does not start at 0, exaggerates): one scale for all (set Max 100 for percentages), or **each axis its own** min / max when the units differ (kWh, pcs, %).
+- **Lower is better** on an axis (scrap, energy per piece, changeover): turned round, so **outward = good** on every axis.
+- **A target**: one value for every axis, an axis' own, or a series named as the target: a dashed polygon; the points short of it are red, the tooltip shows the difference. An axis' **good band** (from / to): a green stroke along it.
+- **Up to 3 series overlaid**; past that (or always) **small multiples**: a radar per series, the columns that give the largest radars.
+- **Look:** polygon or circle grid, rings and their values, straight / smooth lines or points only, fill, value labels, colours; at each axis its name, or its name and the first series' value.
+- Data: rows wide (`[{ "series": "L11", "OEE": 82, "Quality": 97 }]`) or long (`{ series, axis, value }`), **Set series** / **Remove a series** from Logic, or each axis' live tag (one Live series). **On Point Click** `{ series, axis, value, percent, target, short }`, **On Series Toggle**. Legend part (average % of the scales, axes short of the target). Export CSV / Excel (with the Axes sheet) / PNG. Sample data in the editor.
 
 ### SPC / Control Chart (`nexa-ui-spc`)
 

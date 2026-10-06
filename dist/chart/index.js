@@ -6,6 +6,7 @@ import "./pie.js";
 import "./pareto.js";
 import "./scatter.js";
 import "./spc.js";
+import "./radar.js";
 import "./gauge.js";
 import "./bargauge.js";
 import "./area.js";

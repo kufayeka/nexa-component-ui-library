@@ -19,7 +19,7 @@ async function ok(label, fn) { if (only && !only.test(label)) return; await fn()
 const P = 'nexa-ui-';
 const ALL = ['button', 'input', 'textarea', 'number-input', 'password-input', 'checkbox', 'switch', 'radio-group', 'segmented', 'select', 'combobox', 'slider', 'tags-input', 'pin-input', 'rating',
     'text', 'heading', 'badge', 'tag', 'card', 'avatar', 'stat', 'alert', 'progress', 'spinner', 'skeleton', 'separator', 'empty-state', 'timeline', 'fieldset',
-    'tabs', 'iframe', 'datetime', 'daterange', 'pagination', 'line-chart', 'state-timeline', 'column-chart', 'pie', 'pareto', 'scatter', 'spc', 'gauge', 'bar-gauge', 'area-chart', 'kpi', 'histogram'];
+    'tabs', 'iframe', 'datetime', 'daterange', 'pagination', 'line-chart', 'state-timeline', 'column-chart', 'pie', 'pareto', 'scatter', 'spc', 'radar', 'gauge', 'bar-gauge', 'area-chart', 'kpi', 'histogram'];
 const TAG = '{sparkplug:Plant::Line1::Mixer::Speed}';
 
 withHarness({
@@ -44,7 +44,7 @@ withHarness({
         await settle();
     };
 
-    await ok('all 47 components register (UI · Form / Display / Layout / Embed / Charts), each mounts and draws', async () => {
+    await ok('all 48 components register (UI · Form / Display / Layout / Embed / Charts), each mounts and draws', async () => {
         const reg = await js(`${JSON.stringify(ALL)}.map(function (id) { var d = NEXA.getComponent("${P}" + id); return d ? d.category : "MISSING " + id; })`);
         assert.deepStrictEqual(reg.filter((c) => c !== 'UI · Form' && c !== 'UI · Display' && c !== 'UI · Layout' && c !== 'UI · Embed' && c !== 'UI · Charts'), []);
         for (const id of ALL) await mount('all-' + id, id, {}, { width: 320, height: 120 });
@@ -1422,6 +1422,47 @@ withHarness({
         }
     });
 
+    // ---- Radar / Rose ---------------------------------------------------------------------------------
+    const rdw = (name) => `NexaTest.wc(${JSON.stringify(name)})`;
+
+    await ok('Radar: axes in their order from the rows, a fixed scale from 0, each axis its own scale, lower-is-better turned round, short of the target marked, small multiples past 3 series', async () => {
+        const rows = [{ series: 'L11', OEE: 78, Quality: 97, Speed: 84 }, { series: 'L12', OEE: 64, Quality: 90, Speed: 93 }];
+        await mount('rd1', 'radar', { rows, max: 100, target: 85 }, { width: 480, height: 360 });
+        const r = await js(`(function () { var w = ${rdw('rd1')}; w.draw(); var m = w._m; return { axes: m.axes.map(function (a) { return [a.name, a.min, a.max]; }), series: m.series.map(function (s) { return s.name; }), radars: w._radars.length,
+            short: m.axes.filter(function (a) { return w._short(a, a.target, m.series[0].values.get(a.key)); }).map(function (a) { return a.name; }) }; })()`);
+        assert.deepStrictEqual(r.axes, [['OEE', 0, 100], ['Quality', 0, 100], ['Speed', 0, 100]], 'the rows order, 0 .. 100');
+        assert.deepStrictEqual(r.series, ['L11', 'L12']); assert.strictEqual(r.radars, 1);
+        assert.deepStrictEqual(r.short, ['OEE', 'Speed']);
+        assert.ok(await pixels('rd1') > 5000);
+        await js(`NexaTest.setProps("rd1", { scale: "axis", axes: [{ name: "Output", field: "out" }, { name: "Scrap", field: "scrap", better: "lower", min: 0, max: 10 }, { name: "Uptime", field: "up" }], rows: [{ series: "A", out: 1250, scrap: 1, up: 93 }] })`); await settle();
+        const t = await js(`(function () { var w = ${rdw('rd1')}; w.draw(); var a = w._m.axes; return [a[0].max, Math.round(w._t(a[1], 1) * 100), Math.round(w._t(a[1], 9) * 100)]; })()`);
+        assert.ok(t[0] >= 1250, 'its own max'); assert.deepStrictEqual(t.slice(1), [90, 10], 'scrap 1 of 10 is outward (good), 9 inward');
+        const six = ['A', 'B', 'C', 'D', 'E', 'F'].map((n, i) => ({ series: n, x: 50 + i, y: 60, z: 70 }));
+        await js(`NexaTest.setProps("rd1", { scale: "shared", axes: [], rows: ${JSON.stringify(six)} })`); await settle();
+        assert.strictEqual(await js(`(function () { var w = ${rdw('rd1')}; w.draw(); return w._radars.length; })()`), 6, 'a radar each');
+        await js(`NexaTest.setProps("rd1", { layout: "overlay" })`); await settle();
+        assert.strictEqual(await js(`(function () { var w = ${rdw('rd1')}; w.draw(); return w._radars.length; })()`), 1);
+    });
+
+    await ok('Radar: Set series from Logic, a click gives the series and the axis, the export; Rose: the radius by the value (equal angles or both)', async () => {
+        await mount('rd2', 'radar', { max: 100, target: 80 }, { width: 480, height: 360 });
+        await js(`${rdw('rd2')}.setSeries({ name: "Shift A", values: { OEE: 70, Quality: 95, Speed: 88 } }); 1`); await settle();
+        await js(`(function () { var w = ${rdw('rd2')}; window.__rdev = []; var old = w.emit.bind(w); w.emit = function (n, p, t) { window.__rdev.push([n, p]); return old(n, p, t); }; w.draw(); return 1; })()`);
+        const c = await js(`(function () { var w = ${rdw('rd2')}, rd = w._radars[0], pl = w.renderRoot.querySelector(".plot"), b = pl.getBoundingClientRect(), t = w._t(w._m.axes[0], 70);
+            pl.dispatchEvent(new MouseEvent("click", { bubbles: true, clientX: b.left + rd.cx, clientY: b.top + rd.cy - rd.R * t }));
+            var e = window.__rdev.filter(function (e) { return e[0] === "pointClick"; })[0]; return e ? [e[1].series, e[1].axis, e[1].value, e[1].short] : null; })()`);
+        assert.deepStrictEqual(c, ['Shift A', 'OEE', 70, true]);
+        assert.strictEqual(await js(`${rdw('rd2')}.exportData({ format: "xlsx" })`), 1);
+        const areas = [['A', 64], ['B', 36], ['C', 16], ['D', 4]].map(([name, value]) => ({ name, value }));
+        await mount('ro1', 'pie', { rows: areas, rose: 'equal', kind: 'pie', roseMin: 0, slices: [] }, { width: 400, height: 300 });
+        const ro = await js(`(function () { var w = NexaTest.wc("ro1"); w.draw(); var s = w._pies[0].slices, R = w._pies[0].r; return { r: s.map(function (q) { return Math.round(q.r / R * 100); }), span: s.map(function (q) { return Math.round((q.a1 - q.a0) * 100); }) }; })()`);
+        assert.deepStrictEqual(ro.r, [100, 75, 50, 25], 'radius by the square root: the area by the value');
+        assert.ok(ro.span.every((x) => x === ro.span[0]), 'equal angles');
+        await js(`NexaTest.setProps("ro1", { rose: "both" })`); await settle();
+        assert.ok(await js(`(function () { var w = NexaTest.wc("ro1"); w.draw(); var s = w._pies[0].slices; return s[0].a1 - s[0].a0 > s[1].a1 - s[1].a0; })()`), 'both: the angle by the value too');
+        assert.ok(await pixels('ro1') > 3000);
+    });
+
     // ---- SPC --------------------------------------------------------------------------------------
     const spw = (name) => `NexaTest.wc(${JSON.stringify(name)})`;
 
@@ -2105,7 +2146,7 @@ withHarness({
         await js('delete window.__big; 1');
     });
 
-    await ok('Sample data (Line, State Timeline, Column, KPI, Gauge, Bar Gauge, Pie, Scatter, SPC): only in the editor, for the user series, marked "Sample data"; on a page with no data the chart is empty; real data drops it', async () => {
+    await ok('Sample data (Line, State Timeline, Column, KPI, Gauge, Bar Gauge, Pie, Scatter, SPC, Radar): only in the editor, for the user series, marked "Sample data"; on a page with no data the chart is empty; real data drops it', async () => {
         const kinds = [['line-chart', { series: [{ id: 's1', name: 'Speed' }] }, 'appendPoints', [{ x: 1727852400000, y: 3 }], { list: 'series', id: 's1' }],
             ['state-timeline', { rows: [{ id: 'r1', name: 'Filler' }] }, 'appendChange', { time: 1727852400000, state: 1 }, { list: 'rows', id: 'r1' }],
             ['column-chart', { series: [{ id: 's1', name: 'Load' }, { id: 's2', name: 'Temp', type: 'line' }] }, 'setData', { A: 3 }, { list: 'series', id: 's1' }],
@@ -2114,6 +2155,7 @@ withHarness({
             ['bar-gauge', { bars: [{ id: 'b1', name: 'Load' }] }, 'setValue', 21.5, { list: 'bars', id: 'b1' }],
             ['pie', { slices: [{ id: 's1', name: 'Load' }] }, 'setValue', 21.5, { list: 'slices', id: 's1' }],
             ['scatter', {}, 'setRows', [{ x: 1, y: 2 }], null],
+            ['radar', {}, 'setRows', [{ series: 'A', x: 1, y: 2, z: 3 }], null],
             ['spc', {}, 'setRows', [{ time: 1727852400000, value: 2 }, { time: 1727852460000, value: 3 }], null]];
         for (const [id, props, action, payload, target] of kinds) {
             await mount('sd-ed-' + id, id, props, { width: 500, height: 220, design: true });

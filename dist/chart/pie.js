@@ -59,6 +59,9 @@ export const pie = defineUI({
         kind: { type: "enum", group: "Shape", label: "Shape", default: "donut", options: opt([["donut", "Donut"], ["pie", "Pie"]]) },
         ringWidth: { type: "number", group: "Shape", label: "Ring width", default: 34, min: 8, max: 90, unit: "% of the radius", visibleWhen: (p) => p.kind !== "pie" },
         half: { type: "boolean", group: "Shape", label: "A half (180°, opening down)", default: false },
+        rose: { type: "enum", group: "Shape", label: "Radius by value (rose)", default: "off", options: opt([["off", "Off (every slice the full radius)"], ["equal", "Equal angles, the radius by the value (Nightingale)"], ["both", "The angle and the radius by the value"]]),
+            help: "A small slice is also shorter. Its AREA follows the value (the radius by its square root), so twice the value looks twice as big, not four times." },
+        roseMin: { type: "number", group: "Shape", label: "The smallest slice keeps", default: 15, min: 0, max: 80, unit: "% of the radius", visibleWhen: (p) => p.rose && p.rose !== "off" },
         padAngle: { type: "number", group: "Shape", label: "Space between slices", default: 1, min: 0, max: 10, step: 0.5, unit: "°" },
         radius: { type: "number", group: "Shape", label: "Corner radius", default: 2, min: 0, max: 20, unit: "px" },
         hoverLift: { type: "boolean", group: "Shape", label: "A hovered slice moves out a little", default: true },
@@ -237,9 +240,13 @@ export const pie = defineUI({
             const pie = { group: g.group, cx, cy, r, ri, plan, slices: [] };
             this._pies.push(pie);
             // the slices
+            // a rose: each slice its own radius (the area by the value: r² − ri² ∝ value), never under roseMin
+            const rose = p.rose === "equal" || p.rose === "both", vmax = Math.max(...list.map((s) => s.value), 0) || 1;
+            const rmin = ri + (r - ri) * Math.max(0, Math.min(0.8, numOr(p.roseMin, 15) / 100));
+            const radOf = (s) => (rose ? Math.max(rmin, Math.sqrt(ri * ri + (r * r - ri * ri) * Math.max(0, s.value) / vmax)) : r);
             let a = a0;
             list.forEach((s, i) => {
-                const span = s.percent * sweep, s0 = a, s1 = a + span;
+                const span = p.rose === "equal" ? sweep / list.length : s.percent * sweep, s0 = a, s1 = a + span, rq = radOf(s);
                 a = s1;
                 const hov = this._hover && this._hover.pie === g.group && this._hover.key === s.key;
                 const lift = hov && p.hoverLift !== false ? Math.min(8, r * 0.05) : 0, mid = (s0 + s1) / 2;
@@ -248,10 +255,10 @@ export const pie = defineUI({
                 ctx.save();
                 ctx.fillStyle = s.color;
                 if (this._hover && !hov) ctx.globalAlpha = 0.75;
-                this._sector(ctx, cx + ox, cy + oy, r, ri, p0, Math.max(p0 + 0.002, p1), rad);
+                this._sector(ctx, cx + ox, cy + oy, rq, ri, p0, Math.max(p0 + 0.002, p1), rad);
                 ctx.fill();
                 ctx.restore();
-                pie.slices.push({ key: s.key, s, a0: s0, a1: s1 });
+                pie.slices.push({ key: s.key, s, a0: s0, a1: s1, r: rq });
             });
             // the labels: inside where they fit; else outside on a leader, each side moved apart
             if (p.labelShow !== "none") {
@@ -260,13 +267,13 @@ export const pie = defineUI({
                 pie.slices.forEach((q, i) => {
                     const text = labels[i];
                     if (!text) return;
-                    const mid = (q.a0 + q.a1) / 2, rm = donut ? (r + ri) / 2 : r * 0.62, arc = (q.a1 - q.a0) * rm, tw = ctx.measureText(text).width;
-                    const band = donut ? r - ri : r * 0.55;
+                    const qr = q.r || r, mid = (q.a0 + q.a1) / 2, rm = donut ? (qr + ri) / 2 : qr * 0.62, arc = (q.a1 - q.a0) * rm, tw = ctx.measureText(text).width;
+                    const band = donut ? qr - ri : qr * 0.55;
                     const fits = arc > tw + 6 && band > ls + 4 && tw + 6 < band * 1.9 * Math.max(0.55, Math.abs(Math.sin(mid)) + (donut ? 0 : 0.6));
                     if (place === "inside" ? fits : place === "auto" && fits) {
                         ctx.fillStyle = this._onColor(q.s.color); ctx.textAlign = "center"; ctx.textBaseline = "middle";
                         ctx.fillText(text, cx + Math.cos(mid) * rm, cy + Math.sin(mid) * rm);
-                    } else if (place !== "inside") outside.push({ q, text, mid, side: Math.cos(mid) >= 0 ? 1 : -1, y: cy + Math.sin(mid) * (r + 12) });
+                    } else if (place !== "inside") outside.push({ q, text, mid, side: Math.cos(mid) >= 0 ? 1 : -1, y: cy + Math.sin(mid) * (r + 12), qr });
                 });
                 [1, -1].forEach((side) => {
                     const mine = outside.filter((o) => o.side === side).sort((x, y) => x.y - y.y);
@@ -278,7 +285,7 @@ export const pie = defineUI({
                     let over = prev - bottom;
                     for (let k = mine.length - 1; k >= 0 && over > 0; k--) { mine[k].ly = Math.max(top, mine[k].ly - over); over = k > 0 ? mine[k - 1].ly + lineH - mine[k].ly : 0; }
                     mine.forEach((o) => {
-                        const ax = cx + Math.cos(o.mid) * (r + 2), ay = cy + Math.sin(o.mid) * (r + 2), ex = cx + side * (r + 12), lx = cx + side * (r + 16);
+                        const ax = cx + Math.cos(o.mid) * (o.qr + 2), ay = cy + Math.sin(o.mid) * (o.qr + 2), ex = cx + side * (r + 12), lx = cx + side * (r + 16);
                         ctx.strokeStyle = this.hexToRgba(o.q.s.color, 0.9); ctx.lineWidth = 1;
                         ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(ex, o.ly); ctx.lineTo(lx, o.ly); ctx.stroke();
                         ctx.fillStyle = c.strong; ctx.textAlign = side > 0 ? "left" : "right"; ctx.textBaseline = "middle";
@@ -334,7 +341,7 @@ export const pie = defineUI({
                 const dx = x - pie.cx, dy = y - pie.cy, d = Math.hypot(dx, dy);
                 if (d > pie.r + 6 || d < pie.ri - 2) continue;
                 let a = Math.atan2(dy, dx);
-                for (const q of pie.slices) { let t = a; while (t < q.a0) t += TAU; while (t > q.a0 + TAU) t -= TAU; if (t >= q.a0 && t <= q.a1) return { pie, q }; }
+                for (const q of pie.slices) { let t = a; while (t < q.a0) t += TAU; while (t > q.a0 + TAU) t -= TAU; if (t >= q.a0 && t <= q.a1) return d <= (q.r || pie.r) + 4 ? { pie, q } : null; }
             }
             return null;
         }
