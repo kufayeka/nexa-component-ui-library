@@ -5,7 +5,8 @@
 // like a PLC: applies it and publishes DDATA. Each component twice: on the screen, and in a
 // Tabs panel (mounted late, after the plugin registered). Checks: the tag's value is shown;
 // a change at the edge shows; the user's input is written (DCMD, the right value / format)
-// and the echo is shown; device death -> "???", rebirth -> the value again; no page errors.
+// and the echo is shown; device death -> no value (null: the static value, or nothing; never a stale
+// value and never the text "???" for a binding list), rebirth -> the value again; no page errors.
 //   node test/tags-e2e.test.js      (needs Chrome, the dashboard built, ports 1899 / 1898 / 1893 free)
 const path = require('path');
 const fs = require('fs');
@@ -29,7 +30,7 @@ const check = (label, ok, actual) => { if (!ok) failures++; else passed++; conso
 const METRICS = {
     Num: ['Float', 12.5], Int: ['Int32', 3], Bool: ['Boolean', true], Txt: ['String', 'PO-7'], Area: ['String', 'hello'],
     Pass: ['String', 'x'], Opt: ['String', 'b'], Combo: ['String', 'a'], Slide: ['Double', 40], Tags: ['String', '["x","y"]'],
-    Pin: ['String', '1234'], Rate: ['Int32', 3], Stat: ['Double', 1284.5], Prog: ['Double', 60], Tab: ['String', 'trends'], Cmd: ['Int32', 0]
+    Pin: ['String', '1234'], Rate: ['Int32', 3], Stat: ['Double', 1284.5], Prog: ['Double', 60], Tab: ['String', 'trends'], Cmd: ['Int32', 0], CodeW: ['Int32', 0]
 };
 const all = {};
 Object.keys(METRICS).forEach((k) => { all[k] = METRICS[k]; all['S_' + k] = METRICS[k]; });
@@ -70,11 +71,13 @@ const inSlot = set('s');
 // binding priority lists ({ $bind, static }) on a plain prop (a stat's label): a tag source, an
 // expression over a tag, a tag with a static value (it shows while the tag is unknown) — on the
 // screen and in the Tabs panel
-const L = (m) => ({ src: 'sparkplug', ref: 'G::E1::D1::' + m });
+// a tag is the SHARED variable "sparkplug::<address>" (the picker's only form now); the Tabs panel keeps the
+// old saved form ({ src: "sparkplug" }) so both are proven
+const L = (m, legacy) => (legacy ? { src: 'sparkplug', ref: 'G::E1::D1::' + m } : { src: 'shared', ref: 'sparkplug::G::E1::D1::' + m });
 const lists = (prefix) => [
-    { id: prefix + 'L1', type: 'nexa-ui-stat', x: 0, y: 0, w: 220, h: 96, props: { label: { $bind: [L(prefix === 'p' ? 'Txt' : 'S_Txt')] }, inputValue: TAG(prefix === 'p' ? 'Stat' : 'S_Stat'), change: '' } },
-    { id: prefix + 'L2', type: 'nexa-ui-stat', x: 0, y: 0, w: 220, h: 96, props: { label: { $bind: [{ src: 'expr', ref: '[sparkplug]{G::E1::D1::' + (prefix === 'p' ? 'Num' : 'S_Num') + '} * 2 " u"' }], static: 'none' }, inputValue: TAG('Stat'), change: '' } },
-    { id: prefix + 'L3', type: 'nexa-ui-stat', x: 0, y: 0, w: 220, h: 96, props: { label: { $bind: [{ src: 'app', ref: 'nothing' }, L(prefix === 'p' ? 'Int' : 'S_Int')], static: 'offline' }, inputValue: TAG('Stat'), change: '' } }
+    { id: prefix + 'L1', type: 'nexa-ui-stat', x: 0, y: 0, w: 220, h: 96, props: { label: { $bind: [L(prefix === 'p' ? 'Txt' : 'S_Txt', prefix === 's')] }, inputValue: TAG(prefix === 'p' ? 'Stat' : 'S_Stat'), change: '' } },
+    { id: prefix + 'L2', type: 'nexa-ui-stat', x: 0, y: 0, w: 220, h: 96, props: { label: { $bind: [{ src: 'expr', ref: (prefix === 'p' ? '[shared]{sparkplug::G::E1::D1::Num}' : '[sparkplug]{G::E1::D1::S_Num}') + ' * 2 " u"' }], static: 'none' }, inputValue: TAG('Stat'), change: '' } },
+    { id: prefix + 'L3', type: 'nexa-ui-stat', x: 0, y: 0, w: 220, h: 96, props: { label: { $bind: [{ src: 'app', ref: 'nothing' }, L(prefix === 'p' ? 'Int' : 'S_Int', prefix === 's')], static: 'offline' }, inputValue: TAG('Stat'), change: '' } }
 ];
 top.push(...lists('p'));
 inSlot.push(...lists('s'));
@@ -103,8 +106,13 @@ const LOGIC = { nodes: [
     { id: 'i5', type: 'inject', once: true, onceDelay: 2500, intervalMs: 0, payloadType: 'json', payload: '[{"x":1000,"y":3},{"x":2000,"y":4},{"x":3000,"y":5}]' },
     { id: 'u5', type: 'ui-update', compId: 'pLC3', item: { list: 'series', id: 's1' }, action: 'appendPoints', config: {} },
     { id: 'e1', type: 'ui-event', compId: 'pLC2', item: { list: 'series', id: 's1' }, event: 'thresholdCross' },
-    { id: 'u3', type: 'ui-update', compId: 'pEV', config: { label: { $bind: [{ src: 'msg', ref: 'payload.direction' }], static: '?' } } }
-], wires: [{ id: 'w1', from: 'i1', to: 'u1' }, { id: 'w2', from: 'i2', to: 'u2' }, { id: 'w3', from: 'i3', to: 'u1' }, { id: 'w4', from: 'e1', to: 'u3' }, { id: 'w5', from: 'i4', to: 'u4' }, { id: 'w6', from: 'i5', to: 'u5' }] };
+    { id: 'u3', type: 'ui-update', compId: 'pEV', config: { label: { $bind: [{ src: 'msg', ref: 'payload.direction' }], static: '?' } } },
+    // code: vars.<kind>.get / set, a tag as the shared variable "sparkplug::..."
+    { id: 'i6', type: 'inject', once: true, onceDelay: 1500, intervalMs: 400, payloadType: 'num', payload: '1' },
+    { id: 'f6', type: 'function', code: "var m = \"In\" + \"t\";\nwindow.__codeReads = {\n  lit: vars.shared.get(\"sparkplug::G::E1::D1::Stat\"),\n  dyn: vars.shared.get(\"sparkplug::G::E1::D1::\" + m),\n  sv: (vars.screen.set(\"codeVar\", 2), vars.screen.get(\"codeVar\")),\n  app: vars.app.get(\"codeVar\"),\n  shared: vars.shared.get(\"codeVar\"),\n  route: (vars.system.get(\"$route\") || {}).path\n};\nreturn null;" },
+    { id: 'i7', type: 'inject', once: true, onceDelay: 4000, intervalMs: 0, payloadType: 'num', payload: '1' },
+    { id: 'f7', type: 'function', code: "return vars.shared.set(\"sparkplug::G::E1::D1::CodeW\", 77).then(function () { window.__codeWrote = 1; return null; });" }
+], wires: [{ id: 'w7', from: 'i6', to: 'f6' }, { id: 'w8', from: 'i7', to: 'f7' }, { id: 'w1', from: 'i1', to: 'u1' }, { id: 'w2', from: 'i2', to: 'u2' }, { id: 'w3', from: 'i3', to: 'u1' }, { id: 'w4', from: 'e1', to: 'u3' }, { id: 'w5', from: 'i4', to: 'u4' }, { id: 'w6', from: 'i5', to: 'u5' }] };
 const pos = (list, x0) => { let y = 20; list.forEach((c) => { c.x = x0; c.y = y; y += c.h + 12; }); return y; };
 pos(top, 20);
 // the slot set: in a Tabs' "overview" panel (a vertical auto layout places them)
@@ -119,7 +127,7 @@ function writeFlows() {
     fs.writeFileSync(path.join(dir, 'settings.js'), 'module.exports = { uiPort: ' + PORTS.editor + ', flowFile: "flows.json", nexaDashboard: { screenWorkerPort: ' + PORTS.pages + ' }, logging: { console: { level: "warn" } }, editorTheme: { tours: false, projects: { enabled: false } } };\n');
     fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'nr-tags', version: '0.0.1', private: true }));
     const project = { id: 'tagsproj', type: 'kufayeka-nexa-project', name: 'Tags', sparkplugConnection: 'spc',
-        screens: [{ id: 'sT', name: 'Tags', path: '/tags', width: 900, height: 2000, gridSize: 10, snap: false, treeVersion: 1, orphans: [], components: top.concat([host]), logic: LOGIC, variables: [] }],
+        screens: [{ id: 'sT', name: 'Tags', path: '/tags', width: 900, height: 2000, gridSize: 10, snap: false, treeVersion: 1, orphans: [], components: top.concat([host]), logic: LOGIC, variables: [{ id: 'cv', name: 'codeVar', type: 'number', defaultValue: 1 }] }],
         templates: [], types: [], breakpoints: [], theme: null, variables: [] };
     const conn = { id: 'spc', type: 'kufayeka-nexa-sparkplug', name: 'test', brokerUrl: 'mqtt://127.0.0.1:' + PORTS.mqtt, groupFilter: '+', edgeNodeFilter: '+', keepAlive: 30, protocolVersion: '4', reconnectPeriod: 1000, connectTimeout: 10000, clientIdOverride: '' };
     fs.writeFileSync(path.join(dir, 'flows.json'), JSON.stringify([{ id: 'tab1', type: 'tab', label: 'T' }, conn, project], null, 1));
@@ -279,15 +287,27 @@ const portFree = (port) => new Promise((resolve) => { const t = net.createServer
                 await W(`${where} combobox`, pre + 'Combo', async () => { await click(q(id('combobox', 'Combo'), 'input')); await selAll(id('combobox', 'Combo'), 'input'); await type('Option B'); await wait(200); await key('ArrowDown'); await key('Enter'); }, 'b');
             }
             console.log('tags writes (type):', JSON.stringify(writes.filter((w) => /Tags/.test(w[0]))));
+            // code reads / writes (vars.<kind>): the tag's value from a literal name and from a name built at run time, the other kinds, a write
+            await wait(600);
+            const cr = await js('window.__codeReads || null');
+            check('code: vars.shared.get("sparkplug::...") (a literal name) has the tag\'s value', cr && cr.lit === values.Stat, cr && cr.lit);
+            check('code: vars.shared.get(a name built at run time) has the tag\'s value', cr && cr.dyn === values.Int, cr && cr.dyn);
+            check('code: vars.screen.set / get', cr && cr.sv === 2, cr && cr.sv);
+            check('code: each kind reads only its own layer (no app / shared "codeVar")', cr && cr.app === undefined && cr.shared === undefined, cr);
+            check('code: vars.system.get("$route")', cr && typeof cr.route === 'string' && /tags/.test(cr.route), cr && cr.route);
+            check('code: vars.shared.set("sparkplug::...", 77) writes the tag (DCMD)', writes.some((w) => w[0] === 'CodeW' && w[1] === 77) && (await js('window.__codeWrote === 1')), writes.filter((w) => w[0] === 'CodeW'));
             // 4. The edge goes away: every value shows "???" (no frozen value); it comes back
             edge.edge.publish('spBv1.0/G/DDEATH/E1/D1', sp.encodePayload({ timestamp: Date.now(), seq: 99, metrics: [] }));
             await wait(800);
             const dead = await read('p3', 'field');
             check('device death: a field shows ??? (not its stale value)', dead === '' || dead === '???' || /\?\?\?/.test(await js(`${R('p3')}.textContent`)), dead);
+            const crDead = await js('window.__codeReads || null');
+            check('device death: code reads null (not "???", not its stale value)', crDead && crDead.lit === null && crDead.dyn === null, crDead);
             for (const P of ['p', 's']) {
                 const where = P === 'p' ? 'screen' : 'in tab';
                 check(`device death: ${where} a list with a static value shows it`, (await label(P + 'L3')) === 'offline', await label(P + 'L3'));
-                check(`device death: ${where} a list without one shows ???`, (await label(P + 'L1')) === '???', await label(P + 'L1'));
+                const none = await label(P + 'L1');
+                check(`device death: ${where} a list without one has no value (not "???", not its stale value)`, none !== '???' && none !== String(P === 'p' ? values.Txt : values.S_Txt), none);
             }
             edge.birth(); await wait(1200);
             check('rebirth: a binding list has its tag again', (await label('pL3')) === String(values.Int), await label('pL3'));
