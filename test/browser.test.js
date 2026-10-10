@@ -1866,8 +1866,8 @@ withHarness({
 
         const ptsCount = await js(`(function () {
             var w = ${acw('ac-test')};
-            w.appendPoints('s1', [{ x: ${T}, y: 30 }, { x: ${T + 3600000}, y: 45 }]);
-            w.appendPoints('s2', [{ x: ${T}, y: 20 }, { x: ${T + 3600000}, y: 35 }]);
+            w.appendPoints([{ x: ${T}, y: 30 }, { x: ${T + 3600000}, y: 45 }], 's1');
+            w.appendPoints([{ x: ${T}, y: 20 }, { x: ${T + 3600000}, y: 35 }], 's2');
             w.draw();
             var b1 = w._state(w.findSeries('s1')).buf.length;
             var b2 = w._state(w.findSeries('s2')).buf.length;
@@ -1895,7 +1895,7 @@ withHarness({
         for (const mode of ['standard', 'stacked']) {
             const id = 'ac-gap-' + mode;
             await mount(id, 'area-chart', { mode, series: [{ id: 's1', name: 'A', fillType: 'solid' }, { id: 's2', name: 'B', fillType: 'solid' }] }, { width: 500, height: 260 });
-            await js(`(function () { var w = ${acw(id)}; w.appendPoints('s1', ${JSON.stringify(pts)}); w.appendPoints('s2', ${JSON.stringify(pts.map((q) => ({ x: q.x, y: 30 })))}); w.draw(); })()`);
+            await js(`(function () { var w = ${acw(id)}; w.appendPoints(${JSON.stringify(pts)}, 's1'); w.appendPoints(${JSON.stringify(pts.map((q) => ({ x: q.x, y: 30 })))}, 's2'); w.draw(); })()`);
             const st = await js(`(function () { var w = ${acw(id)}, buf = w._state(w.findSeries('s1')).buf; return { count: buf.length, breaks: Array.from(buf.breaksKept()), zero: buf.getY(9) }; })()`);
             assert.deepStrictEqual(st, { count: 20, breaks: [T + 10000], zero: 40 }, 'the null is no point (and no 0)');
             const hole = async () => js(`(function () { var w = ${acw(id)}; w.draw(); var sc = w._scale, d = w._lastDpr || 1, ctx = w.canvas.getContext("2d");
@@ -1913,8 +1913,47 @@ withHarness({
         }
         // a 0 is a value: it is a point
         await mount('ac-zero', 'area-chart', { series: [{ id: 's1', name: 'A' }] }, { width: 400, height: 200 });
-        await js(`(function () { var w = ${acw('ac-zero')}; w.appendPoints('s1', [{ x: 1000, y: 0 }, { x: 2000, y: null }, { x: 3000, y: "" }, { x: 4000, y: 7 }]); })()`);
+        await js(`(function () { var w = ${acw('ac-zero')}; w.appendPoints([{ x: 1000, y: 0 }, { x: 2000, y: null }, { x: 3000, y: "" }, { x: 4000, y: 7 }], 's1'); })()`);
         assert.deepStrictEqual(await js(`(function () { var buf = ${acw('ac-zero')}._state(${acw('ac-zero')}.findSeries('s1')).buf; return [buf.length, buf.getY(0), buf.getY(1), buf.breaksKept().length]; })()`), [2, 0, 7, 2]);
+    });
+
+    await ok('Area Chart: the same Update-node actions and live value as the Line Chart: Append / Replace / Clear / Show / Hide of ONE series (params, target), a live value is a point, null after it is missing', async () => {
+        const T = 1728000000000, t = (id) => `{ list: "series", id: "${id}" }`;
+        await mount('ac-act', 'area-chart', { series: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }] }, { width: 500, height: 240 });
+        const buf = (id) => js(`(function () { var w = ${acw('ac-act')}, b = w._state(w.findSeries("${id}")).buf; return { ys: Array.from({ length: b.length }, function (_, i) { return b.getY(i); }), breaks: b.breaksKept().length }; })()`);
+        await js(`NexaTest.invoke("ac-act", "appendPoints", [{ x: ${T}, y: 1 }, { x: ${T + 1000}, y: 2 }], ${t('b')})`);
+        await js(`NexaTest.invoke("ac-act", "appendPoints", { x: ${T + 2000}, y: 3 }, ${t('b')})`);
+        assert.deepStrictEqual((await buf('b')).ys, [1, 2, 3], 'an array, then one point: the series the node targets (b)');
+        assert.deepStrictEqual((await buf('a')).ys, [], 'a is untouched');
+        await js(`NexaTest.invoke("ac-act", "replacePoints", [{ x: ${T}, y: 9 }], ${t('b')})`);
+        assert.deepStrictEqual((await buf('b')).ys, [9], 'Replace');
+        await js(`NexaTest.invoke("ac-act", "appendPoints", { points: [{ x: ${T + 5000}, y: 4 }, { x: ${T + 6000}, y: null }] }, ${t('b')})`);
+        assert.deepStrictEqual(await buf('b'), { ys: [9, 4], breaks: 1 }, 'a {points: [...]} payload; the null is a break, not a point');
+        await js(`NexaTest.invoke("ac-act", "hide", null, ${t('b')})`); await settle();
+        assert.strictEqual(await js(`${acw('ac-act')}._hidden.has("b")`), true, 'Hide');
+        await js(`NexaTest.invoke("ac-act", "show", null, ${t('b')})`); await settle();
+        assert.strictEqual(await js(`${acw('ac-act')}._hidden.has("b")`), false, 'Show');
+        await js(`NexaTest.invoke("ac-act", "clear", null, ${t('b')})`); await settle();
+        assert.deepStrictEqual(await buf('b'), { ys: [], breaks: 0 }, 'Clear: the points and the breaks');
+        const bad = await js(`(function () { try { NexaTest.invoke("ac-act", "appendPoints", []); return null; } catch (e) { return e.message; } })()`);
+        assert.ok(/no action "appendPoints"/.test(bad), 'Append is the series\' action, not the chart\'s: ' + bad);
+
+        // the live value (a tag): each value is a point; null / undefined after a value is missing, once; the next value is a point again
+        await mount('ac-live', 'area-chart', { series: [{ id: 'a', name: 'A', live: 5 }] }, { width: 500, height: 240 });
+        const set = async (v) => { await js(`NexaTest.setProps("ac-live", { series: [${JSON.stringify(Object.assign({ id: 'a', name: 'A' }, v === undefined ? {} : { live: v }))}] })`); await settle(); await sleep(15); };
+        const live = () => js(`(function () { var w = ${acw('ac-live')}, b = w._state(w.findSeries("a")).buf; return { ys: Array.from({ length: b.length }, function (_, i) { return b.getY(i); }), breaks: b.breaksKept().length }; })()`);
+        assert.deepStrictEqual(await live(), { ys: [5], breaks: 0 }, 'a live value is a point');
+        await set(5);
+        assert.strictEqual((await live()).ys.length, 1, 'the same value again is not another point');
+        await sleep(15);
+        await set(null);
+        await set(undefined);
+        assert.deepStrictEqual(await live(), { ys: [5], breaks: 1 }, 'null, then undefined: missing, once');
+        await sleep(15);
+        await set(7);
+        assert.deepStrictEqual(await live(), { ys: [5, 7], breaks: 1 }, 'the next value is a point again');
+        await set([{ x: T, y: 1 }, { x: T + 1000, y: 2 }]);
+        assert.deepStrictEqual((await live()).ys, [1, 2, 5, 7], 'an array of {x, y} is accepted: older points go in their place');
     });
 
     // ---- KPI / Stat ----------------------------------------------------------------------------

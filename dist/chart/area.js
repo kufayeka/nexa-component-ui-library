@@ -165,44 +165,99 @@ export class AreaChartElement extends TimeChartElement {
         return { minX, maxX, minY, maxY };
     }
 
-    appendPoints(seriesRef, points) {
-        const s = this.findSeries(seriesRef);
-        if (!s) return;
-        const st = this._state(s);
-        if (st.demo) { st.buf.clear(); st.demo = false; }
-        const arr = Array.isArray(points) ? points : [points];
-        // a value that is null / undefined / "" / not a number is MISSING, never a 0: no point, a break (./gaps.js)
-        for (const pt of arr) {
-            if (pt === null || pt === undefined) st.buf.markBreak(this._now());
-            else if (typeof pt === "number" || typeof pt === "string") {
-                const y = valueOrNaN(pt);
-                if (Number.isFinite(y)) st.buf.push(this._now(), y); else st.buf.markBreak(this._now());
-            } else if (typeof pt === "object") {
-                const x = timeOf(pt[s.xField || "x"] !== undefined ? pt[s.xField || "x"] : (pt.time !== undefined ? pt.time : this._now()));
-                const y = valueOrNaN(pt[s.yField || "y"] !== undefined ? pt[s.yField || "y"] : pt.val);
-                if (!Number.isFinite(x)) continue;
-                if (Number.isFinite(y)) st.buf.push(x, y); else st.buf.markBreak(x);
+    // ---- the live value and the actions of ONE series: the Line Chart's, so a flow means the same on both ----
+    // (the live value (a tag) and every Logic action of a series take (params = msg.payload, target))
+    // every change of a prop, one by one: a live value is taken here (not in updated(): Lit batches)
+    propsChanged() { this.prepareData(); }
+
+    prepareData() {
+        const live = new Set();
+        let dirty = false;
+        for (const s of this.seriesList()) {
+            live.add(s._key);
+            const st = this._state(s);
+            const cap = Math.max(50, numOr(s.maxPoints, 10000));
+            if (st.buf.capacity !== cap) { st.buf.setCapacity(cap); dirty = true; }
+            // the live value: every new value is a point (the same value object again is not)
+            const v = s.live;
+            if (v === null || (v === undefined && st.lastLive !== undefined)) {
+                // null / undefined after a value: the value is MISSING now (a 0 would be a value); once, until a value comes again
+                if (st.lastLive !== undefined && st.lastLive !== null) {
+                    st.lastLive = null;
+                    if (this._add(s, st, [null]).gone) dirty = true;
+                }
+            } else if (v !== undefined && v !== "" && v !== "???" && v !== st.lastLive && !(typeof v === "object" && v.$bind)) {
+                st.lastLive = v;
+                if (this._add(s, st, Array.isArray(v) ? v : [v]).added) dirty = true;
             }
         }
-        this.scheduleDraw();
+        for (const k of Array.from(this._series.keys())) if (!live.has(k)) { this._series.delete(k); dirty = true; }
+        if (dirty) { this.scheduleDraw(); this.requestUpdate(); }
     }
 
-    replacePoints(seriesRef, points) {
-        const s = this.findSeries(seriesRef);
+    // points into a series: {x, y} / a number (time = now). A value that is null / undefined / "" / not a number is MISSING, never a
+    // 0: no point, a break (./gaps.js). -> { added: points, gone: breaks }
+    _add(s, st, pts) {
+        if (st.demo) { st.buf.clear(); st.demo = false; }
+        let added = 0, gone = 0;
+        for (const pt of pts) {
+            let x, y;
+            if (pt === null || pt === undefined) { x = Date.now(); y = NaN; }
+            else if (typeof pt === "object") {
+                x = timeOf(pt[s.xField || "x"] !== undefined ? pt[s.xField || "x"] : (pt.time !== undefined ? pt.time : Date.now()));
+                y = valueOrNaN(pt[s.yField || "y"] !== undefined ? pt[s.yField || "y"] : pt.val);
+            } else { x = Date.now(); y = valueOrNaN(pt); }
+            if (!Number.isFinite(x)) continue;
+            if (!Number.isFinite(y)) { if (st.buf.markBreak(x)) gone++; continue; }
+            if (st.buf.push(x, y)) added++;
+        }
+        return { added, gone };
+    }
+
+    _pointsOf(params) {
+        if (params && typeof params === "object" && !Array.isArray(params) && Array.isArray(params.points)) return params.points;
+        return Array.isArray(params) ? params : params === undefined || params === null || params === "" ? [] : [params];
+    }
+
+    appendPoints(params, target) {
+        const s = this.findSeries(target || (params && params.series));
+        if (!s) return 0;
+        const { added, gone } = this._add(s, this._state(s), this._pointsOf(params));
+        if (added || gone) { this.scheduleDraw(); this.requestUpdate(); }
+        return added;
+    }
+
+    replacePoints(params, target) {
+        const s = this.findSeries(target || (params && params.series));
+        if (!s) return 0;
+        const st = this._state(s);
+        st.buf.clear();
+        st.demo = false;
+        const { added } = this._add(s, st, this._pointsOf(params));
+        this.scheduleDraw();
+        this.requestUpdate();
+        return added;
+    }
+
+    clear(params, target) {
+        const s = this.findSeries(target || (params && params.series));
         if (!s) return;
         const st = this._state(s);
         st.buf.clear();
         st.demo = false;
-        this.appendPoints(s, points);
+        this.scheduleDraw();
+        this.requestUpdate();
     }
 
-    clearSeries(seriesRef) {
-        const s = this.findSeries(seriesRef);
+    show(params, target) { this._setVisible(target || (params && params.series), true); }
+    hide(params, target) { this._setVisible(target || (params && params.series), false); }
+
+    _setVisible(ref, on) {
+        const s = this.findSeries(ref);
         if (!s) return;
-        const st = this._state(s);
-        st.buf.clear();
-        st.demo = false;
+        if (on) this._hidden.delete(s._key); else this._hidden.add(s._key);
         this.scheduleDraw();
+        this.requestUpdate();
     }
 
     clearAll() {
@@ -213,6 +268,9 @@ export class AreaChartElement extends TimeChartElement {
         }
         this.scheduleDraw();
     }
+
+    // kept for flows that used the old name: the chart's Update node clearing every series
+    clearPoints() { this.clearAll(); }
 
     draw() {
         if (!this.ctx || !this.canvas) return;
@@ -458,11 +516,11 @@ export class AreaChartElement extends TimeChartElement {
         if (data.series && typeof data.series === "object") {
             for (const [k, pts] of Object.entries(data.series)) {
                 const s = this.findSeries(k);
-                if (s) this.replacePoints(s, pts);
+                if (s) this.replacePoints(pts, s);
             }
         } else if (Array.isArray(data)) {
             // Array of [{ time, s1, s2 }] or [{ x, y }]
-            if (list[0]) this.replacePoints(list[0], data);
+            if (list[0]) this.replacePoints(data, list[0]);
         }
         this.scheduleDraw();
     }
@@ -586,9 +644,17 @@ export const areaChart = defineUI({
                 fields: SERIES_FIELDS, noun: "series",
                 target: true,
                 actions: {
-                    appendPoints: { label: "Append points", example: "{ \"x\": 1727852400000, \"y\": 25.5 }" },
-                    replacePoints: { label: "Replace points", example: "[{ \"x\": 1727852400000, \"y\": 25.5 }]" },
-                    clear: { label: "Clear" }
+                    appendPoints: {
+                        label: "Append points", help: "Adds points to this series (any order: a late point goes in its place).",
+                        example: "{ \"x\": 1727852400000, \"y\": 25.5 }  or  [{x, y}, …]  or  25.5 (time = now)"
+                    },
+                    replacePoints: {
+                        label: "Replace points", help: "Replaces everything the series holds: a query result, a batch's history.",
+                        example: "[{ \"x\": 1727852400000, \"y\": 25.5 }, …]"
+                    },
+                    clear: { label: "Clear", help: "Empties this series." },
+                    show: { label: "Show", help: "Shows this series (as its legend entry would)." },
+                    hide: { label: "Hide", help: "Hides this series; its data is kept." }
                 }
             }
         },

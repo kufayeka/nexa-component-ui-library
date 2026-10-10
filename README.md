@@ -437,7 +437,7 @@ Continuous time-series area visualization built on top of the high-performance `
 - Multi-series inspector, hover crosshair, and rich tooltip showing series values and cumulative stack total.
 
 **Logic Targeting (`target: true`)**:
-- Each series has its own Update node and actions: `appendPoints`, `replacePoints`, `clearPoints`, `show`, `hide`.
+- Each series has its own Update node and the Line Chart's actions, with the same payloads: **Append points** (`{x, y}`, `[{x, y}, …]`, a number = now, or `{ points: [...] }`), **Replace points**, **Clear**, **Show**, **Hide**; and its **Live value** (a tag): each value is a point, `null` / `undefined` after a value is missing (see *When data is missing*). `clearPoints` (the chart's Update node) is kept for older flows.
 - Chart-level action: `setChartData({ series: { s1: [...], s2: [...] } })` or direct array `[{ time, s1, s2 }, ...]`.
 - Export: CSV, Excel (`.xlsx`), and 2× sharp PNG.
 
