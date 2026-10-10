@@ -999,7 +999,7 @@ withHarness({
         assert.strictEqual(formatted, '1.234,5 °C');
     });
 
-    await ok('Line Chart: the series\' axis settings are one Axis section (Range, Numbers, Spine inside it); no chart-level axes; no scale / group', async () => {
+    await ok('Line Chart: the series\' axis settings are one Axis section (Range, Numbers, Spine inside it); the chart\'s own Axes list is the shared axes; no scale / group', async () => {
         const r = await js(`(async function () {
             var f = NEXA.getComponent("${P}line-chart").nexa.props.series.item.fields;
             var t = NexaTest.inspector("${P}line-chart", {});
@@ -1014,7 +1014,7 @@ withHarness({
         assert.deepStrictEqual(r.sec, ['Axis', 'Axis', 'Axis/Range', 'Axis/Numbers', 'Axis/Spine']);
         assert.deepStrictEqual(r.gone, []);
         assert.deepStrictEqual(r.rows, ['series#0/Axis', 'series#0/Axis/Range', 'series#0/Axis/Numbers', 'series#0/Axis/Spine'], 'the tree: Axis › Range / Numbers / Spine');
-        assert.strictEqual(r.axesGroup, false);
+        assert.strictEqual(r.axesGroup, true, 'the Axes group is the chart\'s list of shared Y axes (before it, every series had its own axis and the chart had no Axes group)');
     });
 
     await ok('Line Chart: a threshold follows the scale of the series it names; that series (only) fires On Threshold Crossed', async () => {
@@ -1089,6 +1089,119 @@ withHarness({
         await js(`NexaTest.invoke("lc-band", "appendPoints", { x: ${T0 + 180000}, y: 65 }, { list: "series", id: "a" })`);
         const ev = await js(`NexaTest.item("lc-band").events.filter(function (e) { return e[0] === "thresholdCross"; }).map(function (e) { return e[1].direction + ":" + e[1].threshold; })`);
         assert.deepStrictEqual(ev, ['up:40', 'up:30', 'up:20', 'up:60'], 'into the band (and past both lines), then out of its top');
+    });
+
+    // ---- shared Y axes: a list of axes, a series picks one (or has its own) ---------------------------------------------------
+    const axInfo = (name) => js(`(function () {
+        var w = ${series(name)}; w.draw();
+        var sc = w._scale, L = sc.layout, list = w.seriesList(), by = function (id) { return list.filter(function (s) { return s.id === id; })[0]; };
+        return { left: L.left.map(function (c) { return c.s.id; }), right: L.right.map(function (c) { return c.s.id; }),
+            members: L.left.concat(L.right).map(function (c) { return c.members ? c.members.map(function (m) { return m.id; }) : null; }),
+            keys: list.map(function (s) { return s._ax; }), yr: list.map(function (s) { var r = sc.yr[s._ax]; return r ? [Math.round(r.lo * 100) / 100, Math.round(r.hi * 100) / 100] : null; }),
+            y95: list.map(function (s) { return Math.round(sc.toY(95, s._ax)); }), padLeft: sc.m.padLeft, padRight: sc.m.padRight };
+    })()`);
+    const live = (a, b) => [{ x: T0, y: a }, { x: T0 + 1000, y: b }];
+
+    await ok('Line Chart: series that pick the same Y axis share ONE scale and ONE drawn axis; Own stays as it was; the axes keep the order of the series', async () => {
+        await mount('lc-sh', 'line-chart', {
+            axes: [{ id: 'a1', name: 'Power kW' }],
+            series: [S('p1', { yAxis: 'a1', live: live(0, 10) }), S('p2', { yAxis: 'a1', live: live(90, 100) }), S('t', { unit: '°C', live: live(20, 30) })]
+        }, { width: 600, height: 300 });
+        const a = await axInfo('lc-sh');
+        assert.deepStrictEqual(a.left, ['a1', 't'], 'two columns, not three: the shared axis (first member) and the own axis of t');
+        assert.deepStrictEqual(a.members[0], ['p1', 'p2']);
+        assert.deepStrictEqual(a.keys, ['axis:a1', 'axis:a1', 't'], 'the shared ones are on the axis; t on its own key (as before)');
+        assert.deepStrictEqual(a.yr[0], a.yr[1], 'one scale');
+        assert.ok(a.yr[0][0] <= 0 && a.yr[0][1] >= 100, 'it covers every member: ' + a.yr[0]);
+        assert.strictEqual(a.y95[0], a.y95[1], 'a value is at one height for both');
+        assert.ok(a.yr[2][0] > 10 && a.yr[2][1] < 40, 't has its own scale: ' + a.yr[2]);
+    });
+
+    await ok('Line Chart: the axis\' limits win; a series\' own limits are ignored while it shares; its position (left / right / off)', async () => {
+        await mount('lc-shl', 'line-chart', {
+            axes: [{ id: 'a1', name: 'Power', min: 0, max: 200, axis: 'right' }, { id: 'a2', name: 'Hidden', min: 0, max: 5, axis: 'off' }],
+            series: [S('p1', { yAxis: 'a1', min: 40, max: 60, live: live(40, 60) }), S('p2', { yAxis: 'a1', live: live(10, 20) }), S('h', { yAxis: 'a2', live: live(1, 2) })]
+        }, { width: 600, height: 300 });
+        const a = await axInfo('lc-shl');
+        assert.deepStrictEqual([a.left, a.right], [[], ['a1']], 'on the right; "off": no column');
+        assert.deepStrictEqual(a.yr, [[0, 200], [0, 200], [0, 5]], 'hard limits of the axis; p1\'s own 40..60 is not used; a hidden axis still has its scale');
+    });
+
+    await ok('Line Chart: an axis stays while one of its series is shown, goes when none is; an axis the series names but the list has not is its own', async () => {
+        await mount('lc-shh', 'line-chart', {
+            axes: [{ id: 'a1', name: 'Power' }],
+            series: [S('p1', { yAxis: 'a1', live: live(0, 10) }), S('p2', { yAxis: 'a1', live: live(5, 20) }), S('g', { yAxis: 'gone', live: live(1, 2) })]
+        }, { width: 600, height: 300 });
+        const hide = (ids) => js(`(function () { var w = ${series('lc-shh')}; w._hidden.clear(); w.seriesList().forEach(function (s) { if (${JSON.stringify(ids)}.indexOf(s.id) !== -1) w._hidden.add(s._key); }); return 1; })()`);
+        let a = await axInfo('lc-shh');
+        assert.deepStrictEqual([a.left, a.keys[2]], [['a1', 'g'], 'g'], 'the missing axis: the series has its own');
+        await hide(['p1']);
+        a = await axInfo('lc-shh');
+        assert.deepStrictEqual(a.left, ['a1', 'g'], 'p1 hidden: p2 keeps the axis');
+        assert.ok(a.yr[1][1] >= 20 && a.yr[1][1] < 30, 'its scale now covers p2 only: ' + a.yr[1]);
+        await hide(['p1', 'p2']);
+        a = await axInfo('lc-shh');
+        assert.deepStrictEqual(a.left, ['g'], 'both hidden: the axis is gone');
+        await hide([]);
+    });
+
+    await ok('Line Chart: a threshold follows the shared axis of its series; tooltip and legend values keep the series\' own unit; the axis colour', async () => {
+        await mount('lc-sht', 'line-chart', {
+            axes: [{ id: 'a1', name: 'Power' }, { id: 'a2', name: 'Red', color: '#ff0000' }, { id: 'a3', name: 'Solo' }],
+            thresholds: [{ kind: 'upper', value: 50, series: 'p2' }],
+            series: [S('p1', { yAxis: 'a1', unit: 'kW', color: '#3366cc', live: live(0, 10) }), S('p2', { yAxis: 'a1', unit: 'MW', live: live(90, 100) }),
+                S('r', { yAxis: 'a2', live: live(0, 1) }), S('o', { yAxis: 'a3', color: '#00aa00', live: live(0, 1) })]
+        }, { width: 600, height: 300 });
+        const r = await js(`(function () { var w = ${series('lc-sht')}; w.draw(); var sc = w._scale, l = w.seriesList(), t = w.p.thresholds[0], on = w._thresholdOf(t);
+            var cols = sc.layout.left, text = w._colors().text;
+            return { on: on.id, ax: on._ax, y: Math.round(sc.toY(50, on._ax)), y1: Math.round(sc.toY(50, l[0]._ax)),
+                v: [w.fmtValue(l[0], 5), w.fmtValue(l[1], 5)], colours: cols.map(function (c) { return [c.s.id, w._axisColor(c)]; }), text: text, p1: w.colorOf(l[0]), o: w.colorOf(l[3]) };
+        })()`);
+        assert.deepStrictEqual([r.on, r.ax, r.y === r.y1], ['p2', 'axis:a1', true], 'on the scale of p2 = the shared one');
+        assert.ok(/kW/.test(r.v[0]) && /MW/.test(r.v[1]) && !/MW/.test(r.v[0]), 'each series\' own unit: ' + r.v);
+        assert.deepStrictEqual(r.colours.map((c) => c[0]), ['a1', 'a2', 'a3']);
+        assert.strictEqual(r.colours[0][1], r.text, 'two series, no colour: the text colour');
+        assert.strictEqual(r.colours[1][1], '#ff0000', 'its own colour');
+        assert.strictEqual(r.colours[2][1], r.o, 'one series, no colour: that series\' colour');
+    });
+
+    await ok('Line Chart: a wide scale (a shared axis, 22.8 .. 54.2) has its three or more ticks, not one; a narrow one is as it was', async () => {
+        await mount('lc-tk', 'line-chart', { series: [S('a', { live: live(1, 2) })] }, { width: 400, height: 240 });
+        const t = await js(`(function () { var w = ${series('lc-tk')}; var ph = 175; return { wide: w._ticks({ lo: 22.84, hi: 54.16 }, ph), full: w._ticks({ lo: 0, hi: 100 }, ph), narrow: w._ticks({ lo: 23, hi: 38 }, ph), tiny: w._ticks({ lo: 0.2, hi: 0.9 }, ph), tall: w._ticks({ lo: 0, hi: 87 }, 300) }; })()`);
+        assert.deepStrictEqual(t.wide, [30, 40, 50], 'it was [40]: the step went up to 20');
+        assert.deepStrictEqual(t.full, [0, 50, 100], 'a range that already had three: unchanged');
+        assert.deepStrictEqual(t.narrow, [25, 30, 35], 'unchanged');
+        assert.ok(t.tiny.length >= 3, 'a small range: ' + t.tiny);
+        assert.ok(t.tall.length >= 3 && t.tall.length <= 8, 'a tall plot: ' + t.tall);
+    });
+
+    await ok('Line Chart: the series list is cached (the same list while the props are the same), with and without Axes: it is read many times a frame', async () => {
+        await mount('lc-c0', 'line-chart', { series: [S('a', { live: live(0, 1) })] }, { width: 400, height: 200 });
+        await mount('lc-c1', 'line-chart', { axes: [{ id: 'a1', name: 'A' }], series: [S('a', { yAxis: 'a1', live: live(0, 1) })] }, { width: 400, height: 200 });
+        for (const n of ['lc-c0', 'lc-c1']) assert.strictEqual(await js(`(function () { var w = ${series(n)}; w.draw(); return w.seriesList() === w.seriesList() && w._axes() === w._axes(); })()`), true, n);
+    });
+
+    await ok('Line Chart: the Axes list and the series\' Y axis in the inspector: the fields, the choices, the series\' own axis fields only for Own', async () => {
+        const r = await js(`(function () {
+            var n = NEXA.getComponent("${P}line-chart").nexa, ax = n.props.axes, sf = n.props.series.item.fields, af = ax.item.fields;
+            var P = { axes: [{ id: 'a1', name: 'Power kW' }] };
+            return { type: ax.type, group: ax.group, def: ax.default, noun: ax.item.noun, groups: n.groupOrder.slice(0, 3),
+                afKeys: Object.keys(af), sections: ['axis', 'softMin', 'axisLine', 'notation'].map(function (k) { return af[k] && af[k].section; }),
+                created: ax.item.create([{ id: 'a1' }]), y: sf.yAxis.options(P).map(function (o) { return [o.value, o.label]; }), ySection: sf.yAxis.section,
+                order: Object.keys(sf).slice(Object.keys(sf).indexOf('yAxis'), Object.keys(sf).indexOf('yAxis') + 3),
+                ownHidden: ['axis', 'axisTitle', 'min', 'max', 'softMin', 'zeroCenter', 'axisLine', 'axisLineColor'].map(function (k) { return [sf[k].visibleWhen({ yAxis: 'a1' }, P), sf[k].visibleWhen({ yAxis: '' }, P)]; }),
+                stays: ['unit', 'notation', 'decimals', 'separators', 'thousands', 'valueMap'].map(function (k) { return !sf[k].visibleWhen || sf[k].visibleWhen({ yAxis: 'a1' }, P); }),
+                dflt: sf.yAxis.default };
+        })()`);
+        assert.deepStrictEqual([r.type, r.group, r.def, r.noun, r.groups], ['list', 'Axes', [], 'axis', ['Series', 'Axes', 'Data']]);
+        for (const k of ['name', 'id', 'color', 'axis', 'axisTitle', 'unit', 'softMin', 'softMax', 'min', 'max', 'zeroCenter', 'notation', 'decimals', 'separators', 'thousands', 'valueMap', 'axisLine', 'axisLineColor', 'axisLineWidth', 'axisLineDash']) assert.ok(r.afKeys.indexOf(k) !== -1, 'an axis has ' + k);
+        assert.ok(r.afKeys.indexOf('yAxis') === -1 && r.afKeys.indexOf('live') === -1, 'and nothing of a series');
+        assert.deepStrictEqual(r.sections, [null, 'Range', 'Spine', 'Numbers'], 'sections without the Axis/ prefix (Position: none, at the top; null = undefined through the page)');
+        assert.deepStrictEqual(r.created, { axis: 'left', axisTitle: '', axisTitleColor: '', unit: '', softMin: '', softMax: '', min: '', max: '', zeroCenter: false, notation: 'standard', decimals: 'auto', separators: 'locale', thousands: true, valueMap: '', axisLine: true, axisLineColor: '', axisLineWidth: 1, axisLineDash: 'solid', name: 'Axis 2', id: 'a2', color: '' });
+        assert.deepStrictEqual(r.y, [['', 'Own axis (its own scale)'], ['a1', 'Power kW']]);
+        assert.deepStrictEqual([r.ySection, r.dflt, r.order[0], r.order[1]], ['Axis', '', 'yAxis', 'axis'], 'the first of the Axis section, right before Position');
+        assert.deepStrictEqual(r.ownHidden, r.ownHidden.map(() => [false, true]), 'the own axis fields: shown for Own, hidden on a shared axis');
+        assert.ok(r.stays.every(Boolean), 'Unit, Numbers and Value texts stay: they are the series\' tooltip and legend');
     });
 
     await ok('Line Chart: Automatic interpolation is a step while the values are whole numbers; value texts (0=Off, 1=Run) on the axis, in the tooltip and the legend', async () => {

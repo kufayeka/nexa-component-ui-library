@@ -13,7 +13,7 @@ function load(file) {
     const names = [...src.matchAll(/^export (?:var|let|const|function) (\w+)/gm)].map((m) => m[1]);
     return new Function(src.replace(/^export /gm, '') + '\nreturn {' + names.join(',') + '};')();
 }
-const R = load('rows.js'), S = load('stack.js'), C = load('curves.js'), F = load('fit.js'), Q = load('spc-core.js');
+const R = load('rows.js'), S = load('stack.js'), C = load('curves.js'), F = load('fit.js'), Q = load('spc-core.js'), A = load('axes.js');
 
 let passed = 0;
 function ok(label, fn) { fn(); passed++; console.log('✔ ' + label); }
@@ -259,6 +259,96 @@ ok('SPC capability: Cp, Cpk (within), Pp, Ppk (overall), one-sided, the expected
     assert.ok(Math.abs(Q.normCdf(1.96) - 0.975) < 1e-4 && Math.abs(Q.normCdf(0) - 0.5) < 1e-7);
     const shifted = Q.capability([12, 12.5, 13, 13.5, 14], { usl: 13, lsl: 7 });
     assert.strictEqual(shifted.outAbove, 2); assert.ok(shifted.ppm > 400000);
+});
+
+// ---- shared Y axes (dist/chart/axes.js) ---------------------------------------------------------------------------------
+ok('scaleRange: the same scale a series always had (8 % padding, soft limits grow it, hard limits fix it, zero in the middle)', () => {
+    const r = (lo, hi, spec) => { const x = A.scaleRange(lo, hi, spec); return [Math.round(x.lo * 1e9) / 1e9, Math.round(x.hi * 1e9) / 1e9]; };
+    assert.deepStrictEqual(r(0, 10, {}), [-0.8, 10.8], 'padded by 8 %');
+    assert.deepStrictEqual(r(5, 5, {}), [4.5, 5.5], 'one value: 10 % around it');
+    assert.deepStrictEqual(r(0, 0, {}), [-1, 1], 'zero: 1 around it');
+    assert.deepStrictEqual(r(2, 8, { softMin: 0, softMax: 10 }), [0, 10], 'soft limits: the range covers them, and then no padding past them');
+    assert.deepStrictEqual(r(2, 8, { softMin: 5 }), [1.52, 8.48], 'a soft limit inside the data does not clip');
+    assert.deepStrictEqual(r(2, 8, { min: 0, max: 100 }), [0, 100], 'hard limits fix it');
+    assert.deepStrictEqual(r(-3, 8, { zeroCenter: true }), [-8.88, 8.88], 'zero in the middle: symmetric, after the padding');
+    assert.deepStrictEqual(r(2, 8, { min: '', max: '' }), [1.52, 8.48], 'empty limits are none');
+    assert.deepStrictEqual(r(2, 8, { min: 10, max: 4 }), [10, 11], 'a hard range upside down: at least 1 high');
+    assert.deepStrictEqual(r(NaN, NaN, {}), [-0.08, 1.08], 'no data: 0 .. 1, padded');
+    assert.deepStrictEqual(r(1, 2, undefined), [0.92, 2.08], 'no spec');
+});
+
+ok('unionRange: the range that covers every member (a series without one is left out)', () => {
+    assert.deepStrictEqual(A.unionRange([{ lo: 0, hi: 10 }, { lo: 90, hi: 100 }, null, { lo: -5, hi: 3 }]), { lo: -5, hi: 100 });
+    assert.deepStrictEqual(A.unionRange([null, null]), null);
+    assert.deepStrictEqual(A.unionRange([]), null);
+    assert.deepStrictEqual(A.unionRange([{ lo: 1, hi: 2 }]), { lo: 1, hi: 2 });
+});
+
+ok('sideOf: left (the default), right, or off (the scale stays, nothing is drawn)', () => {
+    assert.deepStrictEqual([A.sideOf({}), A.sideOf({ axis: 'left' }), A.sideOf({ axis: 'right' }), A.sideOf({ axis: 'off' }), A.sideOf({ axis: 'none' }), A.sideOf(null)], ['left', 'left', 'right', 'off', 'off', 'left']);
+});
+
+ok('resolveAxes: by Id; an item without an Id or with an Id already taken is left out; defaults under the item; a normaliser runs', () => {
+    const m = A.resolveAxes([{ id: 'a1', name: 'Power', axis: 'right' }, { name: 'no id' }, { id: 'a1', name: 'twice' }, null, { id: 'a2', min: 0 }], { axis: 'left', min: '', max: '' }, (o) => { o.seen = true; });
+    assert.deepStrictEqual([...m.keys()], ['a1', 'a2']);
+    const a1 = m.get('a1'), a2 = m.get('a2');
+    assert.deepStrictEqual([a1.name, a1._ax, a1._side, a1.min, a1.seen], ['Power', 'axis:a1', 'right', '', true]);
+    assert.deepStrictEqual([a2._ax, a2._side, a2.min, a2.max, a2._i], ['axis:a2', 'left', 0, '', 4], 'defaults under it; its place in the list');
+    assert.strictEqual(A.resolveAxes(undefined, {}).size, 0);
+    assert.strictEqual(A.resolveAxes('x', {}).size, 0);
+});
+
+ok('groupByAxis: series that pick the same axis are ONE group (one scale, one drawn axis); Own (or an axis that is gone) stands alone; first appearance orders them', () => {
+    const axes = A.resolveAxes([{ id: 'a1', name: 'Power' }, { id: 'a2', name: 'Temp' }], {});
+    const S = (k, yAxis) => ({ _key: k, yAxis });
+    const g = A.groupByAxis([S('s1', 'a1'), S('s2', 'a1'), S('s3', ''), S('s4', 'a2'), S('s5', 'gone'), S('s6', 'a1'), S('s7')], axes);
+    assert.deepStrictEqual(g.map((x) => [x.key, x.shared, x.members.map((m) => m._key)]), [
+        ['axis:a1', true, ['s1', 's2', 's6']], ['s3', false, ['s3']], ['axis:a2', true, ['s4']], ['s5', false, ['s5']], ['s7', false, ['s7']]]);
+    assert.strictEqual(g[0].spec, axes.get('a1'), 'a shared group is described by its axis');
+    assert.deepStrictEqual(g[1].spec, S('s3', ''), 'an own group by its series');
+    assert.deepStrictEqual(A.groupByAxis([], axes), []);
+    assert.strictEqual(A.axisKeyOf(S('s9', 'a2'), axes), 'axis:a2');
+    assert.deepStrictEqual([A.axisKeyOf(S('s9', ''), axes), A.axisKeyOf(S('s9', 'gone'), axes), A.axisKeyOf(S('s9'), axes)], [null, null, null]);
+});
+
+ok('the fields: an axis takes the series\' axis fields (sections without the "Axis/" prefix); a series keeps them only for "Own axis"', () => {
+    const base = {
+        axis: { type: 'enum', section: 'Axis', label: 'Position', default: 'left' },
+        axisTitle: { type: 'string', section: 'Axis', label: 'Title', default: '' },
+        unit: { type: 'string', section: 'Axis', label: 'Unit', default: '' },
+        softMin: { type: 'number', section: 'Axis/Range', label: 'Soft min', default: '' },
+        axisLine: { type: 'boolean', section: 'Axis/Spine', label: 'Spine', default: true },
+        axisLineColor: { type: 'color', section: 'Axis/Spine', label: 'Colour', default: '', visibleWhen: (s) => s.axisLine !== false },
+        name: { type: 'string', label: 'Name', default: 'Series' }
+    };
+    const f = A.axisFields(base);
+    assert.deepStrictEqual(Object.keys(f).slice(0, 3), ['name', 'id', 'color'], 'its own: Name, Id, Colour first');
+    assert.notStrictEqual(f.name, base.name, 'its Name is its own, not the series\'');
+    assert.ok(!('yAxis' in f));
+    assert.deepStrictEqual([f.axis.section, f.softMin.section, f.axisLine.section, f.axisTitle.section], [undefined, 'Range', 'Spine', undefined]);
+    assert.strictEqual(base.softMin.section, 'Axis/Range', 'the series\' field is untouched');
+    assert.strictEqual(f.axisLineColor.visibleWhen({ axisLine: false }), false, 'its visibleWhen came along');
+    const own = A.ownAxisOnly(base.axisLineColor);
+    const p = { axes: [{ id: 'a1' }] };
+    assert.deepStrictEqual([own.visibleWhen({ yAxis: '' }, p), own.visibleWhen({}, p), own.visibleWhen({ yAxis: 'a1' }, p), own.visibleWhen({ yAxis: 'gone' }, p), own.visibleWhen({ yAxis: '', axisLine: false }, p)], [true, true, false, true, false],
+        'visible for Own, and for an axis that is gone (the series falls back to its own); hidden for a real axis; its own rule still applies');
+    assert.strictEqual(A.ownAxisOnly(base.axis).visibleWhen({ yAxis: 'a1' }, p), false, 'a field with no rule of its own');
+    assert.strictEqual(base.axis.visibleWhen, undefined, 'the original is untouched');
+});
+
+ok('yAxisField: the series\' choice: Own axis, then the axes of the list by name (the Id when it has none)', () => {
+    const f = A.yAxisField();
+    assert.deepStrictEqual([f.type, f.default, f.section], ['enum', '', 'Axis']);
+    assert.deepStrictEqual(f.options({ axes: [{ id: 'a1', name: 'Power kW' }, { id: 'a2' }, { name: 'no id' }, null] }).map((o) => [o.value, o.label]), [['', 'Own axis (its own scale)'], ['a1', 'Power kW'], ['a2', 'a2']]);
+    assert.deepStrictEqual(f.options({}).map((o) => o.value), [''], 'no axes: only Own');
+    assert.deepStrictEqual(f.options(undefined).map((o) => o.value), ['']);
+});
+
+ok('newAxis: a fixed Id (a1, a2 ... never one in use), a name, the defaults', () => {
+    assert.deepStrictEqual(A.newAxis([], { axis: 'left' }), { axis: 'left', id: 'a1', name: 'Axis 1' });
+    assert.deepStrictEqual(A.newAxis([{ id: 'a1' }, { id: 'a2' }], {}), { id: 'a3', name: 'Axis 3' });
+    assert.deepStrictEqual(A.newAxis([{ id: 'a2' }], {}), { id: 'a3', name: 'Axis 3' }, 'a2 is taken: the next free number');
+    assert.strictEqual(A.newAxis([{ id: 'a1' }, null, { name: 'x' }], {}).id, 'a4', 'three items: a4');
 });
 
 console.log(`\n${passed} passed\nALL OK`);

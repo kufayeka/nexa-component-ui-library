@@ -7,7 +7,7 @@ A themed component library for **Nexa Dashboard**: 43 form, display, feedback, n
 
 - **Layout & Navigation**: Tabs — each tab has a panel you drop components into (the SDK's *slots*); Pagination — IBM Carbon-inspired pagination bar.
 - **Embed**: Iframe — another web page (Grafana, a camera, a report), with Logic both ways.
-- **Charts**: Line Chart (time series, an axis per series, thresholds, 1 M+ points), State Timeline (machine states, statistics), Bar Chart (grouped / dempet, stacked, 100% stacked, and Pareto 80/20 analysis), Pie / Donut Chart (categorical proportions, center KPI, auto "Others" grouping), Radial & Linear Gauge (dial / linear meter, needle pointer, bounds, threshold zones, target marker), Area & Stacked Area Chart (cumulative volume/flow, 100% stacked, time ruler), Sparkline (compact KPI trend indicator for cards and tables), and Chart (the Cartesian chart: columns / bars / lines / areas / points, stacked or side by side, rows split by a field), and Histogram (statistical distribution and frequency analysis, Freedman-Diaconis binning, normal Gaussian curve overlay, and Six Sigma Cp/Cpk tolerance limits). All are driven item by item from Logic, export CSV / Excel / PNG, and print as they look.
+- **Charts**: Line Chart (time series, an axis per series or axes the series share, thresholds, 1 M+ points), State Timeline (machine states, statistics), Bar Chart (grouped / dempet, stacked, 100% stacked, and Pareto 80/20 analysis), Pie / Donut Chart (categorical proportions, center KPI, auto "Others" grouping), Radial & Linear Gauge (dial / linear meter, needle pointer, bounds, threshold zones, target marker), Area & Stacked Area Chart (cumulative volume/flow, 100% stacked, time ruler), Sparkline (compact KPI trend indicator for cards and tables), and Chart (the Cartesian chart: columns / bars / lines / areas / points, stacked or side by side, rows split by a field), and Histogram (statistical distribution and frequency analysis, Freedman-Diaconis binning, normal Gaussian curve overlay, and Six Sigma Cp/Cpk tolerance limits). All are driven item by item from Logic, export CSV / Excel / PNG, and print as they look.
 
 In the editor they are in the palette under **UI · Form**, **UI · Display**, **UI · Layout** and **UI · Charts**.
 
@@ -156,19 +156,23 @@ A time-series chart driven by Logic.
 - **Data settings:** points kept, break the line after N ms, stale after N ms, and a **time shift** (yesterday over today).
 - **Look:** interpolation (linear / smooth / step / **automatic** / bars / points), step mode (after / before / center), colour (a hex or a theme token), width, dash, opacity, fill, points.
 - **Value texts** (its Axis › Numbers): `0=Off, 1=Run, 2=Fault`: the tooltip, the legend and the last value show the text, and the axis ticks are those values (Off / Run), not round numbers.
-- **Its own Y axis:** position (left / right / hidden), title, unit; Range (soft / hard min / max, **zero in the middle** for − and +); Numbers; Spine (line, ticks).
+- **Its Y axis:** **Own axis** (its own scale and axis: position left / right / hidden, title, unit; Range: soft / hard min / max, **zero in the middle** for − and +; Numbers; Spine) or **an axis of the chart's Axes list** that other series share (below).
 - **Tooltip:** simple (label, text before / after the value) or an **expression**:
   - `{value} {delta} {min} {max} {avg} {name} {unit} {time}`;
   - `[series]{s2}`: another series at that time, e.g. `round({value} / [series]{flow} * 100, 1) "%"`;
   - `fmt(x, "compact" | "si")`.
 - **Id:** fixed (`s1`, `s2`…), the id its nodes use.
 
-**One Y axis per series:**
-- Every series has its own axis and scale. Several on one side stand side by side; **the first series in the list is closest to the chart**.
-- With more than one axis, each axis' labels (and its title) take its series' colour; a single axis stays neutral.
+**Y axes: own, or shared (the Axes list):**
+- By default every series has **its own axis and scale** (Own axis). Several on one side stand side by side; **the first series in the list is closest to the chart**.
+- The chart's **Axes** list (its own group in the Inspector) holds axes **any number of series can share**. A series picks one in its **Axis › Y axis** (Own axis, or an axis by name). **Series that pick the same axis are one**: one scale that covers all of them, one drawn axis. Own and shared mix freely: two series on "Power kW", one on "Temperature", one Own.
+- An axis has: Name, Id (fixed, `a1`, `a2`…), Colour, Position (left / right / hidden), Title, Unit, Range (soft / hard min / max, zero in the middle), Numbers (its ticks), Spine. Its limits win; a series' own limits are not used while it shares.
+- A series that is on an axis shows its own axis fields (Position, Title, Range, Spine) no more; its **Unit, Numbers and Value texts** stay, they are what its tooltip and legend show. A series that names an axis the list no longer has is on its own axis again, nothing is lost.
+- With more than one axis, an axis' labels (and its title) take the colour of its series; a shared axis takes its own Colour, else its series' colour when it has just one, else the text colour. A single axis stays neutral.
+- A threshold follows the scale of the series it names (on a shared axis: the shared one). Hide every series of an axis and the axis goes.
 - Column widths come from the widest label; `axisGap` (Style) is the space between columns.
-- The Inspector: a series' **Axis** section, with **Range**, **Numbers** and **Spine** inside it.
-- Each series has its own Update node in Logic: its axis, range and style can change at runtime.
+- The Inspector: the series' **Axis** section (Y axis first; Range, Numbers and Spine inside it) and the chart's **Axes** group.
+- Each series has its own Update node in Logic: its axis, range and style can change at runtime. Charts saved before the Axes list are unchanged (the list is empty, every series Own).
 
 **Numbers:** per series (its Axis › Numbers):
 - as it is · short (1.2K 3.4M 5B) · engineering (k M G: 1 500 kW shows as **1.5 MW**, 0.002 s as **2 ms**) · scientific;

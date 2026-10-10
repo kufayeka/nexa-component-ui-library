@@ -8,6 +8,7 @@ import { TimeChartElement } from "./time-chart.js";
 import { timeProps, zoomProps, rangeBarProps, annotationProps, exportProps, timeEvents, timeActions } from "./props.js";
 import { legendProps, legendTemplate, legendPlace, fillLegend, placeInsideLegend } from "./legend.js";
 import { parseValueMap } from "./readout.js";
+import { OWN_ONLY_KEYS, axisFields, ownAxisOnly, yAxisField, axesProp, resolveAxes, axisKeyOf, groupByAxis, sideOf, scaleRange, unionRange } from "./axes.js";
 
 const common = chartCommon;
 
@@ -26,7 +27,9 @@ const common = chartCommon;
 // A series' data: its Live value (a tag / a variable: every new value is a point, x = now) and/or its
 // Update node's Append / Replace. Every point kept (Float64), drawn at pixel accuracy (M4 + LOD).
 
-const SERIES_FIELDS = {
+const NO_AXES = [];   // one empty list (a chart with no Axes): the same one every time, so the caches that compare lists by identity hold
+
+const SERIES_BASE = {
     name: { type: "string", label: "Name", default: "Series" },
     id: {
         type: "string", label: "Id", default: "", bindable: false,
@@ -133,6 +136,16 @@ const SERIES_FIELDS = {
         help: "{value} {name} {unit} {time} {delta} (from the point before) {min} {max} {avg} (shown); [series]{s2} = another series at that time. fmt(x, \"compact\" | \"si\", decimals, unit), round(x, 2). Example: {name} \": \" fmt({value}) \" (Δ \" fixed({delta}, 1) \")\""
     }
 };
+
+// the series' fields: its choice of Y axis first in the Axis section, and its own axis fields only while it has its own axis (./axes.js)
+const SERIES_FIELDS = {};
+Object.keys(SERIES_BASE).forEach((k) => {
+    if (k === "axis") SERIES_FIELDS.yAxis = yAxisField();
+    SERIES_FIELDS[k] = OWN_ONLY_KEYS.indexOf(k) !== -1 ? ownAxisOnly(SERIES_BASE[k]) : SERIES_BASE[k];
+});
+// an axis of the Axes list: the series' axis fields, as they were before the rule above
+const AXIS_FIELDS = axisFields(SERIES_BASE);
+const axisDefaults = () => { const o = {}; Object.keys(AXIS_FIELDS).forEach((k) => { o[k] = AXIS_FIELDS[k].default; }); return o; };
 
 function seriesDefaults() {
     const o = {};
@@ -261,7 +274,7 @@ export const lineChart = defineUI({
         return p;
     },
 
-    groups: ["Series", "Data", "Time axis", "Tooltip", "Legend", "Thresholds", "Annotations", "Zoom & pan", "Export", "Style", "Behaviour"],
+    groups: ["Series", "Axes", "Data", "Time axis", "Tooltip", "Legend", "Thresholds", "Annotations", "Zoom & pan", "Export", "Style", "Behaviour"],
 
     properties: {
         ...timeProps(),
@@ -269,6 +282,7 @@ export const lineChart = defineUI({
         ...rangeBarProps(),
         ...exportProps({ thresholds: true }),
         ...annotationProps(),
+        axes: axesProp(AXIS_FIELDS, axisDefaults()),
         series: {
             type: "list", group: "Series", label: "Series", noun: "series",
             help: "Each series has its own Update node, message and events in Logic (Events tab). The order is the layer order: the first is drawn under the others.",
@@ -385,11 +399,22 @@ export const lineChart = defineUI({
 
         // ---- series ----------------------------------------------------------------------------
         // the series with their defaults (cached while the props are the same)
+        // the chart's axes by Id (cached while the list is the same)
+        _axes() {
+            const raw = Array.isArray(this.p && this.p.axes) ? this.p.axes : NO_AXES;
+            const c = this._axc;
+            if (c && c.raw === raw) return c.map;
+            const map = resolveAxes(raw, axisDefaults(), (o) => { o.notation = notationOf(o.notation); o._map = parseValueMap(o.valueMap); });
+            this._axc = { raw, map };
+            return map;
+        }
+
         seriesList() {
             const raw = Array.isArray(this.p && this.p.series) ? this.p.series : [];
             const defInterp = (this.p && this.p.defaultInterpolation) || "line";
+            const axes = this._axes();
             const c = this._sl;
-            if (c && c.raw === raw && c.defInterp === defInterp) return c.list;
+            if (c && c.raw === raw && c.defInterp === defInterp && c.axes === axes) return c.list;
             const d = seriesDefaults();
             const list = raw.map((s, i) => {
                 const o = Object.assign({}, d, s && typeof s === "object" ? s : {});
@@ -398,11 +423,14 @@ export const lineChart = defineUI({
                 o._i = i;
                 o._key = String(o.id || "#" + i);
                 o._shift = spanMs(o.timeShift);
-                o._side = o.axis === "right" ? "right" : o.axis === "off" || o.axis === "none" ? "off" : "left";
+                // its axis: one of the chart's (series that pick the same one share its scale and its drawn axis), or its own (its key)
+                const ax = axisKeyOf(o, axes) ? axes.get(String(o.yAxis)) : null;
+                o._ax = ax ? ax._ax : o._key;
+                o._side = sideOf(ax || o);
                 o._map = parseValueMap(o.valueMap);
                 return o;
             });
-            this._sl = { raw, defInterp, list };
+            this._sl = { raw, defInterp, axes, list };
             return list;
         }
 
@@ -693,6 +721,13 @@ export const lineChart = defineUI({
 
         colorOf(s) { return this._tok(s.color) || this.seriesColor(s._i); }
 
+        // the colour of a drawn axis (when there are several): a series' own axis, its series' colour; a shared one: its own colour, else
+        // its series' colour when it has one, else the text colour
+        _axisColor(col) {
+            if (!col.shared) return this.colorOf(col.s);
+            return this._tok(col.s.color) || (col.members.length === 1 ? this.colorOf(col.members[0]) : this._colors().text);
+        }
+
         // a threshold's colour: its own (hex or token), else the theme's status colour for its kind
         _thresholdColor(t) {
             return this._tok(t && t.color) || this.statusColor(t && t.kind === "band" ? "warning" : t && (t.kind === "upper" || t.kind === "lower") ? "error" : "info");
@@ -717,40 +752,34 @@ export const lineChart = defineUI({
             return t;
         }
 
-        // a series' Y range in the time shown (its points just outside too: the line runs to them),
-        // its soft limits (the range covers them), its hard limits (fixed)
-        _seriesRange(s, vMinX, vMaxX) {
+        // a series' data range in the time shown (its points just outside too: the line runs to them); null: none
+        _dataRange(s, vMinX, vMaxX) {
             const buf = this._state(s).buf, sh = s._shift;
-            let lo = Infinity, hi = -Infinity;
-            if (buf.count) {
-                const i0 = Math.max(0, lowerBoundRing(buf, vMinX - sh) - 1), i1 = Math.min(buf.count, upperBoundRing(buf, vMaxX - sh) + 1);
-                if (i1 > i0) {
-                    const o = this._mm || (this._mm = { min: 0, max: 0, minAt: 0, maxAt: 0 });
-                    buf.rangeMinMax(i0, i1, o);
-                    lo = o.min; hi = o.max;
-                }
-            }
-            if (!Number.isFinite(lo)) { lo = 0; hi = 1; }
-            const sMin = numOr(s.softMin, NaN), sMax = numOr(s.softMax, NaN);
-            if (Number.isFinite(sMin) && sMin < lo) lo = sMin;
-            if (Number.isFinite(sMax) && sMax > hi) hi = sMax;
-            if (lo === hi) { const pad = Math.abs(lo) * 0.1 || 1; lo -= pad; hi += pad; }
-            else {
-                const pad = (hi - lo) * 0.08;
-                if (!(Number.isFinite(sMin) && lo === sMin)) lo -= pad;
-                if (!(Number.isFinite(sMax) && hi === sMax)) hi += pad;
-            }
-            if (s.zeroCenter) { const mm = Math.max(Math.abs(lo), Math.abs(hi)) || 1; lo = -mm; hi = mm; }
-            const hMin = numOr(s.min, NaN), hMax = numOr(s.max, NaN);
-            if (Number.isFinite(hMin)) lo = hMin;
-            if (Number.isFinite(hMax)) hi = hMax;
-            if (hi <= lo) hi = lo + 1;
-            return { lo, hi };
+            if (!buf.count) return null;
+            const i0 = Math.max(0, lowerBoundRing(buf, vMinX - sh) - 1), i1 = Math.min(buf.count, upperBoundRing(buf, vMaxX - sh) + 1);
+            if (i1 <= i0) return null;
+            const o = this._mm || (this._mm = { min: 0, max: 0, minAt: 0, maxAt: 0 });
+            buf.rangeMinMax(i0, i1, o);
+            return Number.isFinite(o.min) ? { lo: o.min, hi: o.max } : null;
         }
+
+        // an axis' Y scale: the data range of its series (every one on a shared axis), then its soft limits, its padding, zero in the
+        // middle and its hard limits (./axes.js). `spec`: the series (its own axis) or the axis of the list.
+        _scaleOf(spec, members, vMinX, vMaxX) {
+            const u = unionRange(members.map((m) => this._dataRange(m, vMinX, vMaxX)));
+            return scaleRange(u ? u.lo : NaN, u ? u.hi : NaN, spec);
+        }
+
+        _seriesRange(s, vMinX, vMaxX) { return this._scaleOf(s, [s], vMinX, vMaxX); }
 
         _ticks(r, ph) {
             const n = Math.max(3, Math.min(6, Math.floor(ph / 45)));
-            const step = niceNum((r.hi - r.lo) / n, false);
+            const span = r.hi - r.lo;
+            let step = niceNum(span / n, false);
+            // a step rounded UP can leave one tick in a range that is just wider than a nice number (22.8 .. 54.2 in steps of 20:
+            // only 40): then the nearest nice step, which gives three or more
+            const inside = (st) => Math.floor(r.hi / st + 1e-9) - Math.ceil(r.lo / st - 1e-9) + 1;
+            if (step > 0 && inside(step) < 3) { const fine = niceNum(span / n, true); if (fine > 0 && fine < step && inside(fine) > inside(step)) step = fine; }
             const values = [];
             if (!(step > 0) || !Number.isFinite(step)) return values;
             for (let v = Math.ceil(r.lo / step) * step, k = 0; v <= r.hi + step * 1e-9 && k < 60; v += step, k++) values.push(Math.abs(v) < step * 1e-9 ? 0 : v);
@@ -768,16 +797,18 @@ export const lineChart = defineUI({
             const { vMinX, vMaxX } = range || this.getEffectiveTimeRange(fb);
             if (!Number.isFinite(vMinX) || !Number.isFinite(vMaxX)) return;
 
-            // every series its own scale; an axis per series not hidden, innermost = first in the list
+            // a scale and a column per AXIS: its own for a series that has its own axis, the chart's for the series that picked it
+            // (one scale covering all of them, one drawn axis); not drawn when hidden; innermost = first in the list
+            const groups = groupByAxis(list, this._axes());
             const yr = {};
-            for (const s of list) yr[s._key] = this._seriesRange(s, vMinX, vMaxX);
-            const onSide = (side) => list.filter((s) => s._side === side);
-            const titled = list.some((s) => s._side !== "off" && this._axisTitle(s));
+            for (const g of groups) yr[g.key] = this._scaleOf(g.spec, g.members, vMinX, vMaxX);
+            const onSide = (side) => groups.filter((g) => sideOf(g.spec) === side);
+            const titled = groups.some((g) => sideOf(g.spec) !== "off" && this._axisTitle(g.spec));
             const plotH0 = this._vertical(height, titled).plotH;
             const c = this._colors();
             ctx.font = "10px " + c.font;
-            const col = (s) => {
-                const r = yr[s._key], spec = this._seriesSpec(s);
+            const col = (g) => {
+                const s = g.spec, r = yr[g.key], spec = this._seriesSpec(s);
                 // value texts: the ticks are those values (Off / Run), not round numbers
                 const ticks = s._map ? Array.from(s._map.keys()).filter((v) => v >= r.lo && v <= r.hi).sort((a, b) => a - b) : this._ticks(r, plotH0);
                 const labels = ticks.map((v) => (s._map && s._map.has(v) ? s._map.get(v) : formatValue(v, spec)));
@@ -785,7 +816,7 @@ export const lineChart = defineUI({
                 let w = 0;
                 for (const l of labels) w = Math.max(w, ctx.measureText(l).width);
                 if (title) w = Math.max(w, ctx.measureText(title).width - 2);
-                return { s, ticks, labels, title, w: Math.max(26, Math.ceil(w) + 10) };
+                return { s, key: g.key, members: g.members, shared: g.shared, ticks, labels, title, w: Math.max(26, Math.ceil(w) + 10) };
             };
             const layout = { left: onSide("left").map(col), right: onSide("right").map(col) };
             const m = this.getPlotMetrics(width, height, layout);
@@ -834,7 +865,7 @@ export const lineChart = defineUI({
         }
 
         _tracePath(ctx, st, a, b, s, toX, toY) {
-            const X = (i) => toX(st.dx[i]), Y = (i) => toY(st.dy[i], s._key);
+            const X = (i) => toX(st.dx[i]), Y = (i) => toY(st.dy[i], s._ax);
             const variant = this._variantOf(s);
             ctx.moveTo(X(a), Y(a));
             if (variant === "step") {
@@ -872,7 +903,7 @@ export const lineChart = defineUI({
             const st = this._state(s);
             if (!st.n) return;
             const variant = this._variantOf(s);
-            const color = this.colorOf(s), axis = s._key, lw = numOr(s.width, 2);
+            const color = this.colorOf(s), axis = s._ax, lw = numOr(s.width, 2);
             const runs = this._runs(st, numOr(s.gapAfter, 0)), base = plotY + plotH;
             ctx.save();
             ctx.globalAlpha = Math.max(0, Math.min(1, numOr(s.opacity, 1)));
@@ -952,8 +983,8 @@ export const lineChart = defineUI({
             for (const t of list) {
                 const v = numOr(t && t.value, NaN), on = this._thresholdOf(t);
                 // on the scale of its series (not drawn while that series is hidden); a band: _drawBands
-                if (!t || t.kind === "band" || !Number.isFinite(v) || !on || !this._scale.yr[on._key]) continue;
-                const y = Math.round(toY(v, on._key)) + 0.5, color = this._thresholdColor(t);
+                if (!t || t.kind === "band" || !Number.isFinite(v) || !on || !this._scale.yr[on._ax]) continue;
+                const y = Math.round(toY(v, on._ax)) + 0.5, color = this._thresholdColor(t);
                 ctx.strokeStyle = color;
                 ctx.lineWidth = 1;
                 ctx.setLineDash(DASHES[t.dash] || DASHES.dashed);
@@ -977,10 +1008,10 @@ export const lineChart = defineUI({
             for (const t of list) {
                 if (!t || !(t.kind === "band" || (t.shade && (t.kind === "upper" || t.kind === "lower")))) continue;
                 const on = this._thresholdOf(t), v = numOr(t.value, NaN);
-                if (!on || !this._scale.yr[on._key] || !Number.isFinite(v)) continue;
-                const y0 = toY(v, on._key);
+                if (!on || !this._scale.yr[on._ax] || !Number.isFinite(v)) continue;
+                const y0 = toY(v, on._ax);
                 let y1;
-                if (t.kind === "band") { const w = numOr(t.to, NaN); if (!Number.isFinite(w)) continue; y1 = toY(w, on._key); }
+                if (t.kind === "band") { const w = numOr(t.to, NaN); if (!Number.isFinite(w)) continue; y1 = toY(w, on._ax); }
                 else y1 = t.kind === "upper" ? plotY : plotY + plotH;
                 const top = Math.max(plotY, Math.min(y0, y1)), bottom = Math.min(plotY + plotH, Math.max(y0, y1));
                 if (bottom <= top) continue;
@@ -1015,7 +1046,7 @@ export const lineChart = defineUI({
                 // only while the newest point is in view (a chart panned to the past shows no "last")
                 if (x > vMaxX || toX(x) < m.plotX) continue;
                 const text = this.fmtValue(s, y);
-                items.push({ s, y: toY(y, s._key), text, w: ctx.measureText(text).width + 10 });
+                items.push({ s, y: toY(y, s._ax), text, w: ctx.measureText(text).width + 10 });
             }
             // (below the ⋮ export menu in the top right corner)
             const h = 16, top = m.plotY + (this.p.exportButton !== false ? 20 : 0), bottom = m.plotY + m.plotH;
@@ -1065,7 +1096,7 @@ export const lineChart = defineUI({
                 ctx.fillStyle = this.colorOf(hit.s);
                 ctx.strokeStyle = "#fff";
                 ctx.lineWidth = 2;
-                ctx.arc(toX(hit.x), toY(hit.y, hit.s._key), 4.5, 0, Math.PI * 2);
+                ctx.arc(toX(hit.x), toY(hit.y, hit.s._ax), 4.5, 0, Math.PI * 2);
                 ctx.fill();
                 ctx.stroke();
             }
@@ -1080,8 +1111,8 @@ export const lineChart = defineUI({
             ctx.save();
             ctx.font = "10px " + c.font;
             const drawCol = (col, edge, side) => {
-                const s = col.s, r = yr[s._key], range = r.hi - r.lo || 1;
-                const color = many ? this.colorOf(s) : c.text;
+                const s = col.s, r = yr[col.key], range = r.hi - r.lo || 1;
+                const color = many ? this._axisColor(col) : c.text;
                 const showLine = s.axisLine !== false;
                 const lineColor = s.axisLineColor || (many ? color : c.grid);
                 const lineWidth = numOr(s.axisLineWidth, 1) > 0 ? numOr(s.axisLineWidth, 1) : 1;
@@ -1104,7 +1135,7 @@ export const lineChart = defineUI({
                 if (s.zeroCenter && r.lo < 0 && r.hi > 0) {
                     const zy = Math.round(py + ph - ((0 - r.lo) / range) * ph) + 0.5;
                     ctx.save();
-                    ctx.strokeStyle = many ? this.colorOf(s) : c.text;
+                    ctx.strokeStyle = color;
                     ctx.globalAlpha = 0.6;
                     ctx.beginPath();
                     ctx.moveTo(px, zy);
@@ -1220,7 +1251,7 @@ export const lineChart = defineUI({
                     within = Math.max(span * 0.01, (span / n) * 0.75);
                 }
                 if (Math.abs(x - t) > within) continue;
-                hits.push({ s, x: x + s._shift, y, idx, d: Math.hypot(sc.toX(x + s._shift) - px, sc.toY(y, s._key) - py) });
+                hits.push({ s, x: x + s._shift, y, idx, d: Math.hypot(sc.toX(x + s._shift) - px, sc.toY(y, s._ax) - py) });
             }
             if (nearest && hits.length) { hits.sort((a, b) => a.d - b.d); return [hits[0]]; }
             return hits;
