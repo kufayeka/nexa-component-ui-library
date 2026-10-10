@@ -173,6 +173,7 @@ A time-series chart driven by Logic.
 - Column widths come from the widest label; `axisGap` (Style) is the space between columns.
 - The Inspector: the series' **Axis** section (Y axis first; Range, Numbers and Spine inside it) and the chart's **Axes** group.
 - Each series has its own Update node in Logic: its axis, range and style can change at runtime. Charts saved before the Axes list are unchanged (the list is empty, every series Own).
+- Screenshots (own axes, one shared axis, mixed): [light](screenshots/line-shared-axes-light.png) · [dark](screenshots/line-shared-axes-dark.png).
 
 **When data is missing** (Line, Area and the Column Chart's lines on a time x; the chart's **Data** group, a series can say its own):
 - **A 0 is a value, `null` / `undefined` / `""` / a word is MISSING.** A machine that is off and sends 0 is drawn at 0. A value that is missing is no point (it never becomes a 0): the chart remembers when it was missing.
@@ -182,6 +183,7 @@ A time-series chart driven by Logic.
 - A live value (a tag) that turns `null` / `undefined` after a value is missing from then on (once), and the next value is a point again. `{ "x": ..., "y": null }` in Append / Set points is missing at that time.
 - Area, stacked: a series that is cut adds nothing to the stack in its hole.
 - Stats, min / max, thresholds and exports use the points only: a missing value is not in them.
+- Screenshots (Connect / Gap / Gap with a dashed bridge on a Line, an Area, a stacked Area and a Column line): [light](screenshots/missing-data-light.png) · [dark](screenshots/missing-data-dark.png).
 
 **Numbers:** per series (its Axis › Numbers):
 - as it is · short (1.2K 3.4M 5B) · engineering (k M G: 1 500 kW shows as **1.5 MW**, 0.002 s as **2 ms**) · scientific;
