@@ -82,8 +82,25 @@ const TABS_CSS = css`
        Tab list
        --------------------------------------------------------------------------------------------- */
 
-    .list {
+    /* the tab area: the list and, when the tabs do not fit, a scroll button at each end */
+    .bar {
         flex: 0 0 var(--tab-size);
+
+        display: flex;
+
+        min-width: 0;
+        min-height: 0;
+
+        position: relative;
+    }
+
+    .tabs.vertical .bar {
+        width: var(--tab-size);
+        height: 100%;
+    }
+
+    .list {
+        flex: 1 1 auto;
 
         display: flex;
 
@@ -112,8 +129,45 @@ const TABS_CSS = css`
         overflow-y: auto;
 
         min-width: 0;
-        max-width: 50%;
     }
+
+    /* ---------------------------------------------------------------------------------------------
+       Scrolling (Scroll the tabs): a button at the end that has more tabs behind it; a tab never gets
+       narrower than a readable size when the tabs fill the width
+       --------------------------------------------------------------------------------------------- */
+
+    /* the buttons take their own room at the ends of the list (nothing is covered, any background) */
+    .nav {
+        all: unset;
+        box-sizing: border-box;
+
+        flex: 0 0 28px;
+
+        display: flex;
+        align-items: center;
+        justify-content: center;
+
+        cursor: pointer;
+        color: var(--fg-muted);
+    }
+
+    .tabs.vertical .bar {
+        flex-direction: column;
+    }
+
+    .tabs.vertical .nav {
+        width: 100%;
+    }
+
+    .nav:hover { color: var(--ring); }
+
+    .nav:focus-visible {
+        outline: 2px solid var(--ring);
+        outline-offset: -2px;
+    }
+
+    .tabs.scrolls:not(.vertical).fitted .tab { min-width: 96px; }
+    .tabs.scrolls.vertical.fitted .tab { min-height: var(--h); }
 
     /* ---------------------------------------------------------------------------------------------
        Tab
@@ -191,9 +245,6 @@ const TABS_CSS = css`
     }
 
     .tabs.vertical .list {
-        flex: 0 0 var(--tab-size);
-
-        width: var(--tab-size);
         height: 100%;
 
         min-width: 0;
@@ -626,6 +677,19 @@ export const tabs = defineUI({
             label: "Fill the width (equal tabs)"
         },
 
+        scrollTabs: {
+            type: "boolean",
+            default: true,
+
+            group: "Style",
+            label: "Scroll the tabs when they do not fit",
+
+            help:
+                "Too many tabs for the width (or the height, with the tabs on the left): a button appears at the end that has more " +
+                "tabs, the mouse wheel scrolls the list, and the tab you choose is always brought into view. " +
+                "With Fill the width, a tab stays readable (at least 96 px) and the rest scroll. Off: the tabs are as before."
+        },
+
         variant: variantProp(
             [
                 {
@@ -695,7 +759,7 @@ export const tabs = defineUI({
     // =============================================================================================
 
     editor: {
-        interactive: [".tab"]
+        interactive: [".tab", ".nav"]
     },
 
     // =============================================================================================
@@ -704,6 +768,7 @@ export const tabs = defineUI({
 
     parts: {
         list: part("The tab list", "list"),
+        nav: part("A scroll button (when the tabs do not fit)", "nav"),
         tab: part("A tab", "tab"),
         panel: part("The panel", "panel")
     },
@@ -727,6 +792,79 @@ export const tabs = defineUI({
 
         // The canvas: the tab shown while designing (not saved)
         editorValue = undefined;
+
+        // the tabs do not fit: whether there is more toward the start / the end (the scroll buttons), and the tab last brought into view
+        _more = { a: false, b: false };
+        _seen = undefined;
+        _pend = undefined;
+
+        get _scrolls() {
+            return this.p.scrollTabs !== false;
+        }
+
+        _listEl() {
+            return this.renderRoot && this.renderRoot.querySelector(".list");
+        }
+
+        // from the layout sizes (not getBoundingClientRect: the editor canvas is CSS-zoomed)
+        _measure() {
+            const l = this._listEl();
+            if (!l) return;
+            const v = this.p.orientation === "vertical";
+            const pos = v ? l.scrollTop : l.scrollLeft;
+            const max = (v ? l.scrollHeight - l.clientHeight : l.scrollWidth - l.clientWidth);
+            const a = this._scrolls && pos > 1, b = this._scrolls && pos < max - 1;
+            if (a !== this._more.a || b !== this._more.b) {
+                this._more = { a, b };
+                this.requestUpdate();
+                return true;
+            }
+            return false;
+        }
+
+        // the chosen tab is brought into view (the list only: the page never moves)
+        _reveal(value) {
+            const l = this._listEl();
+            const t = l && l.querySelector(`.tab[data-value="${CSS.escape(value)}"]`);
+            if (!t) return;
+            const v = this.p.orientation === "vertical";
+            const start = v ? t.offsetTop : t.offsetLeft, size = v ? t.offsetHeight : t.offsetWidth;
+            const pos = v ? l.scrollTop : l.scrollLeft, view = v ? l.clientHeight : l.clientWidth;
+            const room = 8;                            // a little of the next tab shows
+            let to = pos;
+            if (start < pos + room) to = Math.max(0, start - room);
+            else if (start + size > pos + view - room) to = start + size - view + room;
+            if (to !== pos) { if (v) l.scrollTop = to; else l.scrollLeft = to; }
+        }
+
+        updated(changed) {
+            super.updated(changed);
+            const cur = this.current();
+            if (this._scrolls && cur && cur.value !== this._seen) { this._seen = cur.value; this._pend = cur.value; }
+            // the chosen tab is brought into view; a scroll button that appears or goes narrows or widens the list, so it is done again
+            // until the buttons stand still (a manual scroll afterwards is left alone)
+            if (this._pend !== undefined) this._reveal(this._pend);
+            if (!this._measure()) this._pend = undefined;
+        }
+
+        // a button: one page of tabs toward an end
+        _page(d) {
+            const l = this._listEl();
+            if (!l) return;
+            const v = this.p.orientation === "vertical", view = v ? l.clientHeight : l.clientWidth;
+            l.scrollBy(v ? { top: d * view * 0.8, behavior: "smooth" } : { left: d * view * 0.8, behavior: "smooth" });
+        }
+
+        // the wheel over a horizontal list moves it sideways, but only while it can: at an end (or with nothing to scroll) the page scrolls
+        _wheel(e) {
+            if (!this._scrolls || this.p.orientation === "vertical" || e.ctrlKey || e.shiftKey || Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+            const l = this._listEl();
+            if (!l) return;
+            const max = l.scrollWidth - l.clientWidth;
+            if (max <= 1 || (e.deltaY < 0 && l.scrollLeft <= 0) || (e.deltaY > 0 && l.scrollLeft >= max - 1)) return;
+            l.scrollLeft += e.deltaY;
+            e.preventDefault();
+        }
 
         get list() {
             return tabsOf(this.p);
@@ -954,10 +1092,16 @@ export const tabs = defineUI({
                         ${vertical ? "vertical" : ""}
                         ${p.fitted ? "fitted" : ""}
                         ${p.labelWrap ? "wrap-labels" : ""}
+                        ${this._scrolls ? "scrolls" : ""}
                     "
                     style="${style}"
                 >
 
+                    <div class="bar">
+                    ${this._more.a ? html`
+                        <button class="nav prev" part="nav" type="button" tabindex="-1" aria-label="${vertical ? "Scroll the tabs up" : "Scroll the tabs left"}"
+                            @click="${() => this._page(-1)}">${icon(vertical ? "chevron-up" : "chevron-left")}</button>
+                    ` : nothing}
                     <div
                         class="list"
                         role="tablist"
@@ -967,6 +1111,8 @@ export const tabs = defineUI({
                     : "horizontal"
                 }"
                         @keydown="${(e) => this.key(e)}"
+                        @scroll="${() => this._measure()}"
+                        @wheel="${(e) => this._wheel(e)}"
                     >
                         ${list.map((t) => {
                     const sel =
@@ -1021,6 +1167,11 @@ export const tabs = defineUI({
                                 </button>
                             `;
                 })}
+                    </div>
+                    ${this._more.b ? html`
+                        <button class="nav next" part="nav" type="button" tabindex="-1" aria-label="${vertical ? "Scroll the tabs down" : "Scroll the tabs right"}"
+                            @click="${() => this._page(1)}">${icon(vertical ? "chevron-down" : "chevron-right")}</button>
+                    ` : nothing}
                     </div>
 
                     <div

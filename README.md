@@ -66,6 +66,7 @@ Grafana must allow embedding: `allow_embedding = true` in `grafana.ini`, and ano
 - Logic actions: **Show a tab** (`value`), **Next tab**, **Previous tab**.
 - Keyboard: ← → (↑ ↓ when the tabs are on the left), Home, End.
 - Variants: Line (Carbon), Contained (Carbon), Pills. Tabs on the top or on the left; *Fill the width* makes all tabs the same width.
+- **Too many tabs for the width** (the height, with the tabs on the left): they scroll by themselves (Style › *Scroll the tabs when they do not fit*, on by default). A button appears at the end that has more tabs behind it, the mouse wheel over the list moves it sideways (at an end, or with nothing to scroll, the page scrolls as usual), and the tab you choose (a click, the keys, Logic *Show a tab*) is always brought into view. With *Fill the width* a tab stays at least 96 px and the rest scroll, instead of many crushed tabs. Off: the tabs are as before.
 - A tab's value names its panel. If you rename a value, that tab gets a new, empty panel. The old panel is kept but hidden until the value comes back.
 
 ### Date Time (`nexa-ui-datetime`)

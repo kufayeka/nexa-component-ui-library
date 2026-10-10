@@ -512,6 +512,63 @@ withHarness({
         assert.ok((await pixels('chart-test')) > 500);
     });
 
+    await ok('Tabs: too many tabs for the width scroll by themselves: a button at the end with more tabs, the wheel, the chosen tab brought into view; few tabs / Scroll off: none', async () => {
+        const many = Array.from({ length: 20 }, (_, i) => ({ value: 't' + i, label: 'Tab number ' + i }));
+        await mount('tb-many', 'tabs', { tabs: many, defaultValue: 't0' }, { width: 360, height: 160 });
+        const info = (name) => js(`(function () { var w = NexaTest.wc(${JSON.stringify(name)}), r = w.renderRoot, l = r.querySelector(".list"); return { prev: !!r.querySelector(".nav.prev"), next: !!r.querySelector(".nav.next"),
+            left: l.scrollLeft, top: l.scrollTop, over: l.scrollWidth > l.clientWidth, overV: l.scrollHeight > l.clientHeight }; })()`);
+        const waitFor = async (name, test) => { for (let i = 0; i < 40; i++) { const r = await info(name); if (test(r)) return r; await sleep(50); } return info(name); };
+        const page0 = await js('window.scrollY');          // (a long page: the earlier tests scrolled it)
+        let r = await info('tb-many');
+        assert.deepStrictEqual([r.over, r.prev, r.next, r.left], [true, false, true, 0], 'at the start: more toward the end only');
+        // the button: one page of tabs
+        await js(`NexaTest.wc("tb-many").renderRoot.querySelector(".nav.next").click()`);
+        r = await waitFor('tb-many', (x) => x.left > 100 && x.prev);
+        assert.ok(r.left > 100 && r.prev, 'it scrolled, and now there is more behind: ' + JSON.stringify(r));
+        // the wheel (a plain vertical wheel over the list moves it sideways; the page is not scrolled)
+        const wheel = (dy) => js(`(function () { var l = NexaTest.wc("tb-many").renderRoot.querySelector(".list"), before = l.scrollLeft, e = new WheelEvent("wheel", { deltaY: ${dy}, bubbles: true, cancelable: true, composed: true }); l.dispatchEvent(e); return { moved: l.scrollLeft - before, prevented: e.defaultPrevented }; })()`);
+        const w1 = await wheel(60);
+        assert.deepStrictEqual([w1.moved, w1.prevented], [60, true], 'the wheel moved the list');
+        // at the very end the wheel is the page's again (not prevented) and the end button is gone
+        await js(`(function () { var l = NexaTest.wc("tb-many").renderRoot.querySelector(".list"); l.scrollLeft = l.scrollWidth; })()`);
+        r = await waitFor('tb-many', (x) => !x.next);
+        assert.deepStrictEqual([r.next, r.prev], [false, true], 'at the end: only the way back');
+        assert.strictEqual((await wheel(60)).prevented, false, 'nothing to scroll that way: the page scrolls');
+        // choosing a tab (Logic: Show a tab) brings it into view, at either end
+        await js(`NexaTest.wc("tb-many").renderRoot.querySelector(".list").scrollLeft = 0`);
+        const inView = (v) => js(`(function () { var l = NexaTest.wc("tb-many").renderRoot.querySelector(".list"), t = l.querySelector('.tab[data-value="${v}"]'); return { from: t.offsetLeft - l.scrollLeft, to: t.offsetLeft + t.offsetWidth - l.scrollLeft, view: l.clientWidth }; })()`);
+        await js(`NexaTest.invoke("tb-many", "select", "t12")`); await settle();
+        let vis = await inView('t12');
+        assert.ok(vis.from >= 0 && vis.to <= vis.view, 'the chosen tab (t12) is inside the list: ' + JSON.stringify(vis));
+        await js(`NexaTest.invoke("tb-many", "select", "t0")`); await settle();
+        vis = await inView('t0');
+        assert.ok(vis.from >= 0 && vis.to <= vis.view, 'and back at the first: ' + JSON.stringify(vis));
+        // the page itself did not move
+        assert.strictEqual(await js('window.scrollY'), page0);
+
+        // few tabs: nothing to scroll, no buttons; Scroll off: no buttons either
+        await mount('tb-few', 'tabs', { tabs: [{ value: 'a', label: 'A' }, { value: 'b', label: 'B' }], defaultValue: 'a' }, { width: 360, height: 160 });
+        r = await info('tb-few');
+        assert.deepStrictEqual([r.over, r.prev, r.next], [false, false, false]);
+        await mount('tb-off', 'tabs', { tabs: many, defaultValue: 't0', scrollTabs: false }, { width: 360, height: 160 });
+        r = await info('tb-off');
+        assert.deepStrictEqual([r.prev, r.next], [false, false], 'Scroll off: as before');
+
+        // "Fill the width": a tab stays readable (96 px) and the rest scroll, instead of 20 crushed tabs
+        await mount('tb-fit', 'tabs', { tabs: many, defaultValue: 't0', fitted: true }, { width: 360, height: 160 });
+        r = await info('tb-fit');
+        assert.deepStrictEqual([r.over, r.next], [true, true], 'fitted tabs scroll too');
+        const wd = await js(`(function () { var t = NexaTest.wc("tb-fit").renderRoot.querySelector(".tab"); return t.offsetWidth; })()`);
+        assert.ok(wd >= 96, 'a fitted tab is at least 96 px: ' + wd);
+
+        // the tabs on the left: the list scrolls up / down, the buttons point that way
+        await mount('tb-v', 'tabs', { tabs: many, defaultValue: 't0', orientation: 'vertical' }, { width: 360, height: 200 });
+        r = await info('tb-v');
+        assert.deepStrictEqual([r.overV, r.prev, r.next], [true, false, true], 'vertical: more below');
+        assert.strictEqual(await js(`!!NexaTest.wc("tb-v").renderRoot.querySelector(".nav.next svg")`), true, 'with an arrow');
+        assert.strictEqual((await js(`(function () { var l = NexaTest.wc("tb-v").renderRoot.querySelector(".list"), e = new WheelEvent("wheel", { deltaY: 40, bubbles: true, cancelable: true, composed: true }); l.dispatchEvent(e); return e.defaultPrevented; })()`)), false, 'a vertical list scrolls natively');
+    });
+
     await ok('Line Chart: retains drawing and canvas dimensions when switching tabs', async () => {
         await mount('tab-chart-test', 'tabs', { tabs: [{ value: 'chart', label: 'Chart' }, { value: 'blank', label: 'Blank' }], defaultValue: 'chart' }, { width: 500, height: 300 });
         await js(`(function () {
