@@ -14,6 +14,7 @@ import { TimeSeriesRingBuffer, lowerBoundRing, upperBoundRing, M4Decimator } fro
 import { xlsxBlob } from "./export.js";
 import { TimeChartElement } from "./time-chart.js";
 import { timeProps, zoomProps, annotationProps, exportProps, timeEvents, timeActions } from "./props.js";
+import { valueOrNaN, gapSpec, splitRuns, bridgesOf, missingProps, missingFields } from "./gaps.js";
 
 const common = chartCommon;
 
@@ -30,6 +31,7 @@ const SERIES_FIELDS = {
     xField: { type: "string", section: "Data", label: "Time field (x)", default: "x", bindable: false },
     yField: { type: "string", section: "Data", label: "Value field (y)", default: "y", bindable: false },
     maxPoints: { type: "number", section: "Data", label: "Points kept", default: 10000, min: 50, max: 1000000, step: 500 },
+    ...missingFields(),
 
     color: { type: "color", section: "Style", label: "Colour", default: "", help: "Empty: next colour in theme palette." },
     lineWidth: { type: "number", section: "Style", label: "Top line width", default: 2, min: 0.5, max: 6, step: 0.5, unit: "px" },
@@ -95,6 +97,37 @@ export class AreaChartElement extends TimeChartElement {
         return list.find((s) => s.id && s.id === String(ref)) || list.find((s) => s.name === String(ref)) || byIndex || null;
     }
 
+    // the runs of a series' points (./gaps.js): cut where a value was missing and after a silence, as the chart and the series say.
+    // -> { spec, xs: the times, runs: [start, end, ...] }
+    _runsOf(s) {
+        const buf = this._state(s).buf, n = buf.length, spec = gapSpec(this.p, s);
+        const xs = new Float64Array(n);
+        for (let i = 0; i < n; i++) xs[i] = buf.timeAt(i);
+        return { spec, xs, runs: splitRuns(xs, n, spec.after, spec.nulls ? buf.breaksKept() : null, 0) };
+    }
+
+    // a thin dashed line across each hole (Gap with a dashed bridge): pts(i) -> [x, y] of point i; clipped to the plot
+    _drawBridges(ctx, runs, pts, color, lw, plot) {
+        const list = bridgesOf(runs);
+        if (!list.length) return;
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(plot.x, plot.y, plot.w, plot.h);
+        ctx.clip();
+        ctx.setLineDash([3, 4]);
+        ctx.strokeStyle = color;
+        ctx.lineWidth = Math.max(1, lw / 2);
+        ctx.globalAlpha = 0.85;
+        for (const [i, j] of list) {
+            const a = pts(i), b = pts(j);
+            ctx.beginPath();
+            ctx.moveTo(a[0], a[1]);
+            ctx.lineTo(b[0], b[1]);
+            ctx.stroke();
+        }
+        ctx.restore();
+    }
+
     colorOf(s) {
         if (s.color && typeof s.color === "string" && s.color.trim()) return s.color.trim();
         return this.seriesColor(s._i);
@@ -138,13 +171,17 @@ export class AreaChartElement extends TimeChartElement {
         const st = this._state(s);
         if (st.demo) { st.buf.clear(); st.demo = false; }
         const arr = Array.isArray(points) ? points : [points];
+        // a value that is null / undefined / "" / not a number is MISSING, never a 0: no point, a break (./gaps.js)
         for (const pt of arr) {
-            if (typeof pt === "number") {
-                st.buf.push(this._now(), pt);
-            } else if (pt && typeof pt === "object") {
+            if (pt === null || pt === undefined) st.buf.markBreak(this._now());
+            else if (typeof pt === "number" || typeof pt === "string") {
+                const y = valueOrNaN(pt);
+                if (Number.isFinite(y)) st.buf.push(this._now(), y); else st.buf.markBreak(this._now());
+            } else if (typeof pt === "object") {
                 const x = timeOf(pt[s.xField || "x"] !== undefined ? pt[s.xField || "x"] : (pt.time !== undefined ? pt.time : this._now()));
-                const y = numOr(pt[s.yField || "y"] !== undefined ? pt[s.yField || "y"] : pt.val, 0);
-                if (Number.isFinite(x) && Number.isFinite(y)) st.buf.push(x, y);
+                const y = valueOrNaN(pt[s.yField || "y"] !== undefined ? pt[s.yField || "y"] : pt.val);
+                if (!Number.isFinite(x)) continue;
+                if (Number.isFinite(y)) st.buf.push(x, y); else st.buf.markBreak(x);
             }
         }
         this.scheduleDraw();
@@ -236,6 +273,7 @@ export class AreaChartElement extends TimeChartElement {
         ctx.restore();
 
         // 3. Draw Areas
+        const plot = { x: plotX, y: plotY, w: plotW, h: plotH };
         if (vSeries.length) {
             if (isStacked) {
                 // Stacked Area logic: accumulate heights across time
@@ -252,61 +290,96 @@ export class AreaChartElement extends TimeChartElement {
                 if (timeKeys.length < 2) {
                     timeKeys = [vMinX, vMaxX];
                 }
+                const K = timeKeys.length;
 
                 // Baselines stack array initialized at 0
-                let baselineVals = new Array(timeKeys.length).fill(0);
+                let baselineVals = new Array(K).fill(0);
 
                 vSeries.forEach((s) => {
                     const buf = this._state(s).buf;
                     const color = this.colorOf(s);
                     const opacity = numOr(s.fillOpacity, 0.45);
-                    const upperVals = new Array(timeKeys.length);
+                    const upperVals = new Array(K);
 
-                    for (let i = 0; i < timeKeys.length; i++) {
+                    // Gap / Bridge: a series has no value where its data is missing (it adds nothing to the stack there), and its band
+                    // is cut. Connect keeps the nearest value everywhere, as it always did.
+                    const info = this._runsOf(s), spec = info.spec;
+                    let present = null;
+                    if (spec.mode !== "connect") {
+                        present = new Uint8Array(K);
+                        for (let r = 0; r < info.runs.length; r += 2) {
+                            const t0 = info.xs[info.runs[r]], t1 = info.xs[info.runs[r + 1] - 1];
+                            for (let k = 0; k < K; k++) if (timeKeys[k] >= t0 && timeKeys[k] <= t1) present[k] = 1;
+                        }
+                    }
+
+                    for (let i = 0; i < K; i++) {
                         const t = timeKeys[i];
-                        const ptVal = Math.max(0, buf.valAtTime ? buf.valAtTime(t) : 0);
+                        const ptVal = present && !present[i] ? 0 : Math.max(0, buf.valAtTime ? buf.valAtTime(t) : 0);
                         upperVals[i] = baselineVals[i] + ptVal;
                     }
 
-                    // Render polygon: baseline curve forward, upper curve backward
+                    // the stretches of keys the series has data at (all of them for Connect)
+                    const segs = [];
+                    for (let i = 0; i < K; i++) {
+                        if (present && !present[i]) continue;
+                        const last = segs[segs.length - 1];
+                        if (last && last[1] === i - 1) last[1] = i; else segs.push([i, i]);
+                    }
+                    const lw = numOr(s.lineWidth, 2);
                     ctx.save();
-                    ctx.beginPath();
-                    // Upper edge
-                    for (let i = 0; i < timeKeys.length; i++) {
-                        const sx = toScreenX(timeKeys[i]);
-                        const sy = toScreenY(upperVals[i]);
-                        if (i === 0) ctx.moveTo(sx, sy);
-                        else ctx.lineTo(sx, sy);
-                    }
-                    // Lower edge (in reverse)
-                    for (let i = timeKeys.length - 1; i >= 0; i--) {
-                        const sx = toScreenX(timeKeys[i]);
-                        const sy = toScreenY(baselineVals[i]);
-                        ctx.lineTo(sx, sy);
-                    }
-                    ctx.closePath();
+                    for (const [i0, i1] of segs) {
+                        if (i1 === i0 && present) {            // one key: a dot
+                            ctx.fillStyle = color;
+                            ctx.beginPath();
+                            ctx.arc(toScreenX(timeKeys[i0]), toScreenY(upperVals[i0]), Math.max(3, lw * 1.5), 0, Math.PI * 2);
+                            ctx.fill();
+                            continue;
+                        }
+                        // Render polygon: baseline curve forward, upper curve backward
+                        ctx.beginPath();
+                        // Upper edge
+                        for (let i = i0; i <= i1; i++) {
+                            const sx = toScreenX(timeKeys[i]);
+                            const sy = toScreenY(upperVals[i]);
+                            if (i === i0) ctx.moveTo(sx, sy);
+                            else ctx.lineTo(sx, sy);
+                        }
+                        // Lower edge (in reverse)
+                        for (let i = i1; i >= i0; i--) {
+                            const sx = toScreenX(timeKeys[i]);
+                            const sy = toScreenY(baselineVals[i]);
+                            ctx.lineTo(sx, sy);
+                        }
+                        ctx.closePath();
 
-                    ctx.fillStyle = this.hexToRgba(color, opacity);
-                    ctx.fill();
+                        ctx.fillStyle = this.hexToRgba(color, opacity);
+                        ctx.fill();
 
-                    // Top stroke line
-                    ctx.beginPath();
-                    for (let i = 0; i < timeKeys.length; i++) {
-                        const sx = toScreenX(timeKeys[i]);
-                        const sy = toScreenY(upperVals[i]);
-                        if (i === 0) ctx.moveTo(sx, sy);
-                        else ctx.lineTo(sx, sy);
+                        // Top stroke line
+                        ctx.beginPath();
+                        for (let i = i0; i <= i1; i++) {
+                            const sx = toScreenX(timeKeys[i]);
+                            const sy = toScreenY(upperVals[i]);
+                            if (i === i0) ctx.moveTo(sx, sy);
+                            else ctx.lineTo(sx, sy);
+                        }
+                        ctx.strokeStyle = color;
+                        ctx.lineWidth = lw;
+                        ctx.stroke();
                     }
-                    ctx.strokeStyle = color;
-                    ctx.lineWidth = numOr(s.lineWidth, 2);
-                    ctx.stroke();
                     ctx.restore();
+                    if (spec.mode === "bridge" && segs.length > 1) {
+                        const flat = [];
+                        segs.forEach(([i0, i1]) => flat.push(i0, i1 + 1));
+                        this._drawBridges(ctx, flat, (i) => [toScreenX(timeKeys[i]), toScreenY(upperVals[i])], color, lw, plot);
+                    }
 
                     // Advance baseline
                     baselineVals = upperVals;
                 });
             } else {
-                // Standard Area (each fills to bottom)
+                // Standard Area (each fills to bottom), run by run: a run is cut where data is missing (./gaps.js)
                 vSeries.forEach((s) => {
                     const buf = this._state(s).buf;
                     const len = buf.length;
@@ -314,54 +387,58 @@ export class AreaChartElement extends TimeChartElement {
 
                     const color = this.colorOf(s);
                     const opacity = numOr(s.fillOpacity, 0.35);
+                    const lw = numOr(s.lineWidth, 2);
+                    const info = this._runsOf(s), base = plotY + plotH;
+                    const sx = (i) => toScreenX(buf.timeAt(i)), sy = (i) => toScreenY(buf.valAt(i));
 
                     ctx.save();
-                    ctx.beginPath();
-                    let firstX = plotX, lastX = plotX;
-
-                    for (let i = 0; i < len; i++) {
-                        const t = buf.timeAt(i);
-                        if (t < vMinX || t > vMaxX) continue;
-                        const sx = toScreenX(t);
-                        const sy = toScreenY(buf.valAt(i));
-                        if (i === 0 || ctx.currentPathEmpty) {
-                            ctx.moveTo(sx, sy);
-                            firstX = sx;
-                        } else {
-                            ctx.lineTo(sx, sy);
-                        }
-                        lastX = sx;
-                    }
-
-                    // Complete polygon down to baseline
-                    ctx.lineTo(lastX, plotY + plotH);
-                    ctx.lineTo(firstX, plotY + plotH);
-                    ctx.closePath();
-
+                    let fill;
                     if (s.fillType === "gradient") {
-                        const grad = ctx.createLinearGradient(0, plotY, 0, plotY + plotH);
-                        grad.addColorStop(0, this.hexToRgba(color, opacity));
-                        grad.addColorStop(1, this.hexToRgba(color, 0.02));
-                        ctx.fillStyle = grad;
+                        fill = ctx.createLinearGradient(0, plotY, 0, base);
+                        fill.addColorStop(0, this.hexToRgba(color, opacity));
+                        fill.addColorStop(1, this.hexToRgba(color, 0.02));
                     } else {
-                        ctx.fillStyle = this.hexToRgba(color, opacity);
+                        fill = this.hexToRgba(color, opacity);
                     }
-                    ctx.fill();
+                    for (let r = 0; r < info.runs.length; r += 2) {
+                        // the points of this run in the time shown
+                        let first = -1, last = -1;
+                        for (let i = info.runs[r]; i < info.runs[r + 1]; i++) {
+                            const t = info.xs[i];
+                            if (t < vMinX || t > vMaxX) continue;
+                            if (first < 0) first = i;
+                            last = i;
+                        }
+                        if (first < 0) continue;
+                        if (first === last) {
+                            if (info.spec.mode !== "connect") {        // one point between two holes: a dot
+                                ctx.fillStyle = color;
+                                ctx.beginPath();
+                                ctx.arc(sx(first), sy(first), Math.max(3, lw * 1.5), 0, Math.PI * 2);
+                                ctx.fill();
+                            }
+                            continue;
+                        }
+                        // the polygon down to the baseline
+                        ctx.beginPath();
+                        ctx.moveTo(sx(first), sy(first));
+                        for (let i = first + 1; i <= last; i++) ctx.lineTo(sx(i), sy(i));
+                        ctx.lineTo(sx(last), base);
+                        ctx.lineTo(sx(first), base);
+                        ctx.closePath();
+                        ctx.fillStyle = fill;
+                        ctx.fill();
 
-                    // Top stroke
-                    ctx.beginPath();
-                    for (let i = 0; i < len; i++) {
-                        const t = buf.timeAt(i);
-                        if (t < vMinX || t > vMaxX) continue;
-                        const sx = toScreenX(t);
-                        const sy = toScreenY(buf.valAt(i));
-                        if (i === 0) ctx.moveTo(sx, sy);
-                        else ctx.lineTo(sx, sy);
+                        // Top stroke
+                        ctx.beginPath();
+                        ctx.moveTo(sx(first), sy(first));
+                        for (let i = first + 1; i <= last; i++) ctx.lineTo(sx(i), sy(i));
+                        ctx.strokeStyle = color;
+                        ctx.lineWidth = lw;
+                        ctx.stroke();
                     }
-                    ctx.strokeStyle = color;
-                    ctx.lineWidth = numOr(s.lineWidth, 2);
-                    ctx.stroke();
                     ctx.restore();
+                    if (info.spec.mode === "bridge") this._drawBridges(ctx, info.runs, (i) => [sx(i), sy(i)], color, lw, plot);
                 });
             }
         }
@@ -522,6 +599,7 @@ export const areaChart = defineUI({
         },
 
         ...timeProps(),
+        ...missingProps("Series"),
         ...zoomProps(),
         ...annotationProps(),
         ...exportProps({ thresholds: true })

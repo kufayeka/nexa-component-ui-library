@@ -20,7 +20,39 @@ export class TimeSeriesRingBuffer {
         this.y = new Float64Array(this.capacity);
         this.head = 0;
         this.count = 0;
+        // The times a value was MISSING (null / undefined: a sensor with nothing to say, not a 0): not points, only places where a
+        // chart may cut its line (./gaps.js). Ascending, none before the oldest point; kept even when the chart connects, so a chart
+        // that is switched to "gap" shows them for the data it already has.
+        this.breaks = [];
         this._allocLod();
+    }
+
+    /** A value was missing at x: remembered when a point came before it (a gap needs a line to cut). -> whether it was added. */
+    markBreak(x) {
+        if (!Number.isFinite(x) || !this.count || x < this.getX(0)) return false;
+        const b = this.breaks;
+        let i = b.length;
+        if (i && x <= b[i - 1]) {
+            if (x === b[i - 1]) return false;
+            let lo = 0, hi = i;                       // late: into its place
+            while (lo < hi) { const m = (lo + hi) >> 1; if (b[m] < x) lo = m + 1; else hi = m; }
+            if (b[lo] === x) return false;
+            b.splice(lo, 0, x);
+        } else b.push(x);
+        if (b.length > this.capacity) b.splice(0, b.length - this.capacity);
+        return true;
+    }
+
+    /** The breaks that still have a point before them (the oldest ones go as the ring drops its points). */
+    breaksKept() {
+        const b = this.breaks;
+        if (b.length && this.count) {
+            const first = this.getX(0);
+            let k = 0;
+            while (k < b.length && b[k] < first) k++;
+            if (k) b.splice(0, k);
+        }
+        return b;
     }
 
     _allocLod() {
@@ -109,6 +141,7 @@ export class TimeSeriesRingBuffer {
     clear() {
         this.head = 0;
         this.count = 0;
+        this.breaks.length = 0;
         this.bDirty.fill(1);
     }
 
@@ -167,14 +200,17 @@ export class TimeSeriesRingBuffer {
     loadArray(arr, xField = "x", yField = "y") {
         this.clear();
         if (!Array.isArray(arr) || !arr.length) return;
-        const xs = [], ys = [];
+        const xs = [], ys = [], gone = [];
         let sorted = true;
         for (let i = 0; i < arr.length; i++) {
             const item = arr[i];
             if (!item || typeof item !== "object") continue;
             const x = Number(item[xField]);
-            const y = Number(item[yField]);
-            if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+            const raw = item[yField];
+            // null / undefined / "" is a value that is missing (never a 0); the time it was missing is a break
+            const y = raw === null || raw === undefined || raw === "" ? NaN : Number(raw);
+            if (!Number.isFinite(x)) continue;
+            if (!Number.isFinite(y)) { gone.push(x); continue; }
             if (xs.length && x < xs[xs.length - 1]) sorted = false;
             xs.push(x);
             ys.push(y);
@@ -194,6 +230,7 @@ export class TimeSeriesRingBuffer {
             this.count++;
         }
         this.bDirty.fill(1);
+        for (const x of gone) this.markBreak(x);
     }
 
     getX(i) {

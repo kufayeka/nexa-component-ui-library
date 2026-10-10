@@ -8,6 +8,7 @@ import { TimeChartElement } from "./time-chart.js";
 import { timeProps, zoomProps, rangeBarProps, annotationProps, exportProps, timeEvents, timeActions } from "./props.js";
 import { legendProps, legendTemplate, legendPlace, fillLegend, placeInsideLegend } from "./legend.js";
 import { parseValueMap } from "./readout.js";
+import { valueOrNaN, gapSpec, splitRuns, bridgesOf, missingProps, missingFields } from "./gaps.js";
 import { OWN_ONLY_KEYS, axisFields, ownAxisOnly, yAxisField, axesProp, resolveAxes, axisKeyOf, groupByAxis, sideOf, scaleRange, unionRange } from "./axes.js";
 
 const common = chartCommon;
@@ -48,10 +49,7 @@ const SERIES_BASE = {
         type: "number", section: "Data", label: "Points kept", default: 10000, min: 50, max: 2000000, step: 500,
         help: "A ring: past it, the oldest go. 16 bytes a point (1 000 000 = 16 MB)."
     },
-    gapAfter: {
-        type: "number", section: "Data", label: "Break the line after (ms without data)", default: 0, min: 0, step: 1000,
-        help: "0 = always connected. A longer silence draws a gap: a sensor offline is not a straight line."
-    },
+    ...missingFields(),
     staleAfter: {
         type: "number", section: "Data", label: "Stale after (ms without data)", default: 0, min: 0, step: 1000,
         help: "0 = never. No new point for this long: the series fires On Stale (and On Resume when data comes back)."
@@ -278,6 +276,7 @@ export const lineChart = defineUI({
 
     properties: {
         ...timeProps(),
+        ...missingProps("Data"),
         ...zoomProps(),
         ...rangeBarProps(),
         ...exportProps({ thresholds: true }),
@@ -465,9 +464,15 @@ export const lineChart = defineUI({
                 if (st.buf.capacity !== cap) { st.buf.setCapacity(cap); dirty = true; }
                 // the live value: every new value is a point (the same value object again is not)
                 const v = s.live;
-                if (v !== undefined && v !== null && v !== "" && v !== "???" && v !== st.lastLive && !(typeof v === "object" && v.$bind)) {
+                if (v === null || (v === undefined && st.lastLive !== undefined)) {
+                    // null / undefined after a value: the value is MISSING now (a 0 would be a value); once, until a value comes again
+                    if (st.lastLive !== undefined && st.lastLive !== null) {
+                        st.lastLive = null;
+                        if (this._add(s, st, [null]).gone) dirty = true;
+                    }
+                } else if (v !== undefined && v !== "" && v !== "???" && v !== st.lastLive && !(typeof v === "object" && v.$bind)) {
                     st.lastLive = v;
-                    if (this._add(s, st, Array.isArray(v) ? v : [v])) dirty = true;
+                    if (this._add(s, st, Array.isArray(v) ? v : [v]).added) dirty = true;
                 }
                 // (only once the host said it is the editor: before that, the mode is not known)
                 if (this._ctx && this._ctx.mode === "editor" && st.buf.count === 0) { this._demo(st, s._i); dirty = true; }
@@ -477,17 +482,21 @@ export const lineChart = defineUI({
         }
 
         // points into a series: {x, y} / a number (time = now); the newest one is checked against the
-        // thresholds (On Threshold Crossed) and wakes a stale series (On Resume)
+        // thresholds (On Threshold Crossed) and wakes a stale series (On Resume).
+        // A value that is null / undefined / "" is MISSING, never a 0: it is no point, it is remembered as a break (./gaps.js).
+        // -> { added: points, gone: breaks }
         _add(s, st, pts) {
             if (st.demo) { st.buf.clear(); st.demo = false; st.allInt = true; }
             const xf = s.xField || "x", yf = s.yField || "y";
-            let added = 0, prevY = st.buf.count ? st.buf.getY(st.buf.count - 1) : NaN, lastY = NaN;
+            let added = 0, gone = 0, prevY = st.buf.count ? st.buf.getY(st.buf.count - 1) : NaN, lastY = NaN;
             for (const p of pts) {
-                if (p === null || p === undefined) continue;
                 let x, y;
-                if (typeof p === "object") { x = Number(p[xf]); y = Number(p[yf]); }
-                else { x = Date.now(); y = Number(p); }
-                if (Number.isFinite(x) && Number.isFinite(y) && st.buf.push(x, y)) { added++; lastY = y; if (st.allInt && !Number.isInteger(y)) st.allInt = false; }
+                if (p === null || p === undefined) { x = Date.now(); y = NaN; }
+                else if (typeof p === "object") { x = Number(p[xf]); y = valueOrNaN(p[yf]); }
+                else { x = Date.now(); y = valueOrNaN(p); }
+                if (!Number.isFinite(x)) continue;
+                if (!Number.isFinite(y)) { if (st.buf.markBreak(x)) gone++; continue; }
+                if (st.buf.push(x, y)) { added++; lastY = y; if (st.allInt && !Number.isInteger(y)) st.allInt = false; }
             }
             if (added && !this.isEditor) {
                 const now = Date.now();
@@ -495,7 +504,7 @@ export const lineChart = defineUI({
                 st.lastAt = now;
                 if (Number.isFinite(prevY)) this._crossings(s, prevY, lastY);
             }
-            return added;
+            return { added, gone };
         }
 
         // the series a threshold follows: its id, or the first series
@@ -555,8 +564,8 @@ export const lineChart = defineUI({
         appendPoints(params, target) {
             const s = this.findSeries(target || (params && params.series));
             if (!s) return 0;
-            const added = this._add(s, this._state(s), this._pointsOf(params));
-            if (added) { this.scheduleDraw(); this.requestUpdate(); }
+            const { added, gone } = this._add(s, this._state(s), this._pointsOf(params));
+            if (added || gone) { this.scheduleDraw(); this.requestUpdate(); }
             return added;
         }
 
@@ -856,12 +865,12 @@ export const lineChart = defineUI({
             }
         }
 
-        _runs(st, gapAfter) {
-            const runs = [];
-            let start = 0;
-            for (let i = 1; i < st.n; i++) if (gapAfter > 0 && st.dx[i] - st.dx[i - 1] > gapAfter) { runs.push(start, i); start = i; }
-            if (st.n) runs.push(start, st.n);
-            return runs;
+        // the runs of a series' drawn points: cut after a silence (gapAfter) and where a value was missing (breaks, in the buffer's time)
+        _runs(st, gapAfter, breaks, shift) { return splitRuns(st.dx, st.n, gapAfter, breaks, shift); }
+        // ... as the chart and the series say (./gaps.js)
+        _runsOf(s, st, spec) {
+            const sp = spec || gapSpec(this.p, s), state = st || this._state(s);
+            return this._runs(state, sp.after, sp.nulls ? state.buf.breaksKept() : null, s._shift);
         }
 
         _tracePath(ctx, st, a, b, s, toX, toY) {
@@ -904,7 +913,8 @@ export const lineChart = defineUI({
             if (!st.n) return;
             const variant = this._variantOf(s);
             const color = this.colorOf(s), axis = s._ax, lw = numOr(s.width, 2);
-            const runs = this._runs(st, numOr(s.gapAfter, 0)), base = plotY + plotH;
+            const spec = gapSpec(this.p, s);
+            const runs = this._runsOf(s, st, spec), base = plotY + plotH;
             ctx.save();
             ctx.globalAlpha = Math.max(0, Math.min(1, numOr(s.opacity, 1)));
             if (variant === "bars") {
@@ -954,6 +964,18 @@ export const lineChart = defineUI({
                     ctx.beginPath();
                     this._tracePath(ctx, st, a, b, s, toX, toY);
                     ctx.stroke();
+                }
+                // a bridge: the data is missing here; a thin dashed line from the last point before the hole to the first after it
+                if (spec.mode === "bridge" && runs.length > 2) {
+                    ctx.setLineDash([3, 4]);
+                    ctx.lineWidth = Math.max(1, lw / 2);
+                    ctx.globalAlpha *= 0.85;
+                    for (const [i, j] of bridgesOf(runs)) {
+                        ctx.beginPath();
+                        ctx.moveTo(toX(st.dx[i]), toY(st.dy[i], axis));
+                        ctx.lineTo(toX(st.dx[j]), toY(st.dy[j], axis));
+                        ctx.stroke();
+                    }
                 }
                 ctx.setLineDash([]);
             }

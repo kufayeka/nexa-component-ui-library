@@ -10,10 +10,10 @@ const path = require('path');
 // the modules are plain ES modules without imports: load them without a bundler
 function load(file) {
     const src = fs.readFileSync(path.join(__dirname, '..', 'dist', 'chart', file), 'utf8');
-    const names = [...src.matchAll(/^export (?:var|let|const|function) (\w+)/gm)].map((m) => m[1]);
+    const names = [...src.matchAll(/^export (?:var|let|const|function|class) (\w+)/gm)].map((m) => m[1]);
     return new Function(src.replace(/^export /gm, '') + '\nreturn {' + names.join(',') + '};')();
 }
-const R = load('rows.js'), S = load('stack.js'), C = load('curves.js'), F = load('fit.js'), Q = load('spc-core.js'), A = load('axes.js');
+const R = load('rows.js'), S = load('stack.js'), C = load('curves.js'), F = load('fit.js'), Q = load('spc-core.js'), A = load('axes.js'), G = load('gaps.js'), B = load('buffer.js');
 
 let passed = 0;
 function ok(label, fn) { fn(); passed++; console.log('✔ ' + label); }
@@ -349,6 +349,77 @@ ok('newAxis: a fixed Id (a1, a2 ... never one in use), a name, the defaults', ()
     assert.deepStrictEqual(A.newAxis([{ id: 'a1' }, { id: 'a2' }], {}), { id: 'a3', name: 'Axis 3' });
     assert.deepStrictEqual(A.newAxis([{ id: 'a2' }], {}), { id: 'a3', name: 'Axis 3' }, 'a2 is taken: the next free number');
     assert.strictEqual(A.newAxis([{ id: 'a1' }, null, { name: 'x' }], {}).id, 'a4', 'three items: a4');
+});
+
+ok('missing data: 0 is a value; null, undefined, "" and what is not a number are missing', () => {
+    assert.strictEqual(G.valueOrNaN(0), 0);
+    assert.strictEqual(G.valueOrNaN('0'), 0);
+    assert.strictEqual(G.valueOrNaN(false), 0);
+    assert.strictEqual(G.valueOrNaN(-2.5), -2.5);
+    for (const v of [null, undefined, '', 'abc', NaN, Infinity, {}]) assert.ok(Number.isNaN(G.valueOrNaN(v)), String(v) + ' is missing');
+});
+
+ok('gapSpec: the chart sets it, a series can override; connect cuts nothing; a series saved with a gapAfter keeps cutting', () => {
+    assert.deepStrictEqual(G.gapSpec({}, {}), { mode: 'connect', after: 0, nulls: false }, 'the default: as before');
+    assert.deepStrictEqual(G.gapSpec({ missing: 'gap', gapAfter: 5000 }, {}), { mode: 'gap', after: 5000, nulls: true });
+    assert.deepStrictEqual(G.gapSpec({ missing: 'bridge' }, {}), { mode: 'bridge', after: 0, nulls: true }, 'only a missing value cuts it');
+    assert.deepStrictEqual(G.gapSpec({ missing: 'gap', gapAfter: 5000 }, { gapAfter: 2000 }), { mode: 'gap', after: 2000, nulls: true }, 'the series\' silence');
+    assert.deepStrictEqual(G.gapSpec({ missing: 'gap', gapAfter: 5000 }, { missing: 'connect' }), { mode: 'connect', after: 0, nulls: false }, 'the series connects');
+    assert.deepStrictEqual(G.gapSpec({}, { missing: 'bridge', gapAfter: 1000 }), { mode: 'bridge', after: 1000, nulls: true });
+    assert.deepStrictEqual(G.gapSpec({}, { gapAfter: 5000 }), { mode: 'gap', after: 5000, nulls: true }, 'saved before the setting: its gapAfter cut the line');
+    assert.deepStrictEqual(G.gapSpec({ missing: 'nonsense' }, { missing: 'nonsense' }), { mode: 'connect', after: 0, nulls: false }, 'an unknown mode is connect');
+    assert.deepStrictEqual(G.gapSpec(null, null), { mode: 'connect', after: 0, nulls: false });
+});
+
+ok('splitRuns: a silence longer than `after` cuts; a break between two points cuts; neither: one run; the buffer\'s time shift is added to the breaks', () => {
+    const dx = Float64Array.from([0, 1000, 2000, 20000, 21000, 22000]);
+    assert.deepStrictEqual(G.splitRuns(dx, 6, 0, null, 0), [0, 6], 'nothing set: one run');
+    assert.deepStrictEqual(G.splitRuns(dx, 6, 5000, null, 0), [0, 3, 3, 6], 'a silence of 18 s');
+    assert.deepStrictEqual(G.splitRuns(dx, 6, 0, [1500], 0), [0, 2, 2, 6], 'a missing value between points 1 and 2');
+    assert.deepStrictEqual(G.splitRuns(dx, 6, 0, [1500, 21500], 0), [0, 2, 2, 5, 5, 6], 'two');
+    assert.deepStrictEqual(G.splitRuns(dx, 6, 5000, [2500], 0), [0, 3, 3, 6], 'a silence and a break in the same hole: one cut');
+    assert.deepStrictEqual(G.splitRuns(dx, 6, 0, [-5, 0], 0), [0, 6], 'a break at or before the first point cuts nothing');
+    assert.deepStrictEqual(G.splitRuns(dx, 6, 0, [22000, 99999], 0), [0, 5, 5, 6], 'a break AT a point cuts before it; one past the last cuts nothing');
+    assert.deepStrictEqual(G.splitRuns(dx, 6, 0, [500], 1000), [0, 2, 2, 6], 'shifted by 1000: the break is at 1500, between points 1 and 2');
+    assert.deepStrictEqual(G.splitRuns(dx, 0, 0, [1], 0), [], 'no points: no run');
+    assert.deepStrictEqual(G.splitRuns(dx, 1, 0, [1], 0), [0, 1], 'one point: one run');
+});
+
+ok('bridgesOf: the last point of a run and the first of the next', () => {
+    assert.deepStrictEqual(G.bridgesOf([0, 3, 3, 6]), [[2, 3]]);
+    assert.deepStrictEqual(G.bridgesOf([0, 2, 2, 5, 5, 6]), [[1, 2], [4, 5]]);
+    assert.deepStrictEqual(G.bridgesOf([0, 6]), []);
+    assert.deepStrictEqual(G.bridgesOf([]), []);
+});
+
+ok('the buffer remembers when a value was missing: not a point, only a break; none before the first point; sorted; trimmed with the ring; cleared with it', () => {
+    const b = new B.TimeSeriesRingBuffer(50);
+    assert.strictEqual(b.markBreak(100), false, 'nothing to cut yet');
+    b.push(1000, 1); b.push(2000, 2); b.push(4000, 4);
+    assert.strictEqual(b.markBreak(3000), true);
+    assert.strictEqual(b.markBreak(3000), false, 'the same time twice is one');
+    assert.strictEqual(b.markBreak(500), false, 'before the first point');
+    assert.strictEqual(b.markBreak(NaN), false);
+    assert.strictEqual(b.markBreak(2500), true, 'a late one goes into its place');
+    assert.deepStrictEqual(b.breaksKept(), [2500, 3000]);
+    assert.strictEqual(b.count, 3, 'a break is not a point');
+    const small = new B.TimeSeriesRingBuffer(50);
+    for (let i = 0; i < 50; i++) small.push(1000 + i * 1000, i);
+    small.markBreak(1500);
+    small.markBreak(40500);
+    small.push(60000, 99); small.push(61000, 100);      // the ring drops the two oldest points
+    assert.deepStrictEqual(small.breaksKept(), [40500], 'the break before the oldest point is gone');
+    small.clear();
+    assert.deepStrictEqual(small.breaksKept(), []);
+});
+
+ok('loadArray: a null / undefined / "" y is a break (never a 0), a 0 is a point; unsorted input still lines up; a break before every point is dropped', () => {
+    const b = new B.TimeSeriesRingBuffer(50);
+    b.loadArray([{ x: 5000, y: 3 }, { x: 1000, y: 0 }, { x: 2000, y: null }, { x: 3000, y: undefined }, { x: 4000, y: '' }, { x: 6000, y: 'abc' }, { x: 500, y: null }]);
+    assert.deepStrictEqual(Array.from({ length: b.count }, (_, i) => [b.getX(i), b.getY(i)]), [[1000, 0], [5000, 3]], 'two points: the 0 and the 3');
+    assert.deepStrictEqual(b.breaksKept(), [2000, 3000, 4000, 6000], 'a break at 500 is before the first point');
+    b.loadArray([{ x: 1, y: 1 }]);
+    assert.deepStrictEqual(b.breaksKept(), [], 'a new load starts clean');
 });
 
 console.log(`\n${passed} passed\nALL OK`);

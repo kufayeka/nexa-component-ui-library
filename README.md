@@ -153,7 +153,7 @@ A time-series chart driven by Logic.
 
 **A series:**
 - **Live value**: a tag or a variable; every new value is a point.
-- **Data settings:** points kept, break the line after N ms, stale after N ms, and a **time shift** (yesterday over today).
+- **Data settings:** points kept, **When data is missing** (as the chart, or its own) and cut the line after N ms of silence, stale after N ms, and a **time shift** (yesterday over today).
 - **Look:** interpolation (linear / smooth / step / **automatic** / bars / points), step mode (after / before / center), colour (a hex or a theme token), width, dash, opacity, fill, points.
 - **Value texts** (its Axis › Numbers): `0=Off, 1=Run, 2=Fault`: the tooltip, the legend and the last value show the text, and the axis ticks are those values (Off / Run), not round numbers.
 - **Its Y axis:** **Own axis** (its own scale and axis: position left / right / hidden, title, unit; Range: soft / hard min / max, **zero in the middle** for − and +; Numbers; Spine) or **an axis of the chart's Axes list** that other series share (below).
@@ -173,6 +173,15 @@ A time-series chart driven by Logic.
 - Column widths come from the widest label; `axisGap` (Style) is the space between columns.
 - The Inspector: the series' **Axis** section (Y axis first; Range, Numbers and Spine inside it) and the chart's **Axes** group.
 - Each series has its own Update node in Logic: its axis, range and style can change at runtime. Charts saved before the Axes list are unchanged (the list is empty, every series Own).
+
+**When data is missing** (Line, Area and the Column Chart's lines on a time x; the chart's **Data** group, a series can say its own):
+- **A 0 is a value, `null` / `undefined` / `""` / a word is MISSING.** A machine that is off and sends 0 is drawn at 0. A value that is missing is no point (it never becomes a 0): the chart remembers when it was missing.
+- The chart's **When data is missing**: **Connect** (the default: the line runs across the hole, as before), **Gap** (the line is cut there) or **Gap with a dashed bridge** (cut, and a thin dashed line across the hole says that data is missing).
+- **Cut the line after silence (ms)**: with Gap / Bridge, no data for longer than this also cuts the line (a sensor that is switched off sends nothing, not a `null`). 0 = only a missing value cuts it. A series has its own value (0 = the chart's).
+- A series can say **Connect**, **Gap** or **Bridge** itself (**As the chart** is the default). A series saved with a "break the line after" and no setting still cuts its line, as it did.
+- A live value (a tag) that turns `null` / `undefined` after a value is missing from then on (once), and the next value is a point again. `{ "x": ..., "y": null }` in Append / Set points is missing at that time.
+- Area, stacked: a series that is cut adds nothing to the stack in its hole.
+- Stats, min / max, thresholds and exports use the points only: a missing value is not in them.
 
 **Numbers:** per series (its Axis › Numbers):
 - as it is · short (1.2K 3.4M 5B) · engineering (k M G: 1 500 kW shows as **1.5 MW**, 0.002 s as **2 ms**) · scientific;

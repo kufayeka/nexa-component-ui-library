@@ -483,6 +483,7 @@ withHarness({
     const counts = (name) => js(`(function () { var w = ${series(name)}; return w.seriesList().map(function (s) { return w._state(s).buf.count; }); })()`);
     const pixels = (name) => js(`(function () { var c = ${root(name)}.querySelector("canvas"), d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data, n = 0; for (var i = 3; i < d.length; i += 4) if (d[i]) n++; return n; })()`);
     const T0 = 1727852400000;
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const wave = (k, base, n, step) => Array.from({ length: n || 60 }, (_, i) => ({ x: T0 + i * (step || 1000), y: Math.round((base + Math.sin(i / 6 + k) * 5) * 100) / 100 }));
 
     await ok('Line Chart: draws, crosshair + tooltip (label, value, unit), the inspector, the two-row ruler drags in time', async () => {
@@ -830,6 +831,83 @@ withHarness({
         assert.strictEqual(await js(`(function () { var w = ${series('lc-gap')}; w.draw(); return w._runs(w._state(w.seriesList()[0]), 5000).length / 2; })()`), 2);
         await mount('lc-design', 'line-chart', { series: [S('a'), S('b')] }, { width: 400, height: 200, design: true });
         assert.deepStrictEqual(await js(`(function () { var w = ${series('lc-design')}; return w.seriesList().map(function (s) { var st = w._state(s); return st.demo && st.buf.count > 0; }); })()`), [true, true]);
+    });
+
+    // ---- missing data: a null is missing (a 0 is a value); the chart connects, cuts, or cuts and bridges ------------------------------
+    await ok('Line Chart: a null / undefined value is missing, not a 0: no point, a break; Connect (the default) draws across, Gap and Bridge cut the line there', async () => {
+        const pts = [{ x: T0, y: 5 }, { x: T0 + 1000, y: 0 }, { x: T0 + 2000, y: null }, { x: T0 + 3000, y: 5 }, { x: T0 + 4000, y: 5 }];
+        await mount('lc-miss', 'line-chart', { series: [S('a', { live: pts })] }, { width: 400, height: 200 });
+        const info = () => js(`(function () { var w = ${series('lc-miss')}, s = w.seriesList()[0], st = w._state(s); w.draw(); return { count: st.buf.count, ys: Array.from({ length: st.buf.count }, function (_, i) { return st.buf.getY(i); }), breaks: Array.from(st.buf.breaksKept()), runs: w._runsOf(s) }; })()`);
+        let r = await info();
+        assert.deepStrictEqual(r.ys, [5, 0, 5, 5], 'the 0 is a point; the null is not');
+        assert.deepStrictEqual(r.breaks, [T0 + 2000]);
+        assert.deepStrictEqual(r.runs, [0, 4], 'Connect: one run, as it always was');
+        await js(`NexaTest.setProps("lc-miss", { missing: "gap" })`); await settle();
+        r = await info();
+        assert.deepStrictEqual(r.runs, [0, 2, 2, 4], 'Gap: cut between the 0 and the next 5');
+        await js(`NexaTest.setProps("lc-miss", { missing: "bridge" })`); await settle();
+        assert.deepStrictEqual((await info()).runs, [0, 2, 2, 4], 'Bridge cuts the same');
+        await js(`NexaTest.setProps("lc-miss", { missing: "gap", series: [${JSON.stringify(S('a', { missing: 'connect' }))}] })`); await settle();
+        assert.deepStrictEqual((await info()).runs, [0, 4], 'a series that says Connect connects');
+        // an object {x, y: undefined}, "" and a word are missing too
+        await js(`NexaTest.invoke("lc-miss", "appendPoints", [{ x: ${T0 + 5000}, y: undefined }, { x: ${T0 + 6000}, y: "" }, { x: ${T0 + 7000}, y: "abc" }, { x: ${T0 + 8000}, y: 0 }], { list: "series", id: "a" })`);
+        r = await info();
+        assert.strictEqual(r.count, 5, 'only the 0 was added');
+        // (the fifth: the series lost its Live value when it was replaced above: a value that goes away after one is missing, at "now")
+        assert.deepStrictEqual(r.breaks.slice(0, 4), [T0 + 2000, T0 + 5000, T0 + 6000, T0 + 7000]);
+        assert.strictEqual(r.breaks.length, 5);
+    });
+
+    await ok('Line Chart: a live value that turns null / undefined after a value is missing, once; the next value is a point again', async () => {
+        await mount('lc-miss-live', 'line-chart', { missing: 'gap', series: [S('a', { live: 5 })] }, { width: 400, height: 200 });
+        const set = async (v) => { await js(`NexaTest.setProps("lc-miss-live", { series: [${JSON.stringify(S('a', { live: v }))}] })`); await settle(); await sleep(15); };
+        const info = () => js(`(function () { var w = ${series('lc-miss-live')}, s = w.seriesList()[0], st = w._state(s); w.draw(); return { count: st.buf.count, breaks: st.buf.breaksKept().length, runs: w._runsOf(s).length / 2 }; })()`);
+        assert.deepStrictEqual(await info(), { count: 1, breaks: 0, runs: 1 });
+        await sleep(15);
+        await set(null);
+        await set(null);
+        assert.strictEqual((await info()).breaks, 1, 'once: the same null again is not another break');
+        await sleep(15);
+        await set(6);
+        const r = await info();
+        assert.deepStrictEqual(r, { count: 2, breaks: 1, runs: 2 }, 'the 6 is a point, the line was cut between');
+    });
+
+    await ok('Line Chart: the hole is painted by Connect, empty with Gap, dashed with Bridge (pixels, not only the runs)', async () => {
+        const pts = [];
+        for (let i = 0; i <= 20; i++) pts.push(i === 10 ? { x: T0 + i * 1000, y: null } : { x: T0 + i * 1000, y: 5 });
+        await mount('lc-hole', 'line-chart', { showGrid: false, series: [S('a', { min: 0, max: 10, width: 2, live: pts })] }, { width: 500, height: 220 });
+        const hole = () => js(`(function () { var w = ${series('lc-hole')}; w.draw(); var sc = w._scale, k = w.seriesList()[0]._key, d = w._lastDpr || 1, ctx = w.canvas.getContext("2d");
+            var x0 = Math.round(sc.toX(${T0 + 9300}) * d), x1 = Math.round(sc.toX(${T0 + 10700}) * d), y = Math.round(sc.toY(5, k) * d);
+            var data = ctx.getImageData(x0, y - 2, x1 - x0, 5).data, n = 0; for (var i = 3; i < data.length; i += 4) if (data[i]) n++;
+            var side = ctx.getImageData(Math.round(sc.toX(${T0 + 2000}) * d), y - 2, Math.round(40 * d), 5).data, m = 0; for (var j = 3; j < side.length; j += 4) if (side[j]) m++;
+            return { hole: n, wide: x1 - x0, line: m }; })()`);
+        const connect = await hole();
+        assert.ok(connect.line > 100, 'the line is drawn: ' + JSON.stringify(connect));
+        assert.ok(connect.hole >= connect.wide * 2, 'Connect: the hole is painted ' + JSON.stringify(connect));
+        await js(`NexaTest.setProps("lc-hole", { missing: "gap" })`); await settle();
+        const gap = await hole();
+        assert.strictEqual(gap.hole, 0, 'Gap: nothing in the hole ' + JSON.stringify(gap));
+        assert.ok(gap.line > 100, 'but the line is there either side');
+        await js(`NexaTest.setProps("lc-hole", { missing: "bridge" })`); await settle();
+        const bridge = await hole();
+        assert.ok(bridge.hole > 0 && bridge.hole < connect.hole, 'Bridge: a thin dashed line (more than nothing, less than the full line) ' + JSON.stringify([bridge, connect]));
+    });
+
+    await ok('Line Chart: the silence that cuts the line (Cut the line after) and the new fields in the inspector', async () => {
+        const pts = [{ x: T0, y: 1 }, { x: T0 + 1000, y: 2 }, { x: T0 + 20000, y: 3 }, { x: T0 + 21000, y: 4 }];
+        await mount('lc-silence', 'line-chart', { missing: 'gap', gapAfter: 5000, series: [S('a', { live: pts })] }, { width: 400, height: 200 });
+        const runs = (name) => js(`(function () { var w = ${series(name)}; w.draw(); return w._runsOf(w.seriesList()[0]); })()`);
+        assert.deepStrictEqual(await runs('lc-silence'), [0, 2, 2, 4], 'the chart\'s 5 s');
+        await js(`NexaTest.setProps("lc-silence", { series: [${JSON.stringify(S('a', { gapAfter: 60000 }))}] })`); await settle();
+        assert.deepStrictEqual(await runs('lc-silence'), [0, 4], 'the series\' own 60 s');
+        await mount('lc-saved', 'line-chart', { series: [S('a', { gapAfter: 5000, live: pts })] }, { width: 400, height: 200 });
+        assert.deepStrictEqual(await runs('lc-saved'), [0, 2, 2, 4], 'a chart saved before the setting: its series\' gapAfter still cuts');
+        const f = await js(`(function () { var n = NEXA.getComponent("${P}line-chart").nexa.props, sf = n.series.item.fields, vis = n.gapAfter.visibleWhen;
+            return { chart: [n.missing.default, n.missing.group, n.missing.options.map(function (o) { return o.value; }), n.gapAfter.group, vis({ missing: "connect" }), vis({ missing: "gap" }), vis({ missing: "bridge" })],
+                series: [sf.missing.default, sf.missing.options.map(function (o) { return o.value; }), sf.gapAfter.label] }; })()`);
+        assert.deepStrictEqual(f.chart, ['connect', 'Data', ['connect', 'gap', 'bridge'], 'Data', false, true, true], 'the chart\'s setting; the silence shows for Gap and Bridge');
+        assert.deepStrictEqual(f.series, ['', ['', 'connect', 'gap', 'bridge'], 'Cut the line after silence (ms)'], 'a series: as the chart, or its own');
     });
 
     await ok('Line Chart: time axis settings — showTime, showDate, dateFormat and tickDensity', async () => {
@@ -1811,6 +1889,34 @@ withHarness({
         assert.ok(/\.xlsx$/.test(exp.name));
     });
 
+    await ok('Area Chart: a null value is missing (never a 0): Connect fills across the hole, Gap cuts the area, Bridge adds a dashed line; stacked: the series adds nothing there', async () => {
+        const T = 1728000000000, pts = [];
+        for (let i = 0; i <= 20; i++) pts.push(i === 10 ? { x: T + i * 1000, y: null } : { x: T + i * 1000, y: 40 });
+        for (const mode of ['standard', 'stacked']) {
+            const id = 'ac-gap-' + mode;
+            await mount(id, 'area-chart', { mode, series: [{ id: 's1', name: 'A', fillType: 'solid' }, { id: 's2', name: 'B', fillType: 'solid' }] }, { width: 500, height: 260 });
+            await js(`(function () { var w = ${acw(id)}; w.appendPoints('s1', ${JSON.stringify(pts)}); w.appendPoints('s2', ${JSON.stringify(pts.map((q) => ({ x: q.x, y: 30 })))}); w.draw(); })()`);
+            const st = await js(`(function () { var w = ${acw(id)}, buf = w._state(w.findSeries('s1')).buf; return { count: buf.length, breaks: Array.from(buf.breaksKept()), zero: buf.getY(9) }; })()`);
+            assert.deepStrictEqual(st, { count: 20, breaks: [T + 10000], zero: 40 }, 'the null is no point (and no 0)');
+            const hole = async () => js(`(function () { var w = ${acw(id)}; w.draw(); var sc = w._scale, d = w._lastDpr || 1, ctx = w.canvas.getContext("2d");
+                var x0 = Math.round(sc.toScreenX(${T + 9300}) * d), x1 = Math.round(sc.toScreenX(${T + 10700}) * d), y0 = Math.round(sc.plotY * d), h = Math.round(sc.plotH * d);
+                var data = ctx.getImageData(x0, y0, x1 - x0, h).data, n = 0; for (var i = 3; i < data.length; i += 4) if (data[i]) n++;
+                var side = ctx.getImageData(Math.round(sc.toScreenX(${T + 2000}) * d), y0, x1 - x0, h).data, m = 0; for (var j = 3; j < side.length; j += 4) if (side[j]) m++;
+                return { hole: n, side: m }; })()`);
+            const connect = await hole();
+            await js(`NexaTest.setProps(${JSON.stringify(id)}, { missing: "gap" })`); await settle();
+            const gap = await hole();
+            await js(`NexaTest.setProps(${JSON.stringify(id)}, { missing: "bridge" })`); await settle();
+            const bridge = await hole();
+            assert.ok(connect.hole > gap.hole + 500 && connect.side > 500, mode + ': Connect fills the hole, Gap does not ' + JSON.stringify([connect, gap]));
+            assert.ok(bridge.hole > gap.hole && bridge.hole < connect.hole, mode + ': Bridge: a dashed line only ' + JSON.stringify([gap, bridge, connect]));
+        }
+        // a 0 is a value: it is a point
+        await mount('ac-zero', 'area-chart', { series: [{ id: 's1', name: 'A' }] }, { width: 400, height: 200 });
+        await js(`(function () { var w = ${acw('ac-zero')}; w.appendPoints('s1', [{ x: 1000, y: 0 }, { x: 2000, y: null }, { x: 3000, y: "" }, { x: 4000, y: 7 }]); })()`);
+        assert.deepStrictEqual(await js(`(function () { var buf = ${acw('ac-zero')}._state(${acw('ac-zero')}.findSeries('s1')).buf; return [buf.length, buf.getY(0), buf.getY(1), buf.breaksKept().length]; })()`), [2, 0, 7, 2]);
+    });
+
     // ---- KPI / Stat ----------------------------------------------------------------------------
     const kw = (name) => `NexaTest.wc(${JSON.stringify(name)})`;
     const KT = { list: 'tiles', id: 'k1' };
@@ -2110,6 +2216,31 @@ withHarness({
         assert.strictEqual(await js(`${cw('ch4')}._xt`), 'time');
         await js(`NexaTest.invoke("ch4", "appendRows", [{ x: ${T0 + 120000}, y: 3, s: "a" }])`); await settle();
         assert.deepStrictEqual(await js(`(function () { var b = ${cw('ch4')}._tser.get("y").buf, o = []; for (var i = 0; i < b.count; i++) o.push(b.getY(i)); return o; })()`), [1, 2, 3], 'a time x: Float64 rings, not rows');
+    });
+
+    await ok('Column Chart: a time x line: a null is missing (never a 0): Connect runs across, Gap cuts the line, Bridge dashes the hole; the series can say its own', async () => {
+        const T0 = 1727852400000, rows = [];
+        for (let i = 0; i <= 20; i++) rows.push({ x: T0 + i * 1000, kw: i === 10 ? null : 40 });
+        await mount('ch-gap', COL, { xType: 'time', markers: false, rows, xField: 'x', yField: 'kw', series: [{ id: 'kw', name: 'kW', type: 'line', width: 3 }] }, { width: 500, height: 260 });
+        const info = () => js(`(function () { var w = ${cw('ch-gap')}, b = w._tser.get("kw").buf; return { count: b.count, breaks: Array.from(b.breaksKept()), zero: Array.from({ length: b.count }, function (_, i) { return b.getY(i); }).filter(function (v) { return v === 0; }).length }; })()`);
+        assert.deepStrictEqual(await info(), { count: 20, breaks: [T0 + 10000], zero: 0 }, 'the null is no point, and no 0');
+        const hole = () => js(`(function () { var w = ${cw('ch-gap')}; w.draw(); var g = w._geo, d = w._lastDpr || 1, ctx = w.canvas.getContext("2d");
+            var x0 = Math.round((g.plotX + g.cpos(${T0 + 9300})) * d), x1 = Math.round((g.plotX + g.cpos(${T0 + 10700})) * d), y0 = Math.round(g.plotY * d), h = Math.round(g.plotH * d);
+            var data = ctx.getImageData(x0, y0, x1 - x0, h).data, n = 0; for (var i = 3; i < data.length; i += 4) if (data[i]) n++;
+            var x2 = Math.round((g.plotX + g.cpos(${T0 + 2000})) * d), side = ctx.getImageData(x2, y0, x1 - x0, h).data, m = 0; for (var j = 3; j < side.length; j += 4) if (side[j]) m++;
+            return { hole: n, side: m }; })()`);
+        const connect = await hole();
+        await js(`NexaTest.setProps("ch-gap", { missing: "gap" })`); await settle();
+        const gap = await hole();
+        await js(`NexaTest.setProps("ch-gap", { missing: "bridge" })`); await settle();
+        const bridge = await hole();
+        assert.ok(connect.hole > gap.hole + 20 && gap.side > 20, 'Connect paints the hole, Gap does not ' + JSON.stringify([connect, gap]));
+        assert.ok(bridge.hole > gap.hole && bridge.hole < connect.hole, 'Bridge: a dashed line only ' + JSON.stringify([gap, bridge, connect]));
+        // a series that says Connect connects, whatever the chart says; a series saved with a gapAfter (no setting) still cuts
+        await js(`NexaTest.setProps("ch-gap", { missing: "gap", series: [{ id: "kw", name: "kW", type: "line", width: 3, missing: "connect" }] })`); await settle();
+        assert.ok((await hole()).hole >= connect.hole - 5, 'the series connects');
+        await js(`NexaTest.setProps("ch-gap", { missing: "connect", series: [{ id: "kw", name: "kW", type: "line", width: 3, gapAfter: 500 }] })`); await settle();
+        assert.ok((await hole()).hole <= gap.hole + 5, 'a series saved with a gapAfter keeps cutting (every point is 1 s from the next)');
     });
 
     await ok('Column Chart: stacked piles, 100 % (the axis ends at 100), side by side; the tooltip lists every series at that category with the total of the stack; a single-series tooltip', async () => {

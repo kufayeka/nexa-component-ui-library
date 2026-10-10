@@ -25,6 +25,7 @@ import { TimeSeriesRingBuffer, lowerBoundRing, upperBoundRing, M4Decimator } fro
 import { TimeChartElement } from "./time-chart.js";
 import { timeProps, refreshProps, zoomProps, rangeBarProps, annotationProps, exportProps, timeEvents, timeActions } from "./props.js";
 import { legendProps, legendTemplate, legendPlace, fillLegend, placeInsideLegend } from "./legend.js";
+import { valueOrNaN, gapSpec, splitRuns, bridgesOf, missingProps, missingFields } from "./gaps.js";
 
 const TYPES = [["column", "Column (a bar when horizontal)"], ["line", "Line"], ["target", "Target marker (a plan per category)"]];
 const dashOf = (d) => DASHES[d] || [];
@@ -46,7 +47,7 @@ const SERIES_FIELDS = {
 
     live: { type: "tag", access: "read", section: "Data", label: "Live value", help: "A tag or a variable: every new value is one more point (a time x: its time = now). A {x, y} or a list of them is added as it is." },
     field: { type: "string", section: "Data", label: "Row field (y)", default: "", bindable: false, help: "Wide form: the field of each row this series takes. Empty: the series of that Id / name." },
-    gapAfter: { type: "number", section: "Data", label: "Break the line after (ms without data)", default: 0, min: 0, step: 1000, help: "A time x: 0 = always connected. A longer silence draws a gap." },
+    ...missingFields(),
 
     type: { type: "enum", label: "Type", default: "", options: opt([["", "The chart's default"]].concat(TYPES)), help: "A column, a line, or a target marker (a short line across its category: the plan an actual column is compared with)." },
     axis: { type: "enum", label: "Axis", default: "left", options: opt([["left", "Left (Y axis)"], ["right", "Right (Secondary Y axis)"]]) },
@@ -234,6 +235,7 @@ export const columnChart = defineUI({
         },
 
         // ---- Zoom & pan, range buttons, Annotations (a time x) ----
+        ...onTime(missingProps("Data")),
         ...onTime(zoomProps()),
         ...onTime(rangeBarProps()),
         ...onTime(annotationProps()),
@@ -371,8 +373,8 @@ export const columnChart = defineUI({
                 const x = toMs(r[m.x]);
                 if (!Number.isFinite(x)) continue;
                 for (const yk of ys) {
-                    const v = r[yk], y = typeof v === "number" ? v : v === null || v === undefined || v === "" ? NaN : Number(v);
-                    if (Number.isFinite(y)) bufs.get(keyOf(r, yk)).push(x, y);
+                    const y = valueOrNaN(r[yk]), b = bufs.get(keyOf(r, yk));
+                    if (Number.isFinite(y)) b.push(x, y); else b.markBreak(x);      // null / undefined / "" is missing: a break (./gaps.js)
                 }
             }
         }
@@ -398,7 +400,13 @@ export const columnChart = defineUI({
             for (const it of Array.isArray(this.p.series) ? this.p.series : []) {
                 if (!it || typeof it !== "object") continue;
                 const v = it.live, key = String(it.id || it.name || "");
-                if (v === undefined || v === null || v === "" || v === "???" || (typeof v === "object" && !Array.isArray(v) && v.$bind) || v === this._lastLive.get(key)) continue;
+                if (v === null || (v === undefined && this._lastLive.has(key))) {
+                    // after a value: the value is MISSING now (a 0 would be a value); once, until a value comes again
+                    const had = this._lastLive.get(key);
+                    if (had !== undefined && had !== null && this._time()) { this._lastLive.set(key, null); this._pushTime(key, it.name, [null]); }
+                    continue;
+                }
+                if (v === undefined || v === "" || v === "???" || (typeof v === "object" && !Array.isArray(v) && v.$bind) || v === this._lastLive.get(key)) continue;
                 this._lastLive.set(key, v);
                 this._dropDemo();
                 const pts = Array.isArray(v) ? v : [v];
@@ -411,13 +419,17 @@ export const columnChart = defineUI({
         _pushTime(key, name, pts) {
             const t = this._tbuf(key, name), m = this._map();
             let added = 0;
+            let gone = 0;
             for (const p of pts) {
-                if (p === null || p === undefined) continue;
                 let x, y;
-                if (typeof p === "object") { x = toMs(p.x !== undefined ? p.x : p[m.x]); y = Number(p.y !== undefined ? p.y : p.value !== undefined ? p.value : p[Array.isArray(m.y) ? m.y[0] : m.y]); }
-                else { x = Date.now(); y = Number(p); }
-                if (Number.isFinite(x) && Number.isFinite(y) && t.buf.push(x, y)) added++;
+                if (p === null || p === undefined) { x = Date.now(); y = NaN; }
+                else if (typeof p === "object") { x = toMs(p.x !== undefined ? p.x : p[m.x]); y = valueOrNaN(p.y !== undefined ? p.y : p.value !== undefined ? p.value : p[Array.isArray(m.y) ? m.y[0] : m.y]); }
+                else { x = Date.now(); y = valueOrNaN(p); }
+                if (!Number.isFinite(x)) continue;
+                if (!Number.isFinite(y)) { if (t.buf.markBreak(x)) gone++; continue; }
+                if (t.buf.push(x, y)) added++;
             }
+            if (gone && !added) { this._sl = null; this.scheduleDraw(); this.requestUpdate(); }
             if (added) { if (!this.isEditor) this._tickClock(); this._sl = null; this.scheduleDraw(); this.requestUpdate(); }
             return added;
         }
@@ -1333,16 +1345,33 @@ export const columnChart = defineUI({
         _drawLine(ctx, s, ln, g) {
             const { cpos, vpos, xy, a, color, plotY, plotH, labelDraw, labelsOn, time, horizontal } = g;
             const lw = this._num(s.width, numOr(this.p.lineWidth, 2)), curve = this._curveOf(s);
-            // points -> canvas, runs broken at a NaN (a category x) or a gap (a time x: gapAfter)
-            const gap = time ? numOr(s.gapAfter, 0) : 0, connect = time || !this._align().cats;
+            // points -> canvas, runs broken at a NaN (a category x) or, on a time x, where a value was missing and after a silence
+            // (./gaps.js: the chart's "When data is missing", the series' own, its gapAfter)
+            const spec = time ? gapSpec(this.p, s) : { mode: "connect", after: 0, nulls: false }, connect = time || !this._align().cats;
+            const buf = time ? this._buf(s) : null;
             const runs = [];
-            let cur = null;
-            for (let i = 0; i < ln.n; i++) {
-                const yv = ln.y[i];
-                if (!(yv === yv)) { if (!connect) cur = null; continue; }
-                const p = xy(cpos(ln.x[i]), vpos(a, yv));
-                if (!cur || (gap > 0 && ln.x[i] - cur.lastX > gap)) { cur = { xs: [], ys: [], vs: [], lastX: 0 }; runs.push(cur); }
-                cur.xs.push(p[0]); cur.ys.push(p[1]); cur.vs.push(yv); cur.lastX = ln.x[i];
+            if (spec.after > 0 || spec.nulls) {
+                // the valid points first, then the pure splitting of their times
+                const vx = [], vi = [];
+                for (let i = 0; i < ln.n; i++) if (ln.y[i] === ln.y[i]) { vx.push(ln.x[i]); vi.push(i); }
+                const cuts = splitRuns(Float64Array.from(vx), vx.length, spec.after, spec.nulls && buf ? buf.breaksKept() : null, 0);
+                for (let r = 0; r < cuts.length; r += 2) {
+                    const cur = { xs: [], ys: [], vs: [], lastX: 0 };
+                    for (let k = cuts[r]; k < cuts[r + 1]; k++) {
+                        const i = vi[k], p = xy(cpos(ln.x[i]), vpos(a, ln.y[i]));
+                        cur.xs.push(p[0]); cur.ys.push(p[1]); cur.vs.push(ln.y[i]); cur.lastX = ln.x[i];
+                    }
+                    runs.push(cur);
+                }
+            } else {
+                let cur = null;
+                for (let i = 0; i < ln.n; i++) {
+                    const yv = ln.y[i];
+                    if (!(yv === yv)) { if (!connect) cur = null; continue; }
+                    const p = xy(cpos(ln.x[i]), vpos(a, yv));
+                    if (!cur) { cur = { xs: [], ys: [], vs: [], lastX: 0 }; runs.push(cur); }
+                    cur.xs.push(p[0]); cur.ys.push(p[1]); cur.vs.push(yv); cur.lastX = ln.x[i];
+                }
             }
             const baseV = vpos(a, Math.max(a.lo, Math.min(0, a.hi)));
             const trace = (r) => {
@@ -1364,6 +1393,16 @@ export const columnChart = defineUI({
                 if (r.xs.length === 1) { ctx.fillStyle = color; ctx.beginPath(); ctx.arc(r.xs[0], r.ys[0], Math.max(3, lw * 1.5), 0, Math.PI * 2); ctx.fill(); return; }
                 ctx.beginPath(); trace(r); ctx.stroke();
             });
+            // a bridge: the data is missing here; a thin dashed line from the last point before the hole to the first after it
+            if (spec.mode === "bridge" && runs.length > 1) {
+                const flat = []; let at = 0;
+                runs.forEach((r) => { flat.push(at, at + r.xs.length); at += r.xs.length; });
+                const all = { xs: [], ys: [] };
+                runs.forEach((r) => { all.xs.push(...r.xs); all.ys.push(...r.ys); });
+                ctx.setLineDash([3, 4]); ctx.lineWidth = Math.max(1, lw / 2); ctx.globalAlpha = 0.85;
+                for (const [i, j] of bridgesOf(flat)) { ctx.beginPath(); ctx.moveTo(all.xs[i], all.ys[i]); ctx.lineTo(all.xs[j], all.ys[j]); ctx.stroke(); }
+                ctx.globalAlpha = 1;
+            }
             ctx.setLineDash([]);
             const showPts = s.points === "on" || (s.points !== "off" && this.p.markers !== false);
             const size = numOr(this.p.pointSize, 3.5);
