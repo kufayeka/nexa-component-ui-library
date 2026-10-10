@@ -58,10 +58,41 @@ export const CSS_GROUP = "Custom CSS";
 export function defineUI(def) {
     const properties = Object.assign({}, def.properties || {});
     const css = cssFields({ parts: def.parts, states: def.states, group: CSS_GROUP });
-    Object.keys(css).forEach((k) => { if (!(k in properties)) properties[k] = css[k]; });
+    // ONE Custom CSS field for every component: its editor has "Load CSS" (this component's own CSS, to edit) and "Reset CSS". Nothing is
+    // saved until the user loads, edits and presses Done, so a component that is not touched keeps no copy of the library's CSS.
+    // The older per-part / per-state fields (cssLabel, cssControl, cssTrue ...) keep their keys and still apply; they show in the
+    // inspector only where a saved screen already has text in them.
+    Object.keys(css).forEach((k) => {
+        if (k === "css") Object.assign(css[k], { label: "Custom CSS", help: "Empty: the component's own look. Load CSS puts its CSS here to edit; what is saved is applied after it, so it wins. Reset CSS empties it.", defaultCss: () => ownCss(def) });
+        else { const key = k; css[k].visibleWhen = (p) => typeof p[key] === "string" && p[key].trim() !== ""; }
+        if (!(k in properties)) properties[k] = css[k];
+    });
     const out = Object.assign({}, def, { properties });
     delete out.cssGroup;
     return defineComponent(out);
+}
+
+/** A component's own CSS as one text: its view's styles (the base look + its own), its `css`, then the rules of its parts / states. */
+export function ownCss(def) {
+    const V = def.view;
+    let sheets = [];
+    if (V) {
+        if (typeof V.finalize === "function") V.finalize();
+        sheets = V.elementStyles || [].concat(V.styles || []);
+    }
+    const text = (s) => (s && typeof s === "object" ? s.cssText || "" : typeof s === "string" ? s : "");
+    // the common indent of a text taken off, so it reads from the left
+    const dedent = (t) => {
+        const lines = String(t).replace(/\t/g, "    ").split("\n");
+        const ind = Math.min(...lines.filter((l) => l.trim()).map((l) => l.match(/^ */)[0].length));
+        return lines.map((l) => l.slice(Number.isFinite(ind) ? ind : 0)).join("\n").trim();
+    };
+    const out = [`/* ${def.label || def.id} - its own CSS. Edit what you need: what is saved here is applied after it, so it wins. Reset CSS removes it. */`];
+    sheets.map(text).map(dedent).filter(Boolean).forEach((t) => out.push(t));
+    if (typeof def.css === "string" && def.css.trim()) out.push(dedent(def.css));
+    const rule = (o) => (o && o.selector && o.css && String(o.css).trim() ? o.selector + " {\n    " + String(o.css).trim().replace(/\n/g, "\n    ") + "\n}" : "");
+    [def.parts, def.states].forEach((m) => Object.keys(m || {}).forEach((k) => { const r = rule(m[k]); if (r) out.push(r); }));
+    return out.join("\n\n") + "\n";
 }
 
 // ---- the look: sizes, the palette, tokens -------------------------------------------------

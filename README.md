@@ -695,11 +695,13 @@ A component's structure is the library's: accessible (keyboard, focus, ARIA; the
    - `colorPalette` (any palette of the theme: primary, gray, red, green…);
    - `radius` (a radius token).
 2. **The app's theme** (the Theme tab). Every colour and size here is a design token. Change the primary palette and every primary button follows; switch to dark mode (`$colorMode`) and everything follows.
-3. **Custom CSS** (the component's *Custom CSS* tab):
-   - the **base CSS**;
-   - one CSS per documented **part**, e.g. Button → *The button*, *Its text*; a field → *Root*, *Label*, *Control*, *Helper / error text*, *The box*.
+3. **Custom CSS**: ONE field in every component (*Custom CSS*). Its **Edit…** opens a dialog with a CSS editor and two buttons:
+   - **Load CSS** puts the component's own CSS in the editor (its base look and its own rules, with the real selectors and the theme's variables), to edit;
+   - **Reset CSS** empties it.
 
-   Write declarations (`letter-spacing: 0.05em;`). They win over the library's own styles. Use the theme's CSS variables to stay themeable: `color: var(--nexa-colors-fg-muted);`.
+   **Done** saves the text in this component only (in the screen, `flow.json`). A component you do not touch keeps no copy of the library's CSS, so a newer library still reaches it. What is saved is applied **after** the library's own styles (an adopted stylesheet, last), so a rule with the library's own selector wins: `.btn { border-radius: 20px; }`. Use the theme's CSS variables to stay themeable: `color: var(--nexa-colors-fg-muted);`.
+
+   The older per-part and per-state fields (*Control CSS*, *Label CSS* ...) keep working in screens that already use them, and show in the inspector only where they hold text; new work goes in the one field (a part is `:host [part~="label"] { ... }`).
 
 ## Build your own UI library
 

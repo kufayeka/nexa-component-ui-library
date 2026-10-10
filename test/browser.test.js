@@ -52,6 +52,42 @@ withHarness({
         assert.deepStrictEqual(empty, []);
     });
 
+    await ok('Custom CSS: ONE field in every component (Load CSS gives the component\'s own CSS; nothing is saved by default); a rule with the library\'s own selector wins; the older part / state fields show only where they hold text', async () => {
+        // every component: one "Custom CSS" field with its own default CSS; the older fields hidden while empty
+        const info = await js(`${JSON.stringify(ALL)}.map(function (id) {
+            var m = NEXA.getComponent("${P}" + id).nexa, p = m.props, css = p.css, text = css && css.defaultCss ? css.defaultCss() : "";
+            var old = Object.keys(p).filter(function (k) { return p[k].type === "css" && k !== "css"; });
+            return { id: id, label: css && css.label, saved: css && css.default, lines: text.split("\\n").length, head: text.split("\\n")[0], oldHidden: old.every(function (k) { return p[k].visibleWhen({}) === false && p[k].visibleWhen(Object.assign({}, { [k]: "color: red;" })) === true; }) };
+        })`);
+        for (const c of info) {
+            assert.strictEqual(c.label, 'Custom CSS', c.id);
+            assert.strictEqual(c.saved, '', c.id + ': nothing is saved by default (no copy of the library\'s CSS in every component)');
+            assert.ok(c.lines > 20, c.id + ': its own CSS is there: ' + c.lines + ' lines');
+            assert.ok(/^\/\* .* - its own CSS/.test(c.head), c.id + ': ' + c.head);
+            assert.ok(c.oldHidden, c.id + ': the per-part / per-state fields show only when they hold text');
+        }
+        // what Load CSS gives is valid CSS, and the Button's own rule is in it
+        const btn = await js(`(function () { var t = NEXA.getComponent("${P}button").nexa.props.css.defaultCss(), sh = new CSSStyleSheet(); sh.replaceSync(t); return { rules: sh.cssRules.length, hasBtn: /\\.btn \\{/.test(t) }; })()`);
+        assert.ok(btn.rules > 10 && btn.hasBtn, JSON.stringify(btn));
+        // the text saved in the field is applied AFTER the library's styles: the same selector wins
+        const radius = (name) => js(`getComputedStyle(${q(name, '.btn')}).borderRadius`);
+        await mount('css-0', 'button', {}, { width: 200, height: 48 });
+        await mount('css-1', 'button', { css: '.btn { border-radius: 20px; }' }, { width: 200, height: 48 });
+        await mount('css-2', 'button', { css: '.btn { border-radius: 20px; }', cssControl: 'border-radius: 9px;' }, { width: 200, height: 48 });
+        assert.strictEqual(await radius('css-0'), '4px', 'no Custom CSS: the library\'s');
+        assert.strictEqual(await radius('css-1'), '20px', 'the same selector as the library\'s: the Custom CSS wins');
+        assert.strictEqual(await radius('css-2'), '9px', 'a saved cssControl (an older field) still applies, after it');
+        // Load CSS, saved untouched, changes nothing
+        const text = await js(`NEXA.getComponent("${P}button").nexa.props.css.defaultCss()`);
+        await mount('css-3', 'button', { css: text }, { width: 200, height: 48 });
+        assert.strictEqual(await radius('css-3'), '4px', 'the loaded CSS as it is: the same look');
+        // the text changes live
+        await js(`NexaTest.setProps("css-3", { css: ${JSON.stringify(text + '\n.btn { border-radius: 12px; }')} })`); await settle();
+        assert.strictEqual(await radius('css-3'), '12px', 'an edit applies at once');
+        await js(`NexaTest.setProps("css-3", { css: "" })`); await settle();
+        assert.strictEqual(await radius('css-3'), '4px', 'Reset CSS (empty): back to the component\'s own');
+    });
+
     await ok('Button: a click fires On Click and writes its value; its palette is the theme\'s, light and dark', async () => {
         await mount('b', 'button', { text: 'Start', outputValue: TAG, clickValue: '1', variant: 'subtle' }, { width: 120, height: 40 });
         const bg = () => js(`getComputedStyle(${q('b', 'button')}).backgroundColor`);
