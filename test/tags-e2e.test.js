@@ -300,7 +300,20 @@ const portFree = (port) => new Promise((resolve) => { const t = net.createServer
             edge.edge.publish('spBv1.0/G/DDEATH/E1/D1', sp.encodePayload({ timestamp: Date.now(), seq: 99, metrics: [] }));
             await wait(800);
             const dead = await read('p3', 'field');
-            check('device death: a field shows ??? (not its stale value)', dead === '' || dead === '???' || /\?\?\?/.test(await js(`${R('p3')}.textContent`)), dead);
+            check('device death: a field shows nothing (not its stale value, not "???")', dead === '', dead);
+            // no component on the page shows the text "???" anywhere: its text, an input's value or placeholder (screen and Tabs panel)
+            const qmarks = await js(`(function () {
+                var out = [];
+                document.querySelectorAll('[data-id]').forEach(function (h) {
+                    var el = h.firstElementChild, r = el && el.renderRoot;
+                    if (!r) return;
+                    var txt = (r.textContent || '');
+                    r.querySelectorAll('input, textarea').forEach(function (i) { txt += ' ' + (i.value || '') + ' ' + (i.placeholder || ''); });
+                    if (txt.indexOf('???') !== -1) out.push(h.getAttribute('data-id'));
+                });
+                return out;
+            })()`);
+            check('device death: no component shows "???" (a tag without a value is null)', qmarks.length === 0, qmarks);
             const crDead = await js('window.__codeReads || null');
             check('device death: code reads null (not "???", not its stale value)', crDead && crDead.lit === null && crDead.dyn === null, crDead);
             for (const P of ['p', 's']) {

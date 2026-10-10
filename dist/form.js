@@ -546,7 +546,7 @@ export const select = defineUI({
             const box = html`<div ${spread(api.getRootProps())} style="flex:1 1 auto;min-height:0;display:flex;flex-direction:column">
                 <div ${spread(api.getControlProps())} class="box ${this.vs.unknown ? "unknown" : ""}" part="box" aria-disabled="${p.disabled ? "true" : "false"}">
                     <button ${spread(api.getTriggerProps())} class="trigger" part="control">
-                        <span class="val ${text ? "" : "placeholder"}">${text || (this.vs.unknown ? "???" : p.placeholder)}</span>
+                        <span class="val ${text ? "" : "placeholder"}">${text || p.placeholder}</span>
                         <span class="chev">${icon("chevron-down")}</span>
                     </button>
                     ${p.clearable && api.hasSelectedItems && !p.disabled ? html`<button ${spread(api.getClearTriggerProps())} class="tool" title="Clear">${icon("x")}</button>` : nothing}
@@ -606,7 +606,7 @@ export const combobox = defineUI({
             const api = this.cb.api, p = this.p;
             const box = html`<div ${spread(api.getRootProps())} style="flex:1 1 auto;min-height:0;display:flex;flex-direction:column">
                 <div ${spread(api.getControlProps())} class="box" part="box" aria-disabled="${p.disabled ? "true" : "false"}">
-                    <input ${spread(api.getInputProps())} part="control" placeholder="${this.vs.unknown ? "???" : (p.placeholder || "")}"
+                    <input ${spread(api.getInputProps())} part="control" placeholder="${p.placeholder || ""}"
                         @keydown="${(e) => { if (e.key === "Enter" && p.allowCustomValue && !api.highlightedValue) { this.stopTyping(); this.vs.set(e.target.value); } }}"
                         @blur="${() => { if (!p.allowCustomValue) this.stopTyping(); }}" />
                     <button ${spread(api.getTriggerProps())} class="tool chev">${icon("chevron-down")}</button>
@@ -675,7 +675,7 @@ export const slider = defineUI({
         render() {
             const api = this.sl.api, p = this.p;
             const v = api.value[0];
-            const shown = this.vs.unknown && this.dragging === undefined ? "???" : (num(p.decimals, -1) >= 0 ? this.format(v, { decimals: num(p.decimals, 0) }) : String(v)) + (p.unit ? " " + p.unit : "");
+            const shown = this.vs.unknown && this.dragging === undefined ? "" : (num(p.decimals, -1) >= 0 ? this.format(v, { decimals: num(p.decimals, 0) }) : String(v)) + (p.unit ? " " + p.unit : "");
             const marks = (Array.isArray(p.marks) ? p.marks : []).map(Number).filter((m) => isFinite(m));
             const label = p.label ? html`<div class="top"><span class="label" part="label">${p.label}${p.required ? html`<span class="req">*</span>` : nothing}</span></div>` : nothing;
             const err = p.invalid && p.errorText ? p.errorText : "";
@@ -864,7 +864,7 @@ export const rating = defineUI({
                             ${st.half ? html`<span class="half">${starIcon("currentColor")}</span>` : nothing}
                         </span>`;
                     })}
-                    ${p.showValue ? html`<span class="rating-out num">${this.vs.unknown ? "???" : api.value}</span>` : nothing}
+                    ${p.showValue ? html`<span class="rating-out num">${this.vs.unknown ? "" : api.value}</span>` : nothing}
                 </div>
                 <input ${spread(api.getHiddenInputProps())} />
             </div>`);

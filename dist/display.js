@@ -299,7 +299,7 @@ export const stat = defineUI({
             const unknown = st.bound && (raw === null || raw === undefined);
             const n = typeof raw === "number" ? raw : parseFloat(raw);
             const d = num(p.decimals, -1);
-            const shown = unknown ? "???" : isFinite(n) && String(raw).trim() !== "" ? (d >= 0 ? this.format(n, { decimals: d }) : String(raw)) : String(raw === null || raw === undefined ? "" : raw);
+            const shown = unknown ? "" : isFinite(n) && String(raw).trim() !== "" ? (d >= 0 ? this.format(n, { decimals: d }) : String(raw)) : String(raw === null || raw === undefined ? "" : raw);
             const ch = String(p.change === null || p.change === undefined ? "" : p.change).trim() === "" ? NaN : parseFloat(p.change);
             const up = ch > 0, good = isFinite(ch) && ch !== 0 && (up === (p.upIsGood !== false));
             const align = p.align === "center" ? "center" : p.align === "right" ? "flex-end" : "flex-start";
@@ -421,7 +421,7 @@ export const progress = defineUI({
             const min = num(p.min, 0), max = num(p.max, 100), v = num(raw, min);
             const pct = max > min ? Math.max(0, Math.min(100, ((v - min) / (max - min)) * 100)) : 0;
             const ind = !!p.indeterminate;
-            const out = unknown ? "???" : p.valueText === "value" ? String(v) : Math.round(pct) + "%";
+            const out = unknown ? "" : p.valueText === "value" ? String(v) : Math.round(pct) + "%";
             const aria = { role: "progressbar", min, max, now: ind || unknown ? nothing : v };
             if (p.shape === "circle") {
                 const t = Math.max(1, num(p.thickness, 8)), r = 50 - t / 2, c = 2 * Math.PI * r;

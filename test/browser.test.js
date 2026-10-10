@@ -222,7 +222,7 @@ withHarness({
 
     await ok('Stat: the value from a tag, formatted, its unit; the change up (good: green) / down', async () => {
         await mount('st', 'stat', { inputValue: TAG, decimals: 1, change: '-3.2', upIsGood: true }, { width: 220, height: 96 });
-        assert.strictEqual(await js(`${q('st', '.val')}.textContent.trim()`), '???', 'the tag has no value yet');
+        assert.strictEqual(await js(`${q('st', '.val')}.textContent.trim()`), '', 'the tag has no value yet: nothing shows (never "???")');
         await js('NexaTest.setTag("st", "1234.56")'); await settle();
         assert.deepStrictEqual(await js(`[${q('st', '.val')}.textContent.trim(), ${q('st', '.unit')}.textContent, ${q('st', '.chg')}.className, ${q('st', '.chg')}.textContent.trim()]`),
             ['1234.6', 'pcs/h', 'chg bad', '3.2%']);
@@ -911,7 +911,7 @@ withHarness({
         assert.deepStrictEqual(Object.keys(p).filter((k) => /^(label|unit|lineColor|inputData|inputPoint|maxPoints)$/.test(k)), []);
         const s = p.series[0];
         assert.deepStrictEqual([s.id, s.name, s.unit, s.color, s.fill, s.maxPoints], ['s1', 'Old', 'kW', '#ff0000', 'none', 500]);
-        assert.deepStrictEqual(s.live, { $bind: [{ src: 'sparkplug', ref: 'G::E::D::P' }] }, 'its point binding is its live value');
+        assert.deepStrictEqual(s.live, { $bind: [{ src: 'shared', ref: 'sparkplug::G::E::D::P' }] }, 'its point binding is its live value (a tag = its shared variable)');
         assert.ok(!('data' in s) && !('point' in s));
         await mount('lc-v2', 'line-chart', { __v: 2, series: [{ id: 's1', name: 'X', data: { $bind: [{ src: 'msg', ref: 'payload' }] } }], tooltipMode: 'nearest' }, { width: 400, height: 200 });
         const p2 = JSON.parse(await js(`JSON.stringify(NEXA.getComponent("${P}line-chart").migrateProps(NexaTest.item("lc-v2").raw))`));
