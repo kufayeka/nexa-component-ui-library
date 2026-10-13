@@ -5,7 +5,7 @@
 // from its own Update node; a series' actions (Append / Replace / Clear / Hide); series events
 // (Threshold Crossed, Stale, Resume) driving Logic; the chart's actions (Show a range, Follow live,
 // annotations) and its Range Change event; the exports (CSV / Excel / PNG) from Update nodes — the
-// node's JSON parameters with a trigger's payload ({}, a timestamp), a payload object over them —
+// node's JSON parameters with a trigger's payload ({}, a timestamp), or its parameters bound to Message -> payload —
 // the files captured and read. No page errors.
 //   node test/chart-e2e.test.js      (needs Chrome, the dashboard built, ports 1899 / 1898 / 1893 free)
 const path = require('path');
@@ -64,10 +64,10 @@ const nodes = [
     inj('iA', 2500, 'num', '5'), { id: 'uA', type: 'ui-update', compId: 'C1', item: item('s2'), config: {} },
     inj('iB', 2500, 'num', '7'), { id: 'uB', type: 'ui-update', compId: 'C1', item: item('s3'), config: {} },
     // a series' actions: append an API's array, then replace it
-    inj('iApp', 2600, 'json', '[{"x":1000,"y":3},{"x":2000,"y":4}]'), { id: 'uApp', type: 'ui-update', compId: 'C1', item: item('s4'), action: 'appendPoints', config: {} },
-    inj('iRep', 3400, 'json', '[{"x":1000,"y":10},{"x":3000,"y":11}]'), { id: 'uRep', type: 'ui-update', compId: 'C1', item: item('s4'), action: 'replacePoints', config: {} },
+    inj('iApp', 2600, 'json', '[{"x":1000,"y":3},{"x":2000,"y":4}]'), { id: 'uApp', type: 'ui-update', compId: 'C1', item: item('s4'), action: 'appendPoints', actionParams: MSG, config: {} },
+    inj('iRep', 3400, 'json', '[{"x":1000,"y":10},{"x":3000,"y":11}]'), { id: 'uRep', type: 'ui-update', compId: 'C1', item: item('s4'), action: 'replacePoints', actionParams: MSG, config: {} },
     // an annotation (Logic)
-    inj('iAnn', 3600, 'json', '{"time":2000,"label":"Batch 1","description":"B-104"}'), { id: 'uAnn', type: 'ui-update', compId: 'C1', action: 'addAnnotation', config: {} },
+    inj('iAnn', 3600, 'json', '{"time":2000,"label":"Batch 1","description":"B-104"}'), { id: 'uAnn', type: 'ui-update', compId: 'C1', action: 'addAnnotation', actionParams: MSG, config: {} },
     // series events -> Logic
     { id: 'eX', type: 'ui-event', compId: 'C1', item: item('s1'), event: 'thresholdCross' }, Object.assign({ id: 'uX' }, sinkOf('pEV', 'payload.direction')),
     { id: 'eS', type: 'ui-event', compId: 'C1', item: item('s1'), event: 'stale' }, Object.assign({ id: 'uS' }, sinkOf('pStale', 'event')),
@@ -75,20 +75,20 @@ const nodes = [
     // the exports: {} / a timestamp (triggers) keep the node's parameters; a payload object wins
     inj('iX1', 6000, 'json', '{}'), { id: 'uX1', type: 'ui-update', compId: 'C1', action: 'exportData', actionParams: { format: 'xlsx', range: 'all' }, config: {} },
     inj('iX2', 6400, 'date', ''), { id: 'uX2', type: 'ui-update', compId: 'C1', action: 'exportPNG', actionParams: { range: 'visible' }, config: {} },
-    inj('iX3', 6800, 'json', '{"format":"csv","range":"all"}'), { id: 'uX3', type: 'ui-update', compId: 'C1', action: 'exportData', actionParams: { format: 'xlsx' }, config: {} },
+    inj('iX3', 6800, 'json', '{"format":"csv","range":"all"}'), { id: 'uX3', type: 'ui-update', compId: 'C1', action: 'exportData', actionParams: MSG, config: {} },
     // the chart's range (Logic) -> its Range Change event -> Logic; then what is shown, exported
-    inj('iRg', 7400, 'json', '{"from":500,"to":3500}'), { id: 'uRg', type: 'ui-update', compId: 'C1', action: 'setRange', config: {} },
+    inj('iRg', 7400, 'json', '{"from":500,"to":3500}'), { id: 'uRg', type: 'ui-update', compId: 'C1', action: 'setRange', actionParams: MSG, config: {} },
     { id: 'eRg', type: 'ui-event', compId: 'C1', event: 'rangeChange' }, Object.assign({ id: 'uRc' }, sinkOf('pRange', 'payload.cause')),
     inj('iX4', 8000, 'date', ''), { id: 'uX4', type: 'ui-update', compId: 'C1', action: 'exportData', actionParams: { format: 'csv' }, config: {} },
     inj('iLive', 8600, 'date', ''), { id: 'uLive', type: 'ui-update', compId: 'C1', action: 'followLive', config: {} },
     // a series hidden: never exported
     inj('iHide', 9000, 'date', ''), { id: 'uHide', type: 'ui-update', compId: 'C1', item: item('s3'), action: 'hide', config: {} },
-    inj('iX5', 9400, 'json', '{"format":"csv","range":"all"}'), { id: 'uX5', type: 'ui-update', compId: 'C1', action: 'exportData', config: {} },
+    inj('iX5', 9400, 'json', '{"format":"csv","range":"all"}'), { id: 'uX5', type: 'ui-update', compId: 'C1', action: 'exportData', actionParams: MSG, config: {} },
     inj('iClr', 9800, 'date', ''), { id: 'uClr', type: 'ui-update', compId: 'C1', item: item('s2'), action: 'clear', config: {} },
     // the State Timeline: a row's history from an Update node; a row's State Change -> Logic; its export
-    inj('iSt', 2500, 'json', '[{"start":1000,"end":4000,"state":1},{"start":4000,"end":5000,"state":0,"note":"jam"}]'), { id: 'uSt', type: 'ui-update', compId: 'C2', item: row('r2'), action: 'setStates', config: {} },
+    inj('iSt', 2500, 'json', '[{"start":1000,"end":4000,"state":1},{"start":4000,"end":5000,"state":0,"note":"jam"}]'), { id: 'uSt', type: 'ui-update', compId: 'C2', item: row('r2'), action: 'setStates', actionParams: MSG, config: {} },
     { id: 'eSt', type: 'ui-event', compId: 'C2', item: row('r1'), event: 'stateChange' }, Object.assign({ id: 'uSc' }, sinkOf('pState', 'payload.label')),
-    inj('iX6', 10400, 'json', '{"format":"csv","range":"all"}'), { id: 'uX6', type: 'ui-update', compId: 'C2', action: 'exportData', config: {} }
+    inj('iX6', 10400, 'json', '{"format":"csv","range":"all"}'), { id: 'uX6', type: 'ui-update', compId: 'C2', action: 'exportData', actionParams: MSG, config: {} }
 ];
 const w = (a, b) => ({ id: 'w-' + a + '-' + b, from: a, to: b });
 const wires = [w('iA', 'uA'), w('iB', 'uB'), w('iApp', 'uApp'), w('iRep', 'uRep'), w('iAnn', 'uAnn'), w('eX', 'uX'), w('eS', 'uS'), w('eR', 'uR'),
@@ -191,7 +191,7 @@ const portFree = (port) => new Promise((resolve) => { const t = net.createServer
             check('... everything it holds: Batch 10 and 11, the annotation "Batch 1 · B-104"', x1 && /<v>10<\/v>/.test(x1.text) && /<v>11<\/v>/.test(x1.text) && /Batch 1 · B-104/.test(x1.text), null);
             check('... Temp 60 past the upper limit: coloured', x1 && /<c r="B\d+" s="3"><v>60<\/v>/.test(x1.text), null);
             check('Export PNG with an inject timestamp: the node’s parameters (a .png)', x2 && /\.png$/.test(x2.name) && x2.size > 1000, x2 && { name: x2.name, size: x2.size });
-            check('Export with a payload object: its keys win (csv over the node’s xlsx)', x3 && /\.csv$/.test(x3.name) && /"Annotation"/.test(x3.text || ''), x3 && { name: x3.name, head: (x3.text || '').slice(0, 80) });
+            check('Export with its parameters bound to Message -> payload: the message’s format (csv)', x3 && /\.csv$/.test(x3.name) && /"Annotation"/.test(x3.text || ''), x3 && { name: x3.name, head: (x3.text || '').slice(0, 80) });
             // 7. Show a range (Logic) -> On Range Change (cause "action") -> Logic; what is shown, exported
             check('Show a time range -> On Range Change -> Logic: "action"', (await until(() => label('pRange'), (v) => v === 'action', 4000)) === 'action', await label('pRange'));
             const d4 = await until(downloads, (v) => v.filter((x) => x.ready).length >= 4, 4000);

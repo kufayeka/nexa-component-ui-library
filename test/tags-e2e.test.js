@@ -102,9 +102,9 @@ const LOGIC = { nodes: [
     { id: 'u1', type: 'ui-update', compId: 'pLC2', item: { list: 'series', id: 's1' }, config: {} },
     { id: 'u2', type: 'ui-update', compId: 'pLC2', item: { list: 'series', id: 's2' }, config: {} },
     { id: 'i4', type: 'inject', once: true, onceDelay: 4500, intervalMs: 0, payloadType: 'json', payload: '[{"x":1,"y":1},{"x":2,"y":2}]' },
-    { id: 'u4', type: 'ui-update', compId: 'pLC2', item: { list: 'series', id: 's3' }, action: 'replacePoints', config: {} },
+    { id: 'u4', type: 'ui-update', compId: 'pLC2', item: { list: 'series', id: 's3' }, action: 'replacePoints', actionParams: { $bind: [{ src: 'msg', ref: 'payload' }] }, config: {} },
     { id: 'i5', type: 'inject', once: true, onceDelay: 2500, intervalMs: 0, payloadType: 'json', payload: '[{"x":1000,"y":3},{"x":2000,"y":4},{"x":3000,"y":5}]' },
-    { id: 'u5', type: 'ui-update', compId: 'pLC3', item: { list: 'series', id: 's1' }, action: 'appendPoints', config: {} },
+    { id: 'u5', type: 'ui-update', compId: 'pLC3', item: { list: 'series', id: 's1' }, action: 'appendPoints', actionParams: { $bind: [{ src: 'msg', ref: 'payload' }] }, config: {} },
     { id: 'e1', type: 'ui-event', compId: 'pLC2', item: { list: 'series', id: 's1' }, event: 'thresholdCross' },
     { id: 'u3', type: 'ui-update', compId: 'pEV', config: { label: { $bind: [{ src: 'msg', ref: 'payload.direction' }], static: '?' } } },
     // code: vars.<kind>.get / set, a tag as the shared variable "sparkplug::..."
