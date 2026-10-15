@@ -1,0 +1,86 @@
+NEXA END-USER LICENSE AGREEMENT
+
+Copyright (c) 2026 [LICENSOR LEGAL NAME] ("kufayeka"). All rights reserved.
+
+DRAFT - a technical draft, not legal advice. Have a lawyer review it before it is relied on, and fill in the three
+[bracketed] places (the licensor's legal name, a contact address, the governing law).
+
+This agreement covers Nexa: the Nexa Dashboard (@kufayeka/node-red-nexa-dashboard) and the plugins that come with it
+(@kufayeka/nexa-component-ui-library, @kufayeka/nexa-component-svg, @kufayeka/nexa-component-basic-shapes), in the
+compiled form in which they are distributed (the "Software"). By installing or using the Software you accept these terms.
+If you do not accept them, do not install or use it.
+
+1. WHAT YOU MAY DO
+
+   The Software is free of charge. The licensor grants you a personal, non-exclusive, non-transferable, revocable license to:
+
+   a. install the Software on computers you control, and run it inside Node-RED, for any purpose, including commercial
+      use: you may build, run and sell applications, dashboards and screens made WITH the Software;
+   b. make the copies of the installer that you need to install it on your own computers (a backup, a second machine of yours);
+   c. write your own plugins for it (components, Logic nodes) with the plugin interface (sdk/nexa-component-sdk.js, "the
+      SDK facade"), and use, license and distribute those plugins as you wish (see 3).
+
+2. WHAT YOU MAY NOT DO
+
+   You may not, and may not let anybody else:
+
+   a. copy, publish, sell, rent, lease, lend, sub-license or otherwise distribute the Software, or any part of it, to anyone
+      who is not you (this includes putting it on a public or shared repository, a file-sharing site or a package registry);
+   b. modify the Software, fork it, or make works derived from it, except plugins as described in 3;
+   c. reverse engineer, decompile, disassemble, de-obfuscate or otherwise try to recover the source code of the Software, or
+      remove or work around the obfuscation, any license check or any other protection in it, except where the law of your
+      country gives you that right and does not allow the agreement to take it away;
+   d. remove or change any copyright, license or proprietary notice in the Software;
+   e. use the Software, or what you learn from taking it apart, to make or help make a product that competes with it;
+   f. use the Software in a way that breaks the law, or in a way that harms others.
+
+3. YOUR PLUGINS
+
+   A plugin you write is yours. You may keep it private, give it away or sell it. A plugin may call the interface of the SDK
+   facade, and may be installed next to the Software. A plugin must not contain, copy or re-publish any part of the Software
+   other than the SDK facade file itself, unchanged.
+
+4. YOUR WORK
+
+   The projects, screens, flows, data and plugins you make are yours. The licensor claims no ownership of them and does not
+   receive them. The Software runs on your computers and does not send them anywhere unless you set it up to.
+
+5. DOCUMENTATION AND SUPPORT
+
+   Documentation, support, updates and new versions are not part of this agreement, and are provided only if and as the
+   licensor says in writing. The licensor may change, stop or charge for any of them.
+
+6. OWNERSHIP
+
+   The Software is licensed, not sold. The licensor and its suppliers keep all rights, title and interest in it, including all
+   intellectual property rights. Nothing here gives you a right that this agreement does not name.
+
+7. THIRD-PARTY SOFTWARE
+
+   The Software contains open-source components, each under its own license. Their notices and license texts are in
+   THIRD-PARTY-NOTICES.txt (in the Nexa Dashboard package, and at the top of the installer). Those licenses apply to those components only; nothing here restricts the rights they give you.
+
+8. NO WARRANTY
+
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING THE WARRANTIES OF
+   MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT. YOU USE IT AT YOUR OWN RISK. THE SOFTWARE IS NOT
+   MADE FOR, AND MUST NOT BE THE ONLY SAFEGUARD OF, ANY SITUATION WHERE A FAILURE COULD HURT PEOPLE OR CAUSE SERIOUS DAMAGE
+   (SAFETY SYSTEMS, EMERGENCY STOPS, LIFE-CRITICAL CONTROL).
+
+9. LIMIT OF LIABILITY
+
+   TO THE FULLEST EXTENT THE LAW ALLOWS, THE LICENSOR IS NOT LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL OR
+   PUNITIVE DAMAGES, OR FOR LOST PROFIT, LOST DATA OR LOST PRODUCTION, ARISING FROM THE SOFTWARE OR ITS USE, EVEN IF TOLD OF
+   THE POSSIBILITY. THE LICENSOR'S TOTAL LIABILITY FOR ANY CLAIM IS LIMITED TO THE AMOUNT YOU PAID FOR THE SOFTWARE (WHICH,
+   WHILE IT IS FREE OF CHARGE, IS ZERO).
+
+10. TERMINATION
+
+    This agreement ends by itself if you break it. Then you must stop using the Software and delete all copies of it. Sections
+    2, 6, 8, 9 and 11 stay in force. The licensor may also end the license, with notice, for the Software as a whole.
+
+11. GENERAL
+
+    This agreement is the whole agreement about the Software. If a part of it is not valid, the rest stays. A right not used is
+    not given up. It is governed by the law of [GOVERNING LAW / JURISDICTION], and the courts of [JURISDICTION] decide what it
+    cannot settle between us. Questions about this license: [CONTACT EMAIL].

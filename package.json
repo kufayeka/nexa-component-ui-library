@@ -1,6 +1,7 @@
 {
   "name": "@kufayeka/nexa-component-ui-library",
   "version": "0.1.0",
+  "license": "SEE LICENSE IN LICENSE",
   "description": "Nexa UI: a themed component library for Nexa Dashboard (form controls, display and feedback), built on the Nexa component SDK — design tokens, light / dark, every property bindable, responsive and themeable.",
   "main": "widgets/ui-library-plugin.js",
   "scripts": {
