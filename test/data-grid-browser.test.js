@@ -52,6 +52,13 @@ withHarness({
         await settle(); await wait(40);
     };
     const typeText = async (s) => { for (const ch of s) { await send('Input.dispatchKeyEvent', { type: 'keyDown', text: ch, key: ch }); await send('Input.dispatchKeyEvent', { type: 'keyUp', key: ch }); } await settle(); };
+    // a letter key with a modifier (2 = Ctrl, 8 = Shift): Ctrl+Z, Ctrl+Y
+    const press2 = async (letter, mods) => {
+        const code = letter.toUpperCase().charCodeAt(0);
+        await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: letter, code: 'Key' + letter.toUpperCase(), windowsVirtualKeyCode: code, modifiers: mods || 0 });
+        await send('Input.dispatchKeyEvent', { type: 'keyUp', key: letter, code: 'Key' + letter.toUpperCase(), windowsVirtualKeyCode: code });
+        await settle(); await wait(60);
+    };
     const heads = (n) => js(qa(n, '.head[data-hc]') + '.map(function (e) { return e.textContent; })');
     const rowHeads = (n) => js(qa(n, '.head[data-hr]') + '.map(function (e) { return e.textContent; })');
 
@@ -115,7 +122,7 @@ withHarness({
         });
         const s = (r, c) => js(`(function () { var e = ${cell('st', r, c)}; var s = getComputedStyle(e); return { w: s.fontWeight, i: s.fontStyle, u: s.textDecorationLine, size: s.fontSize, color: s.color, bg: s.backgroundColor, jc: s.justifyContent, ai: s.alignItems, ws: s.whiteSpace }; })()`);
         const a = await s(0, 0), b = await s(1, 1);
-        assert.deepStrictEqual([a.w, a.i, a.u, a.size, a.color, a.bg, a.jc, a.ai, a.ws], ['700', 'italic', 'underline', '20px', 'rgb(255, 0, 0)', 'rgb(0, 255, 0)', 'center', 'flex-end', 'normal']);
+        assert.deepStrictEqual([a.w, a.i, a.u, a.size, a.color, a.bg, a.jc, a.ai, a.ws], ['700', 'italic', 'underline', '20px', 'rgb(255, 0, 0)', 'rgb(0, 255, 0)', 'center', 'safe flex-end', 'normal']);
         assert.strictEqual(b.w, '400', 'the later rule: not bold');
         assert.strictEqual(b.color, 'rgb(0, 0, 255)');
         assert.strictEqual(b.i, 'italic', 'what the later rule does not say stays');
@@ -409,6 +416,139 @@ withHarness({
         await clickAt(btn('One box over the selected cells'));
         await foot('Cancel');
         assert.deepStrictEqual(await sets(), {}, 'Cancel changes nothing');
+    });
+
+    // ---- sizes: rules, dragging, limits, fit to the wrapped text, a text area to type in ------------------------------------------------------------
+    const size = (n, r, c) => js(`(function () { var e = ${cell(n, r, c)}; return { w: e.offsetWidth, h: e.offsetHeight }; })()`);
+    const dragLine = async (n, kind, index, delta) => {
+        const h = q(n, `[data-rz="${kind}"][data-i="${index}"]`);
+        const p = await js(`(function () { var e = ${h}; var host = e.getRootNode().host; if (host) host.scrollIntoView({ block: "center" }); var b = e.getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2 }; })()`);
+        await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: p.x, y: p.y });
+        await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: p.x, y: p.y, button: 'left', buttons: 1, clickCount: 1 });
+        await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: p.x + (kind === 'c' ? delta : 0), y: p.y + (kind === 'r' ? delta : 0), buttons: 1 });
+        await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: p.x + (kind === 'c' ? delta : 0), y: p.y + (kind === 'r' ? delta : 0), button: 'left', buttons: 0, clickCount: 1 });
+        await settle(); await wait(80);
+    };
+
+    await ok('sizes by rules: a width, a height, the smallest and largest, per range; the grid\'s own sizes for the rest', async () => {
+        await mount('sz', { colWidth: 100, rowHeight: 30, colRules: [{ columns: 'B', width: 200 }, { columns: 'C', width: 5000, maxWidth: 260 }, { columns: 'D', width: 1 }], rowRules: [{ rows: '2', height: 60 }, { rows: '3', height: 1000 }] });
+        assert.deepStrictEqual(await size('sz', 0, 0), { w: 100, h: 30 }, 'the grid\'s sizes');
+        assert.strictEqual((await size('sz', 0, 1)).w, 200);
+        assert.strictEqual((await size('sz', 0, 2)).w, 260, 'a width kept at the column\'s own largest');
+        assert.strictEqual((await size('sz', 0, 3)).w, 30, 'and at the grid\'s smallest');
+        assert.strictEqual((await size('sz', 1, 0)).h, 60);
+        assert.strictEqual((await size('sz', 2, 0)).h, 400, 'a height kept at the grid\'s largest');
+    });
+
+    await ok('dragging the line between two letters changes the width within its limits, tells Logic, and stays until the page is reloaded; double-click fits the content', async () => {
+        await mount('dr', { cells: { B1: 'a rather long text in column B' }, colRules: [{ columns: 'C', maxWidth: 140 }, { columns: 'D', adjustable: false }, { columns: 'A', minWidth: 80 }] });
+        await dragLine('dr', 'c', 1, 50);
+        assert.strictEqual((await size('dr', 0, 1)).w, 160, 'dragged 50 px wider');
+        const e = await events('dr', 'columnResize');
+        assert.deepStrictEqual([e[0].columns, e[0].width], [['B'], 160]);
+        await dragLine('dr', 'c', 2, 300);
+        assert.strictEqual((await size('dr', 0, 2)).w, 140, 'kept at the column\'s largest');
+        await dragLine('dr', 'c', 0, -90);
+        assert.strictEqual((await size('dr', 0, 0)).w, 80, 'kept at the column\'s smallest');
+        assert.strictEqual(await js(q('dr', '[data-rz="c"][data-i="3"]') + ' ? 1 : 0'), 0, 'a column that cannot be adjusted has no handle');
+        // double-click: the width of the widest text
+        await js(`(function () { var h = ${q('dr', '[data-rz="c"][data-i="1"]')}; h.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, composed: true })); })()`); await settle(); await wait(100);
+        const fitted = (await size('dr', 0, 1)).w;
+        assert.ok(fitted > 160 && fitted <= 600, 'fitted to the text: ' + fitted);
+        // the grid can say no for all, a rule can say yes for one
+        await js('NexaTest.setProps("dr", { adjustCols: false, colRules: [{ columns: "B", adjustable: true }] })'); await settle(); await wait(60);
+        assert.strictEqual(await js(q('dr', '[data-rz="c"][data-i="0"]') + ' ? 1 : 0'), 0, 'adjustCols off: no handle');
+        assert.strictEqual(await js(q('dr', '[data-rz="c"][data-i="1"]') + ' ? 1 : 0'), 1, 'a rule that says yes');
+    });
+
+    await ok('dragging the line between two numbers changes the height; a row rule can forbid it; a selection of whole columns is resized together', async () => {
+        await mount('dr2', { rows: 20, cols: 6, rowRules: [{ rows: '3', adjustable: false }], rowHeight: 30 });
+        await dragLine('dr2', 'r', 0, 25);
+        assert.strictEqual((await size('dr2', 0, 0)).h, 55);
+        assert.deepStrictEqual((await events('dr2', 'rowResize'))[0], { rows: [1], height: 55 });
+        assert.strictEqual(await js(q('dr2', '[data-rz="r"][data-i="2"]') + ' ? 1 : 0'), 0, 'row 3 cannot be adjusted');
+        // whole columns B:C selected, B dragged: both follow
+        await clickAt(q('dr2', '[data-hc="1"]'));
+        await js(`${q('dr2', '.grid')}.focus()`); await press('ArrowRight', 8);
+        await dragLine('dr2', 'c', 1, 30);
+        assert.strictEqual((await size('dr2', 0, 1)).w, (await size('dr2', 0, 2)).w, 'the selected columns are the same width');
+        assert.strictEqual((await size('dr2', 0, 1)).w, 140);
+        assert.strictEqual((await size('dr2', 0, 3)).w, 110, 'the others are not touched');
+    });
+
+    await ok('read-only pages can still be resized by the user (it is the view); the design canvas cannot', async () => {
+        await mount('dr3', { mode: 'readonly' });
+        assert.strictEqual(await js(q('dr3', '[data-rz="c"][data-i="0"]') + ' ? 1 : 0'), 1);
+        await js(`NexaTest.mount("dr4", "nexa-ui-${ID}", {}, { width: 500, height: 200, design: true })`); await settle(); await wait(60);
+        assert.strictEqual(await js(q('dr4', '[data-rz]') + ' ? 1 : 0'), 0, 'the design canvas takes the mouse for selecting and moving the component');
+    });
+
+    await ok('wrap text: the row grows to fit the text up to its largest, then the text scrolls in the cell; a row that does not fit its text keeps its height', async () => {
+        const text = 'word '.repeat(40);
+        await mount('wr', { cells: { A1: text, A2: text, A3: text, A4: text }, cellRules: [{ range: 'A1:A4', wrap: true }], rowRules: [{ rows: '2', maxHeight: 90 }, { rows: '3', fit: false }, { rows: '4', adjustable: false }] });
+        const h = async (r) => (await size('wr', r, 0)).h;
+        assert.ok((await h(0)) > 120 && (await h(0)) <= 400, 'row 1 grew to its text: ' + await h(0));
+        assert.strictEqual(await h(1), 90, 'row 2 stopped at its largest');
+        assert.ok(await js(`(function () { var e = ${cell('wr', 1, 0)}; return e.scrollHeight > e.clientHeight; })()`), 'and its text scrolls in the cell');
+        assert.strictEqual(await h(2), 28, 'row 3 does not fit its text');
+        assert.strictEqual(await h(3), 28, 'a row that cannot be adjusted keeps its height');
+        assert.ok(await js(`(function () { var e = ${cell('wr', 2, 0)}; return e.scrollHeight > e.clientHeight; })()`), 'its text scrolls in the cell');
+        await js('NexaTest.setProps("wr", { autoFit: false })'); await settle(); await wait(100);
+        assert.strictEqual(await h(0), 28, 'autoFit off: every row keeps its height');
+    });
+
+    await ok('typing in a wrapped cell: a text area (Enter is a new line, Ctrl+Enter commits), the row grows with the text', async () => {
+        await mount('wt', { mode: 'editable', cells: { A1: 'x' }, cellRules: [{ range: 'A1', wrap: true }] });
+        const h0 = (await size('wt', 0, 0)).h;
+        await clickAt(cell('wt', 0, 0), 2);
+        assert.strictEqual(await js(q('wt', 'textarea[data-edit]') + ' ? 1 : 0'), 1, 'a text area');
+        await typeText('long'); await press('Enter'); await typeText('line two'); await press('Enter'); await typeText('three');
+        assert.ok((await size('wt', 0, 0)).h > h0, 'the row grew while typing');
+        assert.strictEqual(await js(q('wt', 'textarea[data-edit]') + ' ? 1 : 0'), 1, 'Enter did not commit');
+        await press('Enter', 2);   // Ctrl+Enter
+        const ch = await events('wt', 'cellChange');
+        assert.strictEqual(ch[ch.length - 1].new, 'xlong\nline two\nthree');
+        assert.ok((await size('wt', 0, 0)).h > h0, 'and the row stays tall');
+        await mount('wt2', { mode: 'editable', cells: { A1: 'x' } });
+        await clickAt(cell('wt2', 0, 0), 2);
+        assert.strictEqual(await js(q('wt2', 'input[data-edit]') + ' ? 1 : 0'), 1, 'a cell without wrap is typed in an input');
+        await press('Escape');
+    });
+
+    await ok('the Edit grid dialog: a line dragged in the preview is a size rule; Ctrl+Z and Ctrl+Y undo and redo every change', async () => {
+        const dlg = (sel) => `document.querySelector("nexa-data-grid-editor ${sel}")`;
+        const prev = () => `${dlg('.dge-prev')}.firstElementChild.shadowRoot`;
+        await js(`window.__sets = []; NEXA.getComponent("nexa-ui-data-grid").nexa.props.editGrid.buttons[0].run({ cells: { A1: "x" } }, { set: function (k, v) { window.__sets.push([k, v]); } })`);
+        await settle(); await wait(300);
+        const handle = `${prev()}.querySelector('[data-rz="c"][data-i="1"]')`;
+        const p = await js(`(function () { var b = ${handle}.getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2 }; })()`);
+        await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: p.x, y: p.y });
+        await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: p.x, y: p.y, button: 'left', buttons: 1, clickCount: 1 });
+        await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: p.x + 40, y: p.y, buttons: 1 });
+        await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: p.x + 40, y: p.y, button: 'left', buttons: 0, clickCount: 1 });
+        await settle(); await wait(150);
+        assert.strictEqual(await js(`${prev()}.querySelector('[data-r="0"][data-c="1"]').offsetWidth`), 150, 'the preview shows the new width');
+        // a second change, then undo twice, redo once
+        await js(`document.querySelector("nexa-data-grid-editor")._setProp("rows", 50)`); await settle(); await wait(100);
+        const rowsOf = () => js(`document.querySelector("nexa-data-grid-editor")._draft.rows`);
+        const widthOf = () => js(`${prev()}.querySelector('[data-r="0"][data-c="1"]').offsetWidth`);
+        assert.strictEqual(await rowsOf(), 50);
+        await js(`${dlg('.dge-prev')}.firstElementChild.focus()`);
+        await press2('z', 2);
+        assert.strictEqual(await rowsOf(), 100, 'Ctrl+Z took the rows back');
+        assert.strictEqual(await widthOf(), 150, 'the width is still there');
+        await press2('z', 2);
+        assert.strictEqual(await widthOf(), 110, 'the second Ctrl+Z took the width back');
+        await press2('y', 2);
+        assert.strictEqual(await widthOf(), 150, 'Ctrl+Y brought it back');
+        await clickAt(`Array.from(document.querySelectorAll("nexa-data-grid-editor button")).filter(function (b) { return b.title === "Undo (Ctrl+Z)"; })[0]`);
+        assert.strictEqual(await widthOf(), 110, 'the Undo button too');
+        await clickAt(`Array.from(document.querySelectorAll("nexa-data-grid-editor button")).filter(function (b) { return b.title === "Redo (Ctrl+Y)"; })[0]`);
+        await clickAt(`Array.from(document.querySelectorAll(".nx-dialog-foot button")).filter(function (b) { return b.textContent.trim() === "Apply"; })[0]`);
+        await wait(120);
+        const s = Object.fromEntries(await js('window.__sets'));
+        assert.deepStrictEqual(Object.keys(s), ['colRules'], 'only the size rule: the rows went back to 100');
+        assert.deepStrictEqual(s.colRules, [{ columns: 'B', width: 150 }]);
     });
 
     await ok('the Edit grid row of the inspector says what the sheet has', async () => {

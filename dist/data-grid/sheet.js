@@ -93,7 +93,8 @@ export function styleCss(fields, type) {
     const align = f.align === "left" || f.align === "center" || f.align === "right" ? f.align : defaultAlign(type);
     css.push("justify-content:" + (align === "left" ? "flex-start" : align === "right" ? "flex-end" : "center"));
     css.push("text-align:" + align);
-    css.push("align-items:" + (f.valign === "top" ? "flex-start" : f.valign === "bottom" ? "flex-end" : "center"));
+    // "safe": a wrapped text taller than its cell starts at the top instead of being cut off above
+    css.push("align-items:" + (f.wrap === true ? "safe " : "") + (f.valign === "top" ? "flex-start" : f.valign === "bottom" ? "flex-end" : "center"));
     if (f.wrap === true) css.push("white-space:normal;line-height:1.25");
     return css.join(";");
 }

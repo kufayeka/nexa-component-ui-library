@@ -57,3 +57,24 @@ export const LOCK_SCHEMA = {
     range,
     locked: { type: "boolean", label: "Locked", default: true, help: "On: cannot be edited. Off: can be edited, also when an earlier rule locked it." }
 };
+
+const adjustable = { type: "enum", default: "", options: [{ value: "", label: "(the grid's)" }, { value: true, label: "yes" }, { value: false, label: "no" }], style: "select" };
+
+/** A size rule over columns. */
+export const COL_RULE_SCHEMA = {
+    columns: { type: "string", label: "Columns", default: "", bindable: false, placeholder: "B:C", help: "One column (B) or several (B:D)." },
+    width: { type: "number", label: "Width", default: "", min: 0, unit: "px" },
+    minWidth: { type: "number", label: "Smallest it can be dragged to", default: "", min: 0, unit: "px" },
+    maxWidth: { type: "number", label: "Largest it can be dragged to", default: "", min: 0, unit: "px" },
+    adjustable: Object.assign({ label: "The user can drag its width", help: "Empty: what the grid says (Columns can be dragged)." }, adjustable)
+};
+
+/** A size rule over rows. */
+export const ROW_RULE_SCHEMA = {
+    rows: { type: "string", label: "Rows", default: "", bindable: false, placeholder: "2:5", help: "One row (3) or several (2:5)." },
+    height: { type: "number", label: "Height", default: "", min: 0, unit: "px" },
+    minHeight: { type: "number", label: "Smallest it can be dragged to", default: "", min: 0, unit: "px" },
+    maxHeight: { type: "number", label: "Largest it can be dragged to, and grow to", default: "", min: 0, unit: "px", help: "Wrapped text makes a row grow up to this height; past it, the text scrolls in the cell." },
+    adjustable: Object.assign({ label: "The user can drag its height", help: "Empty: what the grid says (Rows can be dragged)." }, adjustable),
+    fit: Object.assign({ label: "Grows to fit wrapped text", help: "Empty: what the grid says. No: the height stays and long text scrolls in the cell." }, adjustable)
+};

@@ -16,7 +16,8 @@ import { normalizeFreeze, normalizeMerges, normalizeBorders, buildEdges, boxBord
 import { uniformAxis, sizesAxis, visibleRange, scrollToShow } from "./window.js";
 import { createStage, stageSet, stageValue, stageHas, stageCount, stageClear, stageDrop } from "./stage.js";
 import { noSelection, selectCell, extendTo, rangeOf, growToMerges, moveFocus, rangeToTsv } from "./selection.js";
-import { RULE_SCHEMA, POPULATE_SCHEMA, BORDER_SCHEMA, LOCK_SCHEMA } from "./fields.js";
+import { RULE_SCHEMA, POPULATE_SCHEMA, BORDER_SCHEMA, LOCK_SCHEMA, COL_RULE_SCHEMA, ROW_RULE_SCHEMA } from "./fields.js";
+import { parseColRules, parseRowRules, colSizes, rowSizes, rowSizeAt, clampSize } from "./sizes.js";
 import { openGridEditor, summaryOf } from "./editor.js";
 
 export const CATEGORY_DATA = "UI · Data";
@@ -56,6 +57,12 @@ const DATA_GRID_CSS = css`
     .num { font-family: var(--mono); font-variant-numeric: tabular-nums; letter-spacing: 0; }
     .head { justify-content: center; padding: 0; background: var(--bg-muted); color: var(--fg-muted); font-size: var(--fs-label); letter-spacing: 0.32px; border-color: var(--bd-strong); }
     .head.act { background: var(--bg-emph); color: var(--fg); font-weight: 600; }
+    .rz { position: absolute; z-index: 3; }
+    .rz-c { top: 0; right: 0; width: 6px; height: 100%; cursor: col-resize; }
+    .rz-r { left: 0; bottom: 0; height: 6px; width: 100%; cursor: row-resize; }
+    .rz:hover { background: var(--cp-solid, #0f62fe); opacity: 0.5; }
+    .cell.wrap { overflow-y: auto; }
+    textarea.ed { resize: none; padding: 4px 6px; line-height: 1.25; font: inherit; }
     .head.corner { background: var(--bg-muted); }
     .cb { width: 16px; height: 16px; box-sizing: border-box; border: 1px solid var(--bd-strong); border-radius: 2px; display: inline-flex; align-items: center; justify-content: center; background: var(--bg); color: var(--fg); flex: 0 0 auto; }
     .cb.on { background: var(--cp-solid, #0f62fe); border-color: var(--cp-solid, #0f62fe); color: var(--cp-contrast, #fff); }
@@ -88,7 +95,7 @@ export const dataGrid = defineUI({
     help: "A sheet like Excel: columns A…ZZ, rows 1…1000, cells with addresses. Type in the cells, or let a message fill them (a populate rule lays a list down from a cell). Types and styles per range of cells, merged cells, frozen rows and columns, borders, locks; the live page can show one area and let the user edit or not. Only the cells in view are drawn.",
     version: 1,
     css: "",
-    groups: ["Sheet", "Populate", "Editing", "Display", "Style"],
+    groups: ["Sheet", "Columns", "Rows", "Populate", "Editing", "Display", "Style"],
     properties: {
         editGrid: { type: "action", group: "Sheet", label: "Edit grid",
             info: (p) => summaryOf(p),
@@ -96,8 +103,19 @@ export const dataGrid = defineUI({
             buttons: [{ label: "Edit grid…", icon: "fa fa-table", title: "Type in the cells and design the sheet", run: (p, api) => openGridEditor(p, api) }] },
         rows: { type: "number", default: 100, min: 1, max: 1000, group: "Sheet", label: "Rows", help: "Up to 1000." },
         cols: { type: "number", default: 26, min: 1, max: 702, group: "Sheet", label: "Columns", help: "Up to 702 (A … ZZ)." },
-        colWidth: { type: "number", default: 110, min: 24, unit: "px", group: "Sheet", label: "Column width" },
-        rowHeight: { type: "number", default: 28, min: 16, max: 200, unit: "px", group: "Sheet", label: "Row height" },
+        colWidth: { type: "number", default: 110, min: 24, unit: "px", group: "Columns", label: "Column width", help: "What a column has when no rule below says otherwise." },
+        colRules: { type: "list", default: [], group: "Columns", label: "Column sizes", noun: "column rule", itemLabel: "columns", help: "A width, and the smallest and largest it can be dragged to, for some columns.",
+            item: { row: true, fields: COL_RULE_SCHEMA, create: () => ({ columns: "A" }) } },
+        adjustCols: { type: "boolean", default: true, group: "Columns", label: "The user can drag the column widths", help: "On the page: drag the line between two letters. What is dragged stays until the page is reloaded. A column rule can say otherwise." },
+        minColWidth: { type: "number", default: 30, min: 0, unit: "px", group: "Columns", label: "Smallest a column can be dragged to" },
+        maxColWidth: { type: "number", default: 600, min: 0, unit: "px", group: "Columns", label: "Largest a column can be dragged to" },
+        rowHeight: { type: "number", default: 28, min: 16, max: 200, unit: "px", group: "Rows", label: "Row height", help: "What a row has when no rule below says otherwise." },
+        rowRules: { type: "list", default: [], group: "Rows", label: "Row sizes", noun: "row rule", itemLabel: "rows", help: "A height, the limits, and whether it grows to fit wrapped text, for some rows.",
+            item: { row: true, fields: ROW_RULE_SCHEMA, create: () => ({ rows: "1" }) } },
+        adjustRows: { type: "boolean", default: true, group: "Rows", label: "The user can drag the row heights", help: "On the page: drag the line between two numbers. A row rule can say otherwise." },
+        autoFit: { type: "boolean", default: true, group: "Rows", label: "Rows grow to fit wrapped text", help: "A cell with Wrap text makes its row as tall as the text needs, up to the largest height; past it, the text scrolls in the cell. A row that cannot be adjusted keeps its height." },
+        minRowHeight: { type: "number", default: 18, min: 0, unit: "px", group: "Rows", label: "Smallest a row can be dragged to" },
+        maxRowHeight: { type: "number", default: 400, min: 0, unit: "px", group: "Rows", label: "Largest a row can be dragged to, and grow to" },
         viewArea: { type: "string", default: "", group: "Sheet", label: "Area shown", placeholder: "A1:H20",
             help: "The page shows only this area of the sheet (the headers keep their letters and numbers). Empty: the whole sheet." },
         freezeRows: { type: "number", default: 0, min: 0, group: "Sheet", label: "Frozen rows", help: "The first rows of what is shown stay in place while the rest scrolls." },
@@ -115,8 +133,6 @@ export const dataGrid = defineUI({
         // what the Edit grid dialog edits: no row of the inspector each, they are in the dialog
         cells: { type: "json", default: {}, group: "Sheet", label: "Cells", hidden: true, noReset: true, bindable: false },
         cellRules: { type: "list", default: [], group: "Sheet", label: "Types and styles", hidden: true, noReset: true, noun: "rule", itemLabel: "range", item: { row: true, fields: RULE_SCHEMA } },
-        colWidths: { type: "json", default: {}, group: "Sheet", label: "Column widths", hidden: true, noReset: true, bindable: false },
-        rowHeights: { type: "json", default: {}, group: "Sheet", label: "Row heights", hidden: true, noReset: true, bindable: false },
         merges: { type: "list", default: [], group: "Sheet", label: "Merged cells", hidden: true, noReset: true, noun: "merge", item: { type: "string" } },
         borders: { type: "list", default: [], group: "Sheet", label: "Borders", hidden: true, noReset: true, noun: "border rule", itemLabel: "range", item: { row: true, fields: BORDER_SCHEMA } },
         locks: { type: "list", default: [], group: "Editing", label: "Locked / open cells", hidden: true, noReset: true, noun: "lock rule", itemLabel: "range", item: { row: true, fields: LOCK_SCHEMA } },
@@ -131,6 +147,8 @@ export const dataGrid = defineUI({
         selectionChange: { label: "On Selection Change", payload: { range: "string", address: "string", values: "array" } },
         cellClick: { label: "On Cell Click", payload: { address: "string", value: "any" } },
         buttonClick: { label: "On Button Click", payload: { address: "string", action: "string", value: "any" } },
+        columnResize: { label: "On Column Resize (the user dragged a width)", payload: { columns: "array", width: "number" } },
+        rowResize: { label: "On Row Resize (the user dragged a height)", payload: { rows: "array", height: "number" } },
         data: { label: "On Data (after Get data)", payload: { cells: "object", range: "string" } }
     },
     actions: {
@@ -175,12 +193,22 @@ export const dataGrid = defineUI({
         _dragging = "";             // "" | "cells" | "cols" | "rows"
         _preparedFor = null;
         _focusEdit = false;
+        _colSz = [];                // every column's size by the rules: { width, min, max, adjustable }
+        _rowSz = new Map();         // the rows a rule talks about: { height, min, max, adjustable, fit }
+        _sizeEdits = { cols: new Map(), rows: new Map() };   // what the user dragged on the page: column -> width, row -> height
+        _resize = null;             // { kind, indexes, x, y, start, min, max } while a line between two headers is dragged
+        _fit = new Map();           // row -> the height its wrapped text needs
+        _fitSig = "";
+        _dataVersion = 0;           // grows when the values or the sizes change: the heights that fit the text are measured again
+        _editFit = null;            // { r, h }: the row of the cell being typed in grows with the text
+        _measure = null;
 
         propsChanged() { this._prepare(); }
 
         mounted() {
             // one listener for the whole life of the grid: a drag that ends outside the grid still ends
-            this.listen(window, "mouseup", () => { this._dragging = ""; });
+            this.listen(window, "mouseup", () => { this._dragging = ""; if (this._resize) this._endResize(); });
+            this.listen(window, "mousemove", (e) => this._dragResize(e));
         }
 
         // ---- reading the props -----------------------------------------------------------------------------------
@@ -193,7 +221,35 @@ export const dataGrid = defineUI({
             this._cells = parseCells(p.cells, size.rows, size.cols);
             this._rules = parseRules(p.cellRules, size.rows, size.cols);
             this._prepareLayout(p, size, area);
+            const d = this._sizeDefaults(p);
+            this._colSz = colSizes(parseColRules(p.colRules, size.cols), size.cols, d.col);
+            this._rowSz = rowSizes(parseRowRules(p.rowRules, size.rows), d.row);
             this._preparePopulate(p, size);
+            this._dataVersion++;
+        }
+
+        // what a column or a row has when no rule says otherwise: the grid's own settings
+        _sizeDefaults(p) {
+            const n = (v, d) => (v === "" || v === null || v === undefined || !isFinite(Number(v)) ? d : Number(v));
+            return {
+                col: { width: n(p.colWidth, 110), min: n(p.minColWidth, 30), max: n(p.maxColWidth, 600), adjustable: p.adjustCols !== false },
+                row: { height: n(p.rowHeight, 28), min: n(p.minRowHeight, 18), max: n(p.maxRowHeight, 400), adjustable: p.adjustRows !== false, fit: p.autoFit !== false }
+            };
+        }
+
+        // the width of column c now: what the user dragged, else the rules'
+        _widthOf(c) { const rt = this._sizeEdits.cols.get(c); return rt !== undefined ? rt : this._colSz[c] ? this._colSz[c].width : 110; }
+
+        // the height of row r now: what the user dragged, else the rules' (and, for a row that fits its text, what the text needs), the row being typed in
+        _heightOf(r, dd) {
+            const rt = this._sizeEdits.rows.get(r);
+            if (rt !== undefined) return rt;
+            const s = rowSizeAt(this._rowSz, r, dd.row);
+            let h = s.height;
+            const need = s.fit && s.adjustable ? this._fit.get(r) : undefined;
+            if (need !== undefined) h = Math.max(h, need);
+            if (this._editFit && this._editFit.r === r && s.fit && s.adjustable) h = Math.max(h, this._editFit.h);
+            return clampSize(h, s.min, s.max);
         }
 
         _prepareLayout(p, size, area) {
@@ -238,13 +294,12 @@ export const dataGrid = defineUI({
             const p = this.p || {};
             const area = this._area;
             const nR = area.r2 - area.r1 + 1, nC = area.c2 - area.c1 + 1;
-            const rh = Math.max(16, Number(p.rowHeight) || 28), cw = Math.max(24, Number(p.colWidth) || 110);
+            const dd = this._sizeDefaults(p);
+            const rh = clampSize(dd.row.height, dd.row.min, dd.row.max);
             const rowOver = {};
-            const heights = p.rowHeights && typeof p.rowHeights === "object" ? p.rowHeights : {};
-            Object.keys(heights).forEach((k) => { const i = Number(k) - 1 - area.r1; const v = Number(heights[k]); if (i >= 0 && i < nR && isFinite(v) && v >= 0) rowOver[i] = v; });
+            for (let i = 0; i < nR; i++) { const h = this._heightOf(area.r1 + i, dd); if (h !== rh) rowOver[i] = h; }
             const widths = [];
-            const wmap = p.colWidths && typeof p.colWidths === "object" ? p.colWidths : {};
-            for (let c = area.c1; c <= area.c2; c++) { const v = Number(wmap[colName(c)]); widths.push(isFinite(v) && v >= 0 && wmap[colName(c)] !== undefined ? v : cw); }
+            for (let c = area.c1; c <= area.c2; c++) widths.push(this._widthOf(c));
             const heads = p.showHeaders !== false;
             const hh = heads ? HEAD_H : 0;
             const rn = heads ? 1 : 0;
@@ -273,13 +328,15 @@ export const dataGrid = defineUI({
         }
 
         // ---- drawing ----------------------------------------------------------------------------------------------
-        _content(spec, value, r, c, editable) {
+        _content(spec, value, r, c, editable, fields) {
             const ed = this._edit && this._edit.r === r && this._edit.c === c;
             if (ed) {
                 const date = spec.type === "date";
                 if (spec.type === "select" && spec.options.length) {
                     return html`<select class="ed" data-edit @change=${this._onEditChange}>${spec.options.map((o) => html`<option value=${o.value} ?selected=${String(value) === o.value}>${o.label}</option>`)}</select>`;
                 }
+                // a wrapped cell is typed in a text area: Enter is a new line, and the row grows with the text
+                if (fields && fields.wrap === true && !date) return html`<textarea class="ed" data-edit .value=${this._edit.text} @input=${this._onEditInput}></textarea>`;
                 return html`<input class="ed" data-edit type=${date ? (spec.format === "date" ? "date" : "datetime-local") : "text"} .value=${date ? dateInputValue(spec, value) : this._edit.text} @input=${this._onEditInput}>`;
             }
             switch (spec.type) {
@@ -334,22 +391,22 @@ export const dataGrid = defineUI({
             const dirty = stageHas(this._stage, key, "v");
             const hatch = this.isEditor && this._mode() === "editable" && this._locked(r, c);
             const anchor = this.isEditor && this._populateAt && this._populateAt.has(key);
-            const cls = ["cell", inSel ? "sel" : "", focus ? "focus" : "", hatch ? "hatch" : "", dirty ? "dirty" : "", anchor ? "pop" : ""].filter(Boolean).join(" ");
-            return html`<div class=${cls} part="cell" data-r=${r} data-c=${c} style=${style} title=${anchor ? "Populated from a message: " + this._populateAt.get(key) : nothing}>${this._content(spec, value, r, c, editable)}</div>`;
+            const cls = ["cell", inSel ? "sel" : "", focus ? "focus" : "", hatch ? "hatch" : "", dirty ? "dirty" : "", anchor ? "pop" : "", fields.wrap === true ? "wrap" : ""].filter(Boolean).join(" ");
+            return html`<div class=${cls} part="cell" data-r=${r} data-c=${c} style=${style} title=${anchor ? "Populated from a message: " + this._populateAt.get(key) : nothing}>${this._content(spec, value, r, c, editable, fields)}</div>`;
         }
 
         _colHead(g, c, left) {
             const range = this._selRange;
             const act = !!range && c >= range.c1 && c <= range.c2;
             const w = g.colAxis.sizeOf(c - this._area.c1 + g.rn);
-            return html`<div class="head ${act ? "act" : ""}" part="header" data-hc=${c} style="left:${left}px;top:0;width:${w}px;height:${g.hh}px">${colName(c)}</div>`;
+            return html`<div class="head ${act ? "act" : ""}" part="header" data-hc=${c} style="left:${left}px;top:0;width:${w}px;height:${g.hh}px">${colName(c)}${this._canAdjust("c", c) ? html`<div class="rz rz-c" data-rz="c" data-i=${c} title="Drag to change the width; double-click to fit the content"></div>` : nothing}</div>`;
         }
 
         _rowHead(g, r, top) {
             const range = this._selRange;
             const act = !!range && r >= range.r1 && r <= range.r2;
             const h = g.rowAxis.sizeOf(r - this._area.r1);
-            return html`<div class="head ${act ? "act" : ""}" part="header" data-hr=${r} style="left:0;top:${top}px;width:${g.rowHeadW}px;height:${h}px">${r + 1}</div>`;
+            return html`<div class="head ${act ? "act" : ""}" part="header" data-hr=${r} style="left:0;top:${top}px;width:${g.rowHeadW}px;height:${h}px">${r + 1}${this._canAdjust("r", r) ? html`<div class="rz rz-r" data-rz="r" data-i=${r} title="Drag to change the height; double-click to fit the content"></div>` : nothing}</div>`;
         }
 
         // the cells of one pane, in its own coordinates; a merge is drawn once, as one box, and the cells under it are skipped.
@@ -425,6 +482,7 @@ export const dataGrid = defineUI({
             super.updated(changed);
             // the SDK turns pointer events off in editor mode so that the canvas takes the clicks; the Edit grid dialog hosts the grid to click on it
             if (this.hasAttribute("data-interactive")) this.style.pointerEvents = "auto";
+            this._measureFit();
             const s = this.renderRoot.querySelector("[data-scroller]");
             if (s) {
                 const sbw = s.offsetWidth - s.clientWidth, sbh = s.offsetHeight - s.clientHeight;
@@ -435,6 +493,137 @@ export const dataGrid = defineUI({
                 // like a sheet: the old text stays and the caret goes to its end (a typed first character has already replaced it)
                 if (input) { this._focusEdit = false; input.focus(); if (input.type === "text") input.setSelectionRange(input.value.length, input.value.length); }
             }
+        }
+
+        // ---- measuring wrapped text ------------------------------------------------------------------------------------
+        _measurer() {
+            if (!this._measure) {
+                const m = document.createElement("div");
+                m.setAttribute("aria-hidden", "true");
+                m.style.cssText = "position:absolute;left:-99999px;top:0;visibility:hidden;white-space:pre-wrap;overflow-wrap:anywhere;box-sizing:border-box;padding:0 8px;line-height:1.25";
+                this.renderRoot.appendChild(m);
+                this._measure = m;
+            }
+            return this._measure;
+        }
+
+        // the height a text needs in a cell of this width with its font; undefined when there is nothing to measure with yet
+        _needHeight(fields, spec, text, width) {
+            const m = this._measurer();
+            const css = styleCss(fields, spec.type).split(";").filter((x) => /^(font-|text-decoration)/.test(x)).join(";");
+            m.style.cssText = "position:absolute;left:-99999px;top:0;visibility:hidden;white-space:pre-wrap;overflow-wrap:anywhere;box-sizing:border-box;padding:0 8px;line-height:1.25;width:" + Math.max(10, width) + "px;" + css;
+            m.textContent = text === "" || text === null || text === undefined ? " " : String(text);
+            return Math.ceil(m.scrollHeight) + 8;
+        }
+
+        // the rows whose wrapped cells need more than the row's height: measured after a render (it needs the DOM), again only when the values or the sizes changed
+        _measureFit() {
+            const p = this.p || {};
+            const sig = this._dataVersion + "|" + this._colSz.length + "|" + [...this._sizeEdits.cols.entries()].join(";");
+            if (sig === this._fitSig) return;
+            this._fitSig = sig;
+            const next = new Map();
+            if (p.autoFit !== false) {
+                const keys = new Set([...this._cells.keys(), ...this._populated.map.keys(), ...this._edits.keys()]);
+                const dd = this._sizeDefaults(p), a = this._area;
+                if (keys.size <= 20000) keys.forEach((k) => {
+                    const [r, c] = k.split(",").map(Number);
+                    if (r < a.r1 || r > a.r2 || c < a.c1 || c > a.c2) return;
+                    const fields = this._fields(r, c);
+                    if (fields.wrap !== true) return;
+                    const s = rowSizeAt(this._rowSz, r, dd.row);
+                    if (!(s.fit && s.adjustable)) return;
+                    const spec = cellSpec(fields), text = displayText(spec, this._value(r, c));
+                    if (text === "") return;
+                    const h = this._needHeight(fields, spec, text, this._widthOf(c));
+                    if (h > (next.get(r) || 0)) next.set(r, h);
+                });
+            }
+            const same = next.size === this._fit.size && [...next.entries()].every(([r, h]) => this._fit.get(r) === h);
+            if (!same) { this._fit = next; this.requestUpdate(); }
+        }
+
+        // ---- dragging the line between two headers -------------------------------------------------------------------------
+        // on a page where the grid or the rule lets the user; in the Edit grid dialog always (it designs the sizes)
+        _canAdjust(kind, index) {
+            if (this._designing()) return true;
+            if (this.isEditor) return false;
+            if (kind === "c") { const s = this._colSz[index]; return !!s && s.adjustable !== false; }
+            return rowSizeAt(this._rowSz, index, this._sizeDefaults(this.p).row).adjustable !== false;
+        }
+
+        _beginResize(e, handle) {
+            const kind = handle.dataset.rz, index = Number(handle.dataset.i);
+            if (!this._canAdjust(kind, index) || !this._geo) return;
+            const g = this._geo, a = this._area;
+            const dd = this._sizeDefaults(this.p);
+            const start = kind === "c" ? g.colAxis.sizeOf(index - a.c1 + g.rn) : g.rowAxis.sizeOf(index - a.r1);
+            // a column inside a selection of whole columns moves them all, as in a sheet
+            const sel = this._selRange;
+            let indexes = [index];
+            if (sel && kind === "c" && sel.r1 <= a.r1 && sel.r2 >= a.r2 && index >= sel.c1 && index <= sel.c2) indexes = Array.from({ length: sel.c2 - sel.c1 + 1 }, (_, k) => sel.c1 + k);
+            if (sel && kind === "r" && sel.c1 <= a.c1 && sel.c2 >= a.c2 && index >= sel.r1 && index <= sel.r2) indexes = Array.from({ length: sel.r2 - sel.r1 + 1 }, (_, k) => sel.r1 + k);
+            const lim = kind === "c" ? this._colSz[index] : rowSizeAt(this._rowSz, index, dd.row);
+            this._resize = { kind, indexes, x: e.clientX, y: e.clientY, start, min: lim.min, max: lim.max };
+            e.preventDefault();
+        }
+
+        _dragResize(e) {
+            const z = this._resize;
+            if (!z) return;
+            const size = clampSize(Math.round(z.start + (z.kind === "c" ? e.clientX - z.x : e.clientY - z.y)), z.min, z.max);
+            if (size === z.size) return;
+            z.size = size;
+            z.indexes.forEach((i) => (z.kind === "c" ? this._sizeEdits.cols : this._sizeEdits.rows).set(i, size));
+            this.requestUpdate();
+        }
+
+        _endResize() {
+            const z = this._resize;
+            this._resize = null;
+            if (z.size === undefined) return;
+            this._commitSize(z.kind, z.indexes, z.size);
+        }
+
+        // a size the user chose (dragged, or fitted by a double click): kept on the page, told to Logic; in the dialog it goes to the dialog, as a rule
+        _commitSize(kind, indexes, size) {
+            const map = kind === "c" ? this._sizeEdits.cols : this._sizeEdits.rows;
+            if (this._designing()) {
+                this.dispatchEvent(new CustomEvent("nexa-resize", { detail: { kind, from: Math.min(...indexes), to: Math.max(...indexes), size }, bubbles: true, composed: true }));
+                indexes.forEach((i) => map.delete(i));
+            } else {
+                indexes.forEach((i) => map.set(i, size));
+                if (kind === "c") this.fire("columnResize", { columns: indexes.map(colName), width: size });
+                else this.fire("rowResize", { rows: indexes.map((i) => i + 1), height: size });
+            }
+            this._dataVersion++;
+            this.requestUpdate();
+        }
+
+        // a double click on a line: the size that fits the content of the column (its widest text) or of the row (its tallest wrapped text)
+        _fitSize(handle) {
+            const kind = handle.dataset.rz, index = Number(handle.dataset.i);
+            if (!this._canAdjust(kind, index)) return;
+            const dd = this._sizeDefaults(this.p), a = this._area;
+            let size;
+            if (kind === "c") {
+                const m = this._measurer();
+                let w = 0;
+                const keys = new Set([...this._cells.keys(), ...this._populated.map.keys(), ...this._edits.keys()]);
+                keys.forEach((k) => {
+                    const [r, c] = k.split(",").map(Number);
+                    if (c !== index || r < a.r1 || r > a.r2) return;
+                    const fields = this._fields(r, c), spec = cellSpec(fields);
+                    m.style.cssText = "position:absolute;left:-99999px;top:0;visibility:hidden;white-space:pre;padding:0 8px;" + styleCss(fields, spec.type).split(";").filter((x) => /^font-/.test(x)).join(";");
+                    m.textContent = displayText(spec, this._value(r, c));
+                    w = Math.max(w, Math.ceil(m.scrollWidth) + 6);
+                });
+                size = clampSize(w || dd.col.width, this._colSz[index].min, this._colSz[index].max);
+            } else {
+                const s = rowSizeAt(this._rowSz, index, dd.row);
+                size = clampSize(Math.max(dd.row.height, this._fit.get(index) || 0), s.min, s.max);
+            }
+            this._commitSize(kind, [index], size);
         }
 
         // ---- the user -----------------------------------------------------------------------------------------------
@@ -489,6 +678,8 @@ export const dataGrid = defineUI({
 
         _onMouseDown(e) {
             if (e.button !== 0) return;
+            const handle = e.target.closest && e.target.closest("[data-rz]");
+            if (handle) { this._beginResize(e, handle); return; }
             const head = this._headAt(e);
             if (head) {
                 if (this._edit) this._commitEdit(this._editText());
@@ -534,6 +725,8 @@ export const dataGrid = defineUI({
         }
 
         _onDblClick(e) {
+            const handle = e.target.closest && e.target.closest("[data-rz]");
+            if (handle) { this._fitSize(handle); return; }
             const hit = this._at(e);
             if (hit && !e.target.closest("[data-act]") && this._editable(hit.r, hit.c)) this._startEdit(hit.r, hit.c, null);
         }
@@ -561,18 +754,28 @@ export const dataGrid = defineUI({
             return input ? input.value : this._edit ? this._edit.text : "";
         }
 
-        _onEditInput(e) { if (this._edit) this._edit.text = e.target.value; }
+        _onEditInput(e) {
+            if (!this._edit) return;
+            this._edit.text = e.target.value;
+            if (e.target.tagName !== "TEXTAREA") return;
+            // the row grows with what is typed (up to its largest), so the text can be seen
+            const { r, c } = this._edit;
+            const fields = this._fields(r, c);
+            const h = this._needHeight(fields, cellSpec(fields), e.target.value, this._widthOf(c));
+            if (h !== undefined && (!this._editFit || this._editFit.h !== h)) { this._editFit = { r, h }; this.requestUpdate(); }
+        }
         _onEditChange(e) { if (this._edit && e.target.tagName === "SELECT") this._commitEdit(e.target.value); }
 
         _commitEdit(text) {
             const ed = this._edit;
             if (!ed) return;
             this._edit = null;
+            this._editFit = null;
             this._applyEdit(ed.r, ed.c, text);
             this.requestUpdate();
         }
 
-        _cancelEdit() { this._edit = null; this.requestUpdate(); }
+        _cancelEdit() { this._edit = null; this._editFit = null; this.requestUpdate(); }
 
         _onFocusOut(e) {
             // leaving the edit box (a click elsewhere) keeps what was typed; Escape / Enter / Tab have already ended the edit
@@ -596,18 +799,20 @@ export const dataGrid = defineUI({
             if (this.isEditor) return;
             if (this._staged()) stageSet(this._stage, key, "v", value, this._baseValue(r, c));
             else this._edits.set(key, value);
+            this._dataVersion++;
             this.requestUpdate();
             this.fire("cellChange", { address, old, new: value, staged: this._staged() });
         }
 
         _focusGrid() { const g = this.renderRoot.querySelector(".grid"); if (g) g.focus({ preventScroll: true }); }
 
-        _ensureVisible(r, c) {
+        // `vertical` / `horizontal` (default: both): which axes may scroll
+        _ensureVisible(r, c, vertical, horizontal) {
             const g = this._geo, s = this.renderRoot.querySelector("[data-scroller]");
             if (!g || !s) return;
             const i = r - this._area.r1, j = c - this._area.c1;
-            if (i >= g.F) s.scrollTop = scrollToShow(g.rowAxis, i, s.scrollTop, g.viewH, g.F);
-            if (j + g.rn >= g.FC) s.scrollLeft = scrollToShow(g.colAxis, j + g.rn, s.scrollLeft, g.viewW, g.FC);
+            if (vertical !== false && i >= g.F) s.scrollTop = scrollToShow(g.rowAxis, i, s.scrollTop, g.viewH, g.F);
+            if (horizontal !== false && j + g.rn >= g.FC) s.scrollLeft = scrollToShow(g.colAxis, j + g.rn, s.scrollLeft, g.viewW, g.FC);
         }
 
         // moving with the keyboard counts inside what is shown: the selection is shifted to the area's own 0, moved, and shifted back
@@ -625,6 +830,8 @@ export const dataGrid = defineUI({
             const a = this._area;
             if (ed) {
                 const at = () => ({ r: this._edit.r, c: this._edit.c });
+                // in a text area Enter is a new line; Ctrl+Enter commits
+                if (e.key === "Enter" && e.target.tagName === "TEXTAREA" && !e.ctrlKey && !e.metaKey) return;
                 if (e.key === "Enter") { e.preventDefault(); const p = at(); this._commitEdit(e.target.value); this._moveBy(1, 0, p.r, p.c); }
                 else if (e.key === "Tab") { e.preventDefault(); const p = at(); this._commitEdit(e.target.value); this._moveBy(0, e.shiftKey ? -1 : 1, p.r, p.c); }
                 else if (e.key === "Escape") { e.preventDefault(); this._cancelEdit(); this._focusGrid(); }
@@ -672,10 +879,13 @@ export const dataGrid = defineUI({
             this._focusGrid();
         }
 
+        // a new selection by the keyboard: the grid scrolls to the active cell, but only along the axis that moved (a whole column selected and extended to the
+        // next one stays where it is, though its active cell is at the bottom)
         _commitSelection(sel) {
+            const before = this._sel.focus;
             this._select(sel);
             const f = sel.focus;
-            if (f) this._ensureVisible(f.r, f.c);
+            if (f) this._ensureVisible(f.r, f.c, !before || before.r !== f.r, !before || before.c !== f.c);
         }
 
         _onCopy(e) {
@@ -696,6 +906,7 @@ export const dataGrid = defineUI({
             if (!a || a.r >= this._size.rows || a.c >= this._size.cols || !params || typeof params !== "object" || params.value === undefined) return;
             this._edits.set(cellKey(a.r, a.c), params.value);
             stageDrop(this._stage, cellKey(a.r, a.c));
+            this._dataVersion++;
             this.requestUpdate();
         }
 
@@ -705,6 +916,7 @@ export const dataGrid = defineUI({
             if (!at) return;
             const done = expandPopulate(p.values, { at, direction: p.direction === "right" ? "right" : "down", header: p.header === true, fields: parseFields(p.fields), limit: p.limit }, this._size);
             done.cells.forEach((x) => { this._edits.set(cellKey(x.r, x.c), x.v); stageDrop(this._stage, cellKey(x.r, x.c)); });
+            this._dataVersion++;
             this.requestUpdate();
         }
 
@@ -718,6 +930,7 @@ export const dataGrid = defineUI({
                 const [r, c] = k.split(",").map(Number);
                 if (r >= g.r1 && r <= g.r2 && c >= g.c1 && c <= g.c2) { this._edits.set(k, null); stageDrop(this._stage, k); }
             });
+            this._dataVersion++;
             this.requestUpdate();
         }
 
@@ -741,6 +954,7 @@ export const dataGrid = defineUI({
             });
             if (!cells.length) return;
             stageClear(this._stage);
+            this._dataVersion++;
             this.requestUpdate();
             this.fire("save", { cells });
         }
@@ -749,6 +963,7 @@ export const dataGrid = defineUI({
             const count = stageCount(this._stage);
             if (!count) return;
             stageClear(this._stage);
+            this._dataVersion++;
             this.requestUpdate();
             this.fire("discard", { count });
         }

@@ -7,7 +7,8 @@
 // The grid in the preview is the component itself, mounted the way the editor's canvas mounts it, so what the dialog shows is what the page shows. Its
 // selection reaches this dialog as the DOM event "nexa-selection", a value the user types as "nexa-cell-edit".
 import { defineInspectorWidget, html } from "../../../nexa-sdk/nexa-component-sdk.js";
-import { colName, sizeOf } from "./address.js";
+import { sizeOf } from "./address.js";
+import { parseColRules, parseRowRules, colSizes, rowSizes, rowSizeAt, setColSize, setRowSize } from "./sizes.js";
 import { parseRules, parseCells, mergesFromProps, rangedFromProps } from "./sheet.js";
 import { normalizeMerges, normalizeLocks, lockRuleAt } from "./layout.js";
 import { crossesFreeze, mergeRange, unmergeRange, mergesTouching, addBorder, clearBorders, addLock, resetLocks, lockState, describeRange, addRule, commonFields, toTextMerges, toTextRules } from "./design.js";
@@ -17,7 +18,7 @@ import { RULE_SCHEMA } from "./fields.js";
 const COMPONENT_ID = "nexa-ui-data-grid";
 
 // What the dialog edits: these props, as one draft (the keys are the component's stored names).
-export const DESIGN_KEYS = ["rows", "cols", "colWidth", "rowHeight", "viewArea", "freezeRows", "freezeCols", "showHeaders", "showGridLines", "populate", "cells", "cellRules", "colWidths", "rowHeights", "merges", "borders", "locks"];
+export const DESIGN_KEYS = ["rows", "cols", "viewArea", "freezeRows", "freezeCols", "showHeaders", "showGridLines", "colWidth", "colRules", "adjustCols", "minColWidth", "maxColWidth", "rowHeight", "rowRules", "adjustRows", "autoFit", "minRowHeight", "maxRowHeight", "populate", "cells", "cellRules", "merges", "borders", "locks"];
 const SEL_KEYS = Object.keys(RULE_SCHEMA).filter((k) => k !== "range");
 const BORDER_COLORS = [{ value: "bd", label: "Light line" }, { value: "bd-strong", label: "Strong line" }, { value: "fg", label: "Text colour" }, { value: "primary", label: "Primary" }, { value: "error", label: "Error" }, { value: "custom", label: "Other colour…" }];
 const BORDER_STYLES = ["solid", "dashed", "dotted", "double"].map((v) => ({ value: v, label: v }));
@@ -107,6 +108,8 @@ defineInspectorWidget("nexa-data-grid-editor", ({ KitElement, html: h, nothing }
         this._prevWired = false;
         this._form = null;
         this._meta = null;
+        this._past = [];            // the draft before each change: Ctrl+Z
+        this._future = [];          // what Ctrl+Z took back: Ctrl+Y
     }
 
     /** The design as edited here. */
@@ -122,8 +125,17 @@ defineInspectorWidget("nexa-data-grid-editor", ({ KitElement, html: h, nothing }
         if (this._form) this._form.update();
     }
 
+    connectedCallback() {
+        super.connectedCallback();
+        // on the document, in the capture phase: wherever the focus is (also on the page behind), Ctrl+Z is the dialog's while it is open, and the editor's
+        // own undo, which would change the flow behind the dialog, never sees it
+        this._keys = (e) => this._onKeys(e);
+        document.addEventListener("keydown", this._keys, true);
+    }
+
     disconnectedCallback() {
         super.disconnectedCallback();
+        if (this._keys) { document.removeEventListener("keydown", this._keys, true); this._keys = null; }
         if (this._form) { try { this._form.destroy(); } catch (e) { /* gone */ } this._form = null; }
     }
 
@@ -148,6 +160,7 @@ defineInspectorWidget("nexa-data-grid-editor", ({ KitElement, html: h, nothing }
             this._prevWired = true;
             host.addEventListener("nexa-selection", (e) => { this._range = e.detail && e.detail.range ? e.detail.range : null; });
             host.addEventListener("nexa-cell-edit", (e) => this._typed(e.detail.address, e.detail.value));
+            host.addEventListener("nexa-resize", (e) => this._resized(e.detail));
         }
         const props = this._previewProps();
         const sig = JSON.stringify(props);
@@ -179,7 +192,9 @@ defineInspectorWidget("nexa-data-grid-editor", ({ KitElement, html: h, nothing }
         props.sel_height = K.normalizeProp("sel_height", { type: "number", label: "Row height", default: "", min: 16, unit: "px", group: group("Selection"), section: "Size", bindable: false, noReset: true, enabledWhen: (p) => !!p.__hasSelection });
         // the sheet's own settings and its lists, from the component's definition: the same fields, the same help
         const take = (k, g) => { const f = d.nexa.props[k]; if (f) props[k] = Object.assign({}, f, { hidden: false, group: group(g), section: undefined }); };
-        ["rows", "cols", "colWidth", "rowHeight", "viewArea", "freezeRows", "freezeCols", "showHeaders", "showGridLines"].forEach((k) => take(k, "Sheet"));
+        ["rows", "cols", "viewArea", "freezeRows", "freezeCols", "showHeaders", "showGridLines"].forEach((k) => take(k, "Sheet"));
+        ["colWidth", "colRules", "adjustCols", "minColWidth", "maxColWidth"].forEach((k) => take(k, "Columns"));
+        ["rowHeight", "rowRules", "adjustRows", "autoFit", "minRowHeight", "maxRowHeight"].forEach((k) => take(k, "Rows"));
         take("populate", "Populate from messages");
         take("cellRules", "Types and styles");
         take("merges", "Merged cells");
@@ -197,9 +212,11 @@ defineInspectorWidget("nexa-data-grid-editor", ({ KitElement, html: h, nothing }
         SEL_KEYS.forEach((k) => { out["sel_" + k] = common[k] !== undefined ? common[k] : RULE_SCHEMA[k].default; });
         out.sel_width = ""; out.sel_height = "";
         if (this._range) {
+            const dd = this._sizeDefaults();
+            const cs = colSizes(parseColRules(d.colRules, size.cols), size.cols, dd.col), rs = rowSizes(parseRowRules(d.rowRules, size.rows), dd.row);
             const widths = [], heights = [];
-            for (let c = this._range.c1; c <= this._range.c2 && widths.length < 702; c++) widths.push(Number((d.colWidths || {})[colName(c)]) || Number(d.colWidth) || 110);
-            for (let r = this._range.r1; r <= this._range.r2 && heights.length < 1000; r++) heights.push(Number((d.rowHeights || {})[String(r + 1)]) || Number(d.rowHeight) || 28);
+            for (let c = this._range.c1; c <= this._range.c2 && c < size.cols; c++) widths.push(cs[c].width);
+            for (let r = this._range.r1; r <= this._range.r2 && r < size.rows; r++) heights.push(rowSizeAt(rs, r, dd.row).height);
             if (widths.every((w) => w === widths[0])) out.sel_width = widths[0];
             if (heights.every((x) => x === heights[0])) out.sel_height = heights[0];
         }
@@ -225,9 +242,42 @@ defineInspectorWidget("nexa-data-grid-editor", ({ KitElement, html: h, nothing }
 
     // ---- editing the draft -----------------------------------------------------------------------------------------
     _set(patch, note) {
+        this._past.push(JSON.stringify(this._draft));
+        if (this._past.length > 100) this._past.shift();
+        this._future = [];
         this._draft = Object.assign({}, this._draft, patch);
         this._note = note || "";
         this.requestUpdate();       // the draft is not a reactive property, and an unchanged note would not draw the new preview
+    }
+
+    // Undo / Redo: the draft as it was before the last change / what Undo took back
+    _undo() {
+        if (!this._past.length) return;
+        this._future.push(JSON.stringify(this._draft));
+        this._draft = JSON.parse(this._past.pop());
+        this._note = "";
+        this.requestUpdate();
+    }
+
+    _redo() {
+        if (!this._future.length) return;
+        this._past.push(JSON.stringify(this._draft));
+        this._draft = JSON.parse(this._future.pop());
+        this._note = "";
+        this.requestUpdate();
+    }
+
+    // Ctrl+Z / Ctrl+Y (Ctrl+Shift+Z) while this dialog is the top one, except where the user is typing: there the field's own undo is the right one
+    _onKeys(e) {
+        if (!(e.ctrlKey || e.metaKey)) return;
+        const mine = this.closest(".nx-dialog-backdrop");
+        if (!mine) return;
+        for (let n = mine.nextElementSibling; n; n = n.nextElementSibling) if (n.classList.contains("nx-dialog-backdrop")) return;     // another dialog is on top
+        const origin = e.composedPath ? e.composedPath()[0] : e.target;
+        if (origin && origin.matches && origin.matches("input, textarea, select, [data-edit]")) return;
+        const k = String(e.key).toLowerCase();
+        if (k === "z" && !e.shiftKey) { e.preventDefault(); e.stopPropagation(); this._undo(); }
+        else if (k === "y" || (k === "z" && e.shiftKey)) { e.preventDefault(); e.stopPropagation(); this._redo(); }
     }
 
     // a value typed in a cell of the preview: the content of the design
@@ -237,19 +287,31 @@ defineInspectorWidget("nexa-data-grid-editor", ({ KitElement, html: h, nothing }
         this._set({ cells });
     }
 
+    // a line dragged between two headers: a size rule over the columns / rows it moved
+    _resized(d) {
+        if (d.kind === "c") this._set({ colRules: setColSize(this._draft.colRules, d.from, d.to, { width: d.size }) });
+        else this._set({ rowRules: setRowSize(this._draft.rowRules, d.from, d.to, { height: d.size }) });
+    }
+
+    // what a column and a row have when no rule says otherwise: the draft's own settings
+    _sizeDefaults() {
+        const p = this._draft;
+        const n = (v, x) => (v === "" || v === null || v === undefined || !isFinite(Number(v)) ? x : Number(v));
+        return {
+            col: { width: n(p.colWidth, 110), min: n(p.minColWidth, 30), max: n(p.maxColWidth, 600), adjustable: p.adjustCols !== false },
+            row: { height: n(p.rowHeight, 28), min: n(p.minRowHeight, 18), max: n(p.maxRowHeight, 400), adjustable: p.adjustRows !== false, fit: p.autoFit !== false }
+        };
+    }
+
     // a field of the Selection: width and height go to the columns and rows; the rest is a rule over the selection
     _applySelection(field, value) {
         const r = this._range;
         if (!r) return;
         const size = this._size();
         if (field === "width") {
-            const widths = Object.assign({}, this._draft.colWidths);
-            for (let c = r.c1; c <= r.c2 && c < size.cols; c++) { if (value === "" || value === null) delete widths[colName(c)]; else widths[colName(c)] = Number(value); }
-            this._set({ colWidths: widths });
+            if (value !== "" && value !== null) this._set({ colRules: setColSize(this._draft.colRules, r.c1, Math.min(r.c2, size.cols - 1), { width: Number(value) }) });
         } else if (field === "height") {
-            const heights = Object.assign({}, this._draft.rowHeights);
-            for (let i = r.r1; i <= r.r2 && i < size.rows; i++) { if (value === "" || value === null) delete heights[String(i + 1)]; else heights[String(i + 1)] = Number(value); }
-            this._set({ rowHeights: heights });
+            if (value !== "" && value !== null) this._set({ rowRules: setRowSize(this._draft.rowRules, r.r1, Math.min(r.r2, size.rows - 1), { height: Number(value) }) });
         } else {
             this._set({ cellRules: addRule(this._draft.cellRules, rangeLabel(r, size.rows, size.cols), { [field]: value }) });
         }
@@ -303,6 +365,9 @@ defineInspectorWidget("nexa-data-grid-editor", ({ KitElement, html: h, nothing }
         const common = this._range ? commonFields(parseRules(d.cellRules, size.rows, size.cols), this._range, ["bold", "italic", "underline", "align"]) : {};
         const align = (v, label, title) => this._btn(label, title, () => this._applySelection("align", v), { on: common.align === v });
         return h`<div class="dge-bar">
+            <div class="dge-grp"><span class="dge-t">History</span>
+                <button type="button" class="nx-btn" title="Undo (Ctrl+Z)" ?disabled=${!this._past.length} @click=${() => this._undo()}>Undo</button>
+                <button type="button" class="nx-btn" title="Redo (Ctrl+Y)" ?disabled=${!this._future.length} @click=${() => this._redo()}>Redo</button></div>
             <div class="dge-grp"><span class="dge-t">Cells</span>
                 ${this._btn("Merge", "One box over the selected cells", () => this._merge())}
                 ${this._btn("Unmerge", "Take the merges in the selection apart", () => this._unmerge())}</div>

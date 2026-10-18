@@ -10,7 +10,7 @@ const path = require('path');
 
 // The modules are plain ES modules. They are loaded without a bundler: each one in its own function scope, an `import { a } from "./x.js"`
 // becoming a destructuring of what x.js exported (so the order below is the order of the imports).
-const ORDER = ['address.js', 'cell-types.js', 'populate.js', 'sheet.js', 'layout.js', 'window.js', 'stage.js', 'selection.js', 'design.js'];
+const ORDER = ['address.js', 'sizes.js', 'cell-types.js', 'populate.js', 'sheet.js', 'layout.js', 'window.js', 'stage.js', 'selection.js', 'design.js'];
 const M = {};
 ORDER.forEach((file) => {
     let src = fs.readFileSync(path.join(__dirname, '..', 'dist', 'data-grid', file), 'utf8');
@@ -19,7 +19,7 @@ ORDER.forEach((file) => {
     src = src.replace(/^export /gm, '');
     M[file] = new Function('__m', src + '\nreturn {' + names.join(',') + '};')(M);
 });
-const A = M['address.js'], T = M['cell-types.js'], P = M['populate.js'], S = M['sheet.js'], L = M['layout.js'], W = M['window.js'], St = M['stage.js'], Sel = M['selection.js'], D = M['design.js'];
+const Z = M['sizes.js'], A = M['address.js'], T = M['cell-types.js'], P = M['populate.js'], S = M['sheet.js'], L = M['layout.js'], W = M['window.js'], St = M['stage.js'], Sel = M['selection.js'], D = M['design.js'];
 
 let passed = 0;
 function ok(label, fn) { fn(); passed++; console.log('✔ ' + label); }
@@ -78,6 +78,68 @@ ok('clampRange keeps a range inside the sheet; sizeOf clamps the size', () => {
     assert.deepStrictEqual(A.sizeOf(undefined, 'x'), { rows: 100, cols: 26 });
     assert.deepStrictEqual(A.sizeOf(0, -3), { rows: 100, cols: 26 });
     assert.deepStrictEqual(A.sizeOf(10.7, 4), { rows: 10, cols: 4 });
+});
+
+// ---- sizes ----------------------------------------------------------------------------------------------------
+
+ok('parseColumns / parseRows / columnsText / rowsText: the text of column and row rules, both ways', () => {
+    assert.deepStrictEqual(Z.parseColumns('B'), { c1: 1, c2: 1 });
+    assert.deepStrictEqual(Z.parseColumns('d:b'), { c1: 1, c2: 3 }, 'swapped, any case');
+    assert.strictEqual(Z.parseColumns('B2'), null);
+    assert.strictEqual(Z.parseColumns(''), null);
+    assert.deepStrictEqual(Z.parseRows('3'), { r1: 2, r2: 2 });
+    assert.deepStrictEqual(Z.parseRows('5:2'), { r1: 1, r2: 4 });
+    assert.strictEqual(Z.parseRows('0'), null);
+    assert.strictEqual(Z.parseRows('A'), null);
+    assert.deepStrictEqual([Z.columnsText(1, 1), Z.columnsText(1, 3), Z.rowsText(2, 2), Z.rowsText(1, 4)], ['B', 'B:D', '3', '2:5']);
+});
+
+ok('colSizes: the grid\'s width, a rule over columns, the later rule wins per field, the width kept between its own limits', () => {
+    const d = { width: 110, min: 30, max: 600, adjustable: true };
+    const rules = Z.parseColRules([
+        { columns: 'B:C', width: 200 },
+        { columns: 'C', maxWidth: 150, adjustable: false },
+        { columns: 'D', width: 5000 },
+        { columns: 'E', width: 10 },
+        { columns: 'Z', width: 90 },
+        { columns: 'nonsense', width: 1 }, null
+    ], 5);
+    assert.strictEqual(rules.length, 4, 'a rule outside the sheet and an unreadable one are left out');
+    const s = Z.colSizes(rules, 5, d);
+    assert.deepStrictEqual(s[0], { width: 110, min: 30, max: 600, adjustable: true });
+    assert.strictEqual(s[1].width, 200);
+    assert.deepStrictEqual([s[2].width, s[2].max, s[2].adjustable], [150, 150, false], 'C: the later rule\'s max cuts the earlier width, and it is not adjustable');
+    assert.strictEqual(s[3].width, 600, 'D: kept at the grid\'s largest');
+    assert.strictEqual(s[4].width, 30, 'E: kept at the smallest');
+});
+
+ok('rowSizes: only the rows a rule talks about; the height, the limits, adjustable and fit; the grid\'s for the others', () => {
+    const d = { height: 28, min: 18, max: 400, adjustable: true, fit: true };
+    const rules = Z.parseRowRules([{ rows: '2:3', height: 60 }, { rows: '3', fit: false, maxHeight: 50 }, { rows: '9', height: 5 }, { rows: '500', height: 9 }, { rows: 'x' }], 10);
+    const m = Z.rowSizes(rules, d);
+    assert.deepStrictEqual([...m.keys()].sort((a, b) => a - b), [1, 2, 8], 'rows 2, 3 and 9 (from 0: 1, 2, 8)');
+    assert.deepStrictEqual(m.get(1), { height: 60, min: 18, max: 400, adjustable: true, fit: true });
+    assert.deepStrictEqual([m.get(2).height, m.get(2).fit], [50, false], 'row 3: its own max cuts the height; it does not fit its content');
+    assert.strictEqual(m.get(8).height, 18, 'kept at the smallest');
+    assert.strictEqual(Z.rowSizeAt(m, 5, d).height, 28, 'a row no rule talks about');
+    assert.strictEqual(Z.rowSizeAt(m, 1, d).height, 60);
+});
+
+ok('clampSize keeps a size between limits; setColSize / setRowSize fold into the last rule of the same range and start a new rule for another', () => {
+    assert.strictEqual(Z.clampSize(5, 10, 20), 10);
+    assert.strictEqual(Z.clampSize(50, 10, 20), 20);
+    assert.strictEqual(Z.clampSize(15, undefined, undefined), 15);
+    assert.strictEqual(Z.clampSize('x', 1, 2), 'x');
+    let c = Z.setColSize([], 1, 2, { width: 120 });
+    c = Z.setColSize(c, 1, 2, { maxWidth: 300 });
+    assert.deepStrictEqual(c, [{ columns: 'B:C', width: 120, maxWidth: 300 }]);
+    c = Z.setColSize(c, 3, 3, { width: 80 });
+    assert.deepStrictEqual(c[1], { columns: 'D', width: 80 });
+    const r = Z.setRowSize(Z.setRowSize([], 1, 1, { height: 40 }), 1, 1, { height: 50 });
+    assert.deepStrictEqual(r, [{ rows: '2', height: 50 }]);
+    const frozen = JSON.stringify(c);
+    Z.setColSize(c, 9, 9, { width: 1 });
+    assert.strictEqual(JSON.stringify(c), frozen, 'the input is untouched');
 });
 
 // ---- cell types ---------------------------------------------------------------------------------------------
@@ -208,7 +270,7 @@ ok('cellSpec: defaults and clean values', () => {
 
 ok('styleCss: text style and the cell box; alignment defaults by type; a colour that could carry more than a colour is refused', () => {
     const css = S.styleCss({ bold: true, italic: true, underline: true, strike: true, fontSize: 18, fontFamily: 'mono', color: '#ff0000', fill: 'primary', align: 'center', valign: 'bottom', wrap: true }, 'text');
-    ['font-weight:700', 'font-style:italic', 'text-decoration:underline line-through', 'font-size:18px', 'font-family:var(--mono)', 'color:#ff0000', 'background:var(--cp-solid)', 'justify-content:center', 'align-items:flex-end', 'white-space:normal'].forEach((x) => assert.ok(css.includes(x), x + ' in ' + css));
+    ['font-weight:700', 'font-style:italic', 'text-decoration:underline line-through', 'font-size:18px', 'font-family:var(--mono)', 'color:#ff0000', 'background:var(--cp-solid)', 'justify-content:center', 'align-items:safe flex-end', 'white-space:normal'].forEach((x) => assert.ok(css.includes(x), x + ' in ' + css));
     assert.ok(S.styleCss({}, 'number').includes('justify-content:flex-end'), 'a number is on the right by default');
     assert.ok(S.styleCss({ align: 'left' }, 'number').includes('justify-content:flex-start'), 'a rule wins over the default');
     assert.ok(!S.styleCss({ color: 'red; background:url(x)' }, 'text').includes('url'));
