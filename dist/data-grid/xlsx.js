@@ -4,6 +4,7 @@
 // The model it takes is plain data: the cells (with the value as Excel keeps it, the number format, the font, the fill, the alignment and the borders), the
 // widths and heights, the merges, the frozen panes. The view makes it from the grid as it is shown.
 import { colName } from "./address.js";
+import { dateToSerial } from "./xlvalue.js";
 
 const xmlEsc = (s) => String(s).replace(/[<>&"]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" })[c]);
 // characters XML cannot hold at all (control characters other than tab, new line, carriage return)
@@ -44,12 +45,8 @@ export function pxToChars(px) { return Math.round(Math.max(0, (Number(px) - 5) /
 /** A row height in pixels as points. */
 export function pxToPoints(px) { return Math.round(Number(px) * 75) / 100; }
 
-/** A date as Excel keeps it: days since 1899-12-30, the fraction being the time of day (the viewer's own time zone, as the grid shows it). */
-export function excelSerial(date) {
-    const d = date instanceof Date ? date : new Date(date);
-    if (isNaN(d.getTime())) return null;
-    return Math.round(((d.getTime() - d.getTimezoneOffset() * 60000) / 86400000 + 25569) * 1e8) / 1e8;
-}
+/** A date as Excel keeps it: days since 1899-12-30, the fraction being the time of day (as the clock on the viewer's wall reads, as the grid shows it). */
+export function excelSerial(date) { return dateToSerial(date); }
 
 /** The number format code of a number cell: decimals and a unit ("0.0" and " °C" -> 0.0" °C"). "" = the general format. */
 export function numberFormat(decimals, suffix) {
@@ -89,13 +86,13 @@ function borderXml(b) {
  *     cols: { c: px }, rows: { r: px }, defaultCol: px, defaultRow: px, merges: [{ r1, c1, r2, c2 }], freeze: { rows, cols } }
  * (r and c from 0; "fill" and a font's "color" are ARGB; a border side is { style, width, color }). Returns [{ name, text }].
  */
-export function buildXlsxFiles(model) {
+export function buildXlsxFiles(book) {
+    const models = book.sheets || [book];
     const fonts = registry(), fills = registry(), borders = registry(), fmts = registry(), xfs = registry();
     fonts.get({});
     fills.get({ none: true }); fills.get({ gray125: true });
     borders.get({});
     xfs.get({ f: 0, fi: 0, b: 0, n: 0, a: null });
-    const sheetName = clean(model.name || "Sheet1").replace(/[\\/?*[\]:]/g, " ").slice(0, 31) || "Sheet1";
 
     const xfOf = (cell) => {
         const font = cell.font && Object.keys(cell.font).some((k) => cell.font[k]) ? fonts.get(cell.font) : 0;
@@ -106,42 +103,47 @@ export function buildXlsxFiles(model) {
         return xfs.get({ f: font, fi: fill, b: border, n: numFmt, a });
     };
 
-    // the rows of cells, in order
-    const byRow = new Map();
-    model.cells.forEach((cell) => { if (!byRow.has(cell.r)) byRow.set(cell.r, []); byRow.get(cell.r).push(cell); });
-    const rowNumbers = [...new Set([...byRow.keys(), ...Object.keys(model.rows || {}).map(Number)])].sort((a, b) => a - b);
-    let maxR = -1, maxC = -1;
-    const rowsXml = rowNumbers.map((r) => {
-        const ht = model.rows && model.rows[r] !== undefined && model.rows[r] !== model.defaultRow ? ' ht="' + pxToPoints(model.rows[r]) + '" customHeight="1"' : "";
-        const cells = (byRow.get(r) || []).sort((a, b) => a.c - b.c).map((cell) => {
-            if (cell.r > maxR) maxR = cell.r;
-            if (cell.c > maxC) maxC = cell.c;
-            const ref = colName(cell.c) + (cell.r + 1), s = xfOf(cell);
-            const style = s ? ' s="' + s + '"' : "";
-            // a formula goes as the formula with its result next to it (Excel works it out again when the file opens)
-            const f = typeof cell.formula === "string" && cell.formula.length > 1 ? "<f>" + xmlEsc(cell.formula.slice(1)) + "</f>" : "";
-            if (cell.kind === "e") return '<c r="' + ref + '"' + style + ' t="e">' + f + "<v>" + xmlEsc(String(cell.v)) + "</v></c>";
-            if (cell.kind === "n" && typeof cell.v === "number" && isFinite(cell.v)) return '<c r="' + ref + '"' + style + ">" + f + "<v>" + cell.v + "</v></c>";
-            if (cell.kind === "b") return '<c r="' + ref + '"' + style + ' t="b">' + f + "<v>" + (cell.v ? 1 : 0) + "</v></c>";
-            if (f && cell.kind === "s") return '<c r="' + ref + '"' + style + ' t="str">' + f + "<v>" + xmlEsc(clean(cell.v)) + "</v></c>";
-            if (cell.kind === "s") return '<c r="' + ref + '"' + style + ' t="inlineStr"><is><t xml:space="preserve">' + xmlEsc(clean(cell.v)) + "</t></is></c>";
-            return '<c r="' + ref + '"' + style + "/>";
+    const renderSheet = (model) => {
+        const sheetName = clean(model.name || "Sheet1").replace(/[\\/?*[\]:]/g, " ").slice(0, 31) || "Sheet1";
+        // the rows of cells, in order
+        const byRow = new Map();
+        model.cells.forEach((cell) => { if (!byRow.has(cell.r)) byRow.set(cell.r, []); byRow.get(cell.r).push(cell); });
+        const rowNumbers = [...new Set([...byRow.keys(), ...Object.keys(model.rows || {}).map(Number)])].sort((a, b) => a - b);
+        let maxR = -1, maxC = -1;
+        const rowsXml = rowNumbers.map((r) => {
+            const ht = model.rows && model.rows[r] !== undefined && model.rows[r] !== model.defaultRow ? ' ht="' + pxToPoints(model.rows[r]) + '" customHeight="1"' : "";
+            const cells = (byRow.get(r) || []).sort((a, b) => a.c - b.c).map((cell) => {
+                if (cell.r > maxR) maxR = cell.r;
+                if (cell.c > maxC) maxC = cell.c;
+                const ref = colName(cell.c) + (cell.r + 1), s = xfOf(cell);
+                const style = s ? ' s="' + s + '"' : "";
+                // a formula goes as the formula with its result next to it (Excel works it out again when the file opens)
+                const f = typeof cell.formula === "string" && cell.formula.length > 1 ? "<f>" + xmlEsc(cell.formula.slice(1)) + "</f>" : "";
+                if (cell.kind === "e") return '<c r="' + ref + '"' + style + ' t="e">' + f + "<v>" + xmlEsc(String(cell.v)) + "</v></c>";
+                if (cell.kind === "n" && typeof cell.v === "number" && isFinite(cell.v)) return '<c r="' + ref + '"' + style + ">" + f + "<v>" + cell.v + "</v></c>";
+                if (cell.kind === "b") return '<c r="' + ref + '"' + style + ' t="b">' + f + "<v>" + (cell.v ? 1 : 0) + "</v></c>";
+                if (f && cell.kind === "s") return '<c r="' + ref + '"' + style + ' t="str">' + f + "<v>" + xmlEsc(clean(cell.v)) + "</v></c>";
+                if (cell.kind === "s") return '<c r="' + ref + '"' + style + ' t="inlineStr"><is><t xml:space="preserve">' + xmlEsc(clean(cell.v)) + "</t></is></c>";
+                return '<c r="' + ref + '"' + style + "/>";
+            }).join("");
+            return '<row r="' + (r + 1) + '"' + ht + ">" + cells + "</row>";
         }).join("");
-        return '<row r="' + (r + 1) + '"' + ht + ">" + cells + "</row>";
-    }).join("");
 
-    const colNumbers = Object.keys(model.cols || {}).map(Number).sort((a, b) => a - b);
-    const colsXml = colNumbers.length ? "<cols>" + colNumbers.map((c) => '<col min="' + (c + 1) + '" max="' + (c + 1) + '" width="' + pxToChars(model.cols[c]) + '" customWidth="1"/>').join("") + "</cols>" : "";
-    const fz = model.freeze || { rows: 0, cols: 0 };
-    const pane = fz.rows || fz.cols
-        ? '<pane' + (fz.cols ? ' xSplit="' + fz.cols + '"' : "") + (fz.rows ? ' ySplit="' + fz.rows + '"' : "") + ' topLeftCell="' + colName(fz.cols) + (fz.rows + 1) + '" activePane="'
-            + (fz.rows && fz.cols ? "bottomRight" : fz.rows ? "bottomLeft" : "topRight") + '" state="frozen"/>' : "";
-    const merges = (model.merges || []).map((m) => '<mergeCell ref="' + colName(m.c1) + (m.r1 + 1) + ":" + colName(m.c2) + (m.r2 + 1) + '"/>');
-    const dim = maxR >= 0 ? '<dimension ref="A1:' + colName(Math.max(maxC, 0)) + (maxR + 1) + '"/>' : "";
-    const sheet = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' + dim
-        + '<sheetViews><sheetView workbookViewId="0">' + pane + "</sheetView></sheetViews>"
-        + '<sheetFormatPr defaultRowHeight="' + pxToPoints(model.defaultRow || 28) + '"' + (model.defaultRow ? ' customHeight="1"' : "") + "/>" + colsXml
-        + "<sheetData>" + rowsXml + "</sheetData>" + (merges.length ? '<mergeCells count="' + merges.length + '">' + merges.join("") + "</mergeCells>" : "") + "</worksheet>";
+        const colNumbers = Object.keys(model.cols || {}).map(Number).sort((a, b) => a - b);
+        const colsXml = colNumbers.length ? "<cols>" + colNumbers.map((c) => '<col min="' + (c + 1) + '" max="' + (c + 1) + '" width="' + pxToChars(model.cols[c]) + '" customWidth="1"/>').join("") + "</cols>" : "";
+        const fz = model.freeze || { rows: 0, cols: 0 };
+        const pane = fz.rows || fz.cols
+            ? '<pane' + (fz.cols ? ' xSplit="' + fz.cols + '"' : "") + (fz.rows ? ' ySplit="' + fz.rows + '"' : "") + ' topLeftCell="' + colName(fz.cols) + (fz.rows + 1) + '" activePane="'
+                + (fz.rows && fz.cols ? "bottomRight" : fz.rows ? "bottomLeft" : "topRight") + '" state="frozen"/>' : "";
+        const merges = (model.merges || []).map((m) => '<mergeCell ref="' + colName(m.c1) + (m.r1 + 1) + ":" + colName(m.c2) + (m.r2 + 1) + '"/>');
+        const dim = maxR >= 0 ? '<dimension ref="A1:' + colName(Math.max(maxC, 0)) + (maxR + 1) + '"/>' : "";
+        const sheet = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' + dim
+            + '<sheetViews><sheetView' + (model.active ? ' tabSelected="1"' : "") + ' workbookViewId="0">' + pane + "</sheetView></sheetViews>"
+            + '<sheetFormatPr defaultRowHeight="' + pxToPoints(model.defaultRow || 28) + '"' + (model.defaultRow ? ' customHeight="1"' : "") + "/>" + colsXml
+            + "<sheetData>" + rowsXml + "</sheetData>" + (merges.length ? '<mergeCells count="' + merges.length + '">' + merges.join("") + "</mergeCells>" : "") + "</worksheet>";
+        return { sheetName, hidden: !!model.hidden, sheet };
+    };
+    const rendered = models.map(renderSheet);
 
     const numFmts = fmts.list.length ? '<numFmts count="' + fmts.list.length + '">' + fmts.list.map((code, i) => '<numFmt numFmtId="' + (164 + i) + '" formatCode="' + xmlEsc(code) + '"/>').join("") + "</numFmts>" : "";
     const fillXml = (f) => (f.none ? '<fill><patternFill patternType="none"/></fill>' : f.gray125 ? '<fill><patternFill patternType="gray125"/></fill>'
@@ -157,12 +159,15 @@ export function buildXlsxFiles(model) {
         + '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>';
 
     const head = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
+    const sheetParts = rendered.map((x, i) => '<Override PartName="/xl/worksheets/sheet' + (i + 1) + '.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>').join("");
+    const sheetRels = rendered.map((x, i) => '<Relationship Id="rId' + (i + 1) + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet' + (i + 1) + '.xml"/>').join("");
+    const activeTab = Math.max(0, Math.min(rendered.length - 1, Number(book.active) || 0));
+    const sheetList = rendered.map((x, i) => '<sheet name="' + xmlEsc(x.sheetName) + '" sheetId="' + (i + 1) + '"' + (x.hidden ? ' state="hidden"' : "") + ' r:id="rId' + (i + 1) + '"/>').join("");
     return [
-        { name: "[Content_Types].xml", text: head + '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>' },
+        { name: "[Content_Types].xml", text: head + '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>' + sheetParts + '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>' },
         { name: "_rels/.rels", text: head + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>' },
-        { name: "xl/workbook.xml", text: head + '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="' + xmlEsc(sheetName) + '" sheetId="1" r:id="rId1"/></sheets></workbook>' },
-        { name: "xl/_rels/workbook.xml.rels", text: head + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>' },
-        { name: "xl/styles.xml", text: styles },
-        { name: "xl/worksheets/sheet1.xml", text: sheet }
-    ];
+        { name: "xl/workbook.xml", text: head + '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><bookViews><workbookView activeTab="' + activeTab + '"/></bookViews><sheets>' + sheetList + '</sheets></workbook>' },
+        { name: "xl/_rels/workbook.xml.rels", text: head + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' + sheetRels + '<Relationship Id="rId' + (rendered.length + 1) + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>' },
+        { name: "xl/styles.xml", text: styles }
+    ].concat(rendered.map((x, i) => ({ name: "xl/worksheets/sheet" + (i + 1) + ".xml", text: x.sheet })));
 }

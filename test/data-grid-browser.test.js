@@ -16,6 +16,7 @@ async function ok(label, fn) { if (only && !only.test(label)) return; await fn()
 const ID = 'data-grid';
 const bind = (ref) => ({ $bind: [{ src: 'msg', ref }] });     // a populate rule's value from the message
 
+
 withHarness({
     mounts: { '/nexa-component-ui-library/vendor': path.join(__dirname, '..', 'dist') },
     modules: ['/nexa-component-ui-library/vendor/ui-library.js'],
@@ -28,7 +29,9 @@ withHarness({
     const qa = (n, sel) => `Array.from(${root(n)}.querySelectorAll(${JSON.stringify(sel)}))`;
     const cell = (n, r, c) => q(n, `[data-r="${r}"][data-c="${c}"]`);
     const text = (n, r, c) => js(`(function () { var e = ${cell(n, r, c)}; return e ? e.textContent.trim() : null; })()`);
-    const events = (n, name) => js(`NexaTest.item(${JSON.stringify(n)}).events.filter(function (e) { return e[0] === ${JSON.stringify(name)}; }).map(function (e) { return e[1]; })`);
+    // what Logic is told, without the name of the sheet every event carries (see eventsOf for it)
+    const events = (n, name) => js(`NexaTest.item(${JSON.stringify(n)}).events.filter(function (e) { return e[0] === ${JSON.stringify(name)}; }).map(function (e) { var o = Object.assign({}, e[1]); delete o.sheet; return o; })`);
+    const eventsOf = (n, name) => js(`NexaTest.item(${JSON.stringify(n)}).events.filter(function (e) { return e[0] === ${JSON.stringify(name)}; }).map(function (e) { return e[1]; })`);
     const mount = async (name, props, opts) => {
         await js(`NexaTest.mount(${JSON.stringify(name)}, "nexa-ui-${ID}", ${JSON.stringify(props || {})}, ${JSON.stringify(opts || { width: 700, height: 300 })})`);
         await settle(); await wait(60);
@@ -61,6 +64,29 @@ withHarness({
     };
     const heads = (n) => js(qa(n, '.head[data-hc]') + '.map(function (e) { return e.textContent; })');
     const rowHeads = (n) => js(qa(n, '.head[data-hr]') + '.map(function (e) { return e.textContent; })');
+
+    // The settings of a sheet live in the grid's `sheets` list. Most of these tests were written for one sheet with flat props; in the page, mount and setProps turn the flat
+    // sheet keys into the first sheet (a test of several sheets gives `sheets` itself).
+    await js(`(function () {
+        var KEYS = ["rows", "cols", "viewArea", "freezeRows", "freezeCols", "showHeaders", "showGridLines", "mode", "colWidth", "colRules", "adjustCols", "minColWidth", "maxColWidth",
+            "rowHeight", "rowRules", "adjustRows", "autoFit", "minRowHeight", "maxRowHeight", "sortArea", "sortHeader", "populate", "cells", "cellRules", "merges", "borders", "locks"];
+        var TYPE = "nexa-ui-${ID}";
+        function split(props, current) {
+            var out = {}, own = null;
+            Object.keys(props || {}).forEach(function (k) { if (KEYS.indexOf(k) !== -1) { own = own || {}; own[k] = props[k]; } else out[k] = props[k]; });
+            if (own) {
+                var list = (out.sheets || (current && current.sheets) || [{ name: "Sheet1" }]).slice();
+                list[0] = Object.assign({}, list[0], own);
+                out.sheets = list;
+            }
+            return out;
+        }
+        var mount = NexaTest.mount, set = NexaTest.setProps;
+        NexaTest.mount = function (name, type, raw, opts) { return mount.call(NexaTest, name, type, type === TYPE ? split(raw) : raw, opts); };
+        NexaTest.setProps = function (name, patch) { var it = NexaTest.item(name); return set.call(NexaTest, name, it.type === TYPE ? split(patch, it.raw) : patch); };
+        // the Edit grid dialog, opened with the props of a component (flat sheet keys become the first sheet)
+        window.__runEditor = function (props, api) { return NEXA.getComponent(TYPE).nexa.props.editGrid.buttons[0].run(split(props), api); };
+    })()`);
 
     await ok('it registers in its own category; a new sheet is blank, with the column letters and the row numbers, and no sample data', async () => {
         const d = await js('(function () { var d = NEXA.getComponent("nexa-ui-data-grid"); return d ? d.category : null; })()');
@@ -364,7 +390,7 @@ withHarness({
         const pcell = (r, c) => `${prev()}.querySelector('[data-r="${r}"][data-c="${c}"]')`;
         const btn = (title) => `Array.from(document.querySelectorAll("nexa-data-grid-editor button")).filter(function (b) { return b.title === ${JSON.stringify(title)}; })[0]`;
         const open = async (props) => {
-            await js(`window.__sets = []; NEXA.getComponent("nexa-ui-data-grid").nexa.props.editGrid.buttons[0].run(${JSON.stringify(props)}, { set: function (k, v) { window.__sets.push([k, v]); } })`);
+            await js(`window.__sets = []; window.__runEditor(${JSON.stringify(props)}, { set: function (k, v) { window.__sets.push([k, v]); } })`);
             await settle(); await wait(300);
         };
         const sets = async () => Object.fromEntries(await js('window.__sets'));
@@ -422,11 +448,15 @@ withHarness({
         assert.strictEqual(await js(`${pcell(1, 1)}.offsetWidth`), 220, 'freezing above the merge leaves it whole');
         await foot('Apply');
         const s = await sets();
-        assert.deepStrictEqual(Object.keys(s).sort(), ['cellRules', 'cells', 'freezeRows', 'locks', 'merges', 'populate'].sort(), 'only what changed is set: ' + Object.keys(s).join(','));
-        assert.deepStrictEqual(s.cells, { A1: 'x', B1: 'Hi' });
-        assert.deepStrictEqual(s.locks, [{ range: 'D:D', locked: true }]);
-        assert.deepStrictEqual(s.populate.map((x) => [x.at, x.direction]), [['F2', 'right']]);
-        assert.ok(s.cellRules.some((r) => r.range === 'A1' && r.bold === true && r.fontSize === 20), 'one rule for A1: ' + JSON.stringify(s.cellRules));
+        assert.deepStrictEqual(Object.keys(s), ['sheets'], 'only what changed is set (the sheets are one prop): ' + Object.keys(s).join(','));
+        const sh = s.sheets[0];
+        assert.strictEqual(sh.name, 'Sheet1');
+        assert.deepStrictEqual(sh.cells, { A1: 'x', B1: 'Hi' });
+        assert.deepStrictEqual(sh.locks, [{ range: 'D:D', locked: true }]);
+        assert.deepStrictEqual(sh.populate.map((x) => [x.at, x.direction]), [['F2', 'right']]);
+        assert.strictEqual(sh.freezeRows, 1);
+        assert.ok(sh.merges.length === 1, 'the merge');
+        assert.ok(sh.cellRules.some((r) => r.range === 'A1' && r.bold === true && r.fontSize === 20), 'one rule for A1: ' + JSON.stringify(sh.cellRules));
         assert.strictEqual(await js(dlg('.dge-prev') + ' ? 1 : 0'), 0, 'the dialog is closed');
 
         // Cancel sets nothing
@@ -537,7 +567,7 @@ withHarness({
     await ok('the Edit grid dialog: a line dragged in the preview is a size rule; Ctrl+Z and Ctrl+Y undo and redo every change', async () => {
         const dlg = (sel) => `document.querySelector("nexa-data-grid-editor ${sel}")`;
         const prev = () => `${dlg('.dge-prev')}.firstElementChild.shadowRoot`;
-        await js(`window.__sets = []; NEXA.getComponent("nexa-ui-data-grid").nexa.props.editGrid.buttons[0].run({ cells: { A1: "x" } }, { set: function (k, v) { window.__sets.push([k, v]); } })`);
+        await js(`window.__sets = []; window.__runEditor({ cells: { A1: "x" } }, { set: function (k, v) { window.__sets.push([k, v]); } })`);
         await settle(); await wait(300);
         const handle = `${prev()}.querySelector('[data-rz="c"][data-i="1"]')`;
         const p = await js(`(function () { var b = ${handle}.getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2 }; })()`);
@@ -566,8 +596,9 @@ withHarness({
         await clickAt(`Array.from(document.querySelectorAll(".nx-dialog-foot button")).filter(function (b) { return b.textContent.trim() === "Apply"; })[0]`);
         await wait(120);
         const s = Object.fromEntries(await js('window.__sets'));
-        assert.deepStrictEqual(Object.keys(s), ['colRules'], 'only the size rule: the rows went back to 100');
-        assert.deepStrictEqual(s.colRules, [{ columns: 'B', width: 150 }]);
+        assert.deepStrictEqual(Object.keys(s), ['sheets'], 'only the sheets: the rows went back to 100');
+        assert.deepStrictEqual(s.sheets[0].colRules, [{ columns: 'B', width: 150 }], 'the size rule');
+        assert.strictEqual(s.sheets[0].rows, undefined, 'and the rows are not in the sheet: they were set and taken back');
     });
 
     // ---- the clipboard and the fill handle ------------------------------------------------------------------------------------------------------
@@ -674,7 +705,7 @@ withHarness({
         const dlg = (sel) => `document.querySelector("nexa-data-grid-editor ${sel}")`;
         const prev = () => `${dlg('.dge-prev')}.firstElementChild.shadowRoot`;
         const pcell = (r, c) => `${prev()}.querySelector('[data-r="${r}"][data-c="${c}"]')`;
-        await js(`window.__sets = []; NEXA.getComponent("nexa-ui-data-grid").nexa.props.editGrid.buttons[0].run({ cells: { A1: 1 }, cellRules: [{ range: "A1", bold: true, fill: "#ff0000" }] }, { set: function (k, v) { window.__sets.push([k, v]); } })`);
+        await js(`window.__sets = []; window.__runEditor({ cells: { A1: 1 }, cellRules: [{ range: "A1", bold: true, fill: "#ff0000" }] }, { set: function (k, v) { window.__sets.push([k, v]); } })`);
         await settle(); await wait(300);
         const grid = `${dlg('.dge-prev')}.firstElementChild.shadowRoot.querySelector(".grid")`;
         const clipP = (type, data) => js(`(function () { var g = ${grid}; var dt = new DataTransfer(); var d = ${JSON.stringify(data || {})}; Object.keys(d).forEach(function (k) { dt.setData(k, d[k]); }); g.dispatchEvent(new ClipboardEvent(${JSON.stringify(type)}, { clipboardData: dt, bubbles: true, cancelable: true, composed: true })); return { text: dt.getData("text/plain"), grid: dt.getData("application/x-nexa-grid") }; })()`);
@@ -708,9 +739,9 @@ withHarness({
         await clickAt(`Array.from(document.querySelectorAll(".nx-dialog-foot button")).filter(function (b) { return b.textContent.trim() === "Apply"; })[0]`);
         await wait(120);
         const s = Object.fromEntries(await js('window.__sets'));
-        assert.deepStrictEqual(Object.keys(s).sort(), ['cellRules', 'cells']);
-        assert.deepStrictEqual(s.cells, { A1: 1, A2: 2, A3: 3, A4: 4, C3: 1 });
-        const rules = s.cellRules.filter((r) => r.range !== 'A1');
+        assert.deepStrictEqual(Object.keys(s), ['sheets']);
+        assert.deepStrictEqual(s.sheets[0].cells, { A1: 1, A2: 2, A3: 3, A4: 4, C3: 1 });
+        const rules = s.sheets[0].cellRules.filter((r) => r.range !== 'A1');
         assert.ok(rules.length <= 3, 'the styles are a few short rules: ' + JSON.stringify(rules));
         assert.ok(rules.some((r) => r.range === 'A2:A4' && r.bold === true), 'one range for the filled column: ' + JSON.stringify(rules));
     });
@@ -789,7 +820,7 @@ withHarness({
     await ok('the Edit grid dialog: Sort A→Z / Z→A moves the typed cells of the selected rows (physical)', async () => {
         const dlg = (sel) => `document.querySelector("nexa-data-grid-editor ${sel}")`;
         const prev = () => `${dlg('.dge-prev')}.firstElementChild.shadowRoot`;
-        await js(`window.__sets = []; NEXA.getComponent("nexa-ui-data-grid").nexa.props.editGrid.buttons[0].run({ cells: { A1: "b", B1: 2, A2: "a", B2: 1, A3: "c", B3: 3 } }, { set: function (k, v) { window.__sets.push([k, v]); } })`);
+        await js(`window.__sets = []; window.__runEditor({ cells: { A1: "b", B1: 2, A2: "a", B2: 1, A3: "c", B3: 3 } }, { set: function (k, v) { window.__sets.push([k, v]); } })`);
         await settle(); await wait(300);
         const pc = (r, c) => `${prev()}.querySelector('[data-r="${r}"][data-c="${c}"]')`;
         const a = await js(`(function () { var b = ${pc(0, 0)}.getBoundingClientRect(); return { x: b.left + 12, y: b.top + 8 }; })()`);
@@ -806,7 +837,7 @@ withHarness({
         await clickAt(`Array.from(document.querySelectorAll(".nx-dialog-foot button")).filter(function (x) { return x.textContent.trim() === "Apply"; })[0]`);
         await wait(120);
         const s = Object.fromEntries(await js('window.__sets'));
-        assert.deepStrictEqual(s.cells, { A1: 'c', B1: 3, A2: 'b', B2: 2, A3: 'a', B3: 1 });
+        assert.deepStrictEqual(s.sheets[0].cells, { A1: 'c', B1: 3, A2: 'b', B2: 2, A3: 'a', B3: 1 });
     });
 
     await ok('saving: at once, On Save after each cell (a paste: once); with a message, the changes wait without a box until the action Save, and Discard throws them away', async () => {
@@ -889,16 +920,17 @@ withHarness({
         assert.strictEqual(await js(`getComputedStyle(${cell('sh', 9, 0)}).backgroundColor`), 'rgb(0, 255, 0)', 'the action sets the style too');
     });
 
-    await ok('a populate rule has a tree of its own: Where, Data, Type, Text, Cell', async () => {
+    await ok('a populate rule has a tree of its own: Where, Data, Type, Text, Cell (in the Edit grid dialog, where the populate rules of a sheet are edited)', async () => {
+        await js(`window.__runEditor({ populate: [{ at: "B2" }] }, { set: function () {} })`);
+        await settle(); await wait(300);
         const r = await js(`(async function () {
-            var t = NexaTest.inspector("nexa-ui-${ID}", { populate: [{ at: "B2" }] });
+            var ed = document.querySelector("nexa-data-grid-editor");
+            ed._form.select("populate#0.fill");
             await new Promise(function (r) { setTimeout(r, 250); });
-            await t.field("populate#0.fill");
-            var ids = NexaTest.rows(t.box).map(function (x) { return x.id; }).filter(function (id) { return /^populate#0\\//.test(id); });
-            t.destroy();
-            return ids;
+            return NexaTest.rows(ed.querySelector(".dge-form")).map(function (x) { return x.id; }).filter(function (id) { return /^populate#0\\//.test(id); });
         })()`);
         for (const s of ['Where', 'Data', 'Type', 'Text', 'Cell']) assert.ok(r.indexOf('populate#0/' + s) !== -1, 'the section ' + s + ' in ' + r.join(' | '));
+        await clickAt(`Array.from(document.querySelectorAll(".nx-dialog-foot button")).filter(function (b) { return b.textContent.trim() === "Cancel"; })[0]`);
     });
 
     // ---- export to Excel ---------------------------------------------------------------------------------------------------------------------------
@@ -994,10 +1026,10 @@ withHarness({
         await js('window.__dl = null'); await js('NexaTest.invoke("xl4", "exportXlsx")'); await wait(300);
         assert.strictEqual(await js('window.__dl'), null, 'the design canvas exports nothing');
         // the dialog
-        await js(`window.__sets = []; NEXA.getComponent("nexa-ui-data-grid").nexa.props.editGrid.buttons[0].run({ cells: { A1: "typed", B2: 5 } }, { set: function () {} })`);
+        await js(`window.__sets = []; window.__runEditor({ cells: { A1: "typed", B2: 5 } }, { set: function () {} })`);
         await settle(); await wait(300);
         await js('window.__dl = null');
-        await clickAt(`Array.from(document.querySelectorAll("nexa-data-grid-editor button")).filter(function (b) { return b.textContent.trim() === "Excel (.xlsx)"; })[0]`);
+        await clickAt(`Array.from(document.querySelectorAll("nexa-data-grid-editor button")).filter(function (b) { return b.textContent.trim() === "Export .xlsx"; })[0]`);
         const dd = await download();
         assert.strictEqual(dd.name, 'sheet.xlsx');
         const sheet = readZip(dd.data)['xl/worksheets/sheet1.xml'];
@@ -1005,21 +1037,34 @@ withHarness({
         await clickAt(`Array.from(document.querySelectorAll(".nx-dialog-foot button")).filter(function (b) { return b.textContent.trim() === "Cancel"; })[0]`);
     });
 
-    await ok('the Edit grid row of the inspector says what the sheet has', async () => {
-        const r = await js(`(function () { var p = NEXA.getComponent("nexa-ui-data-grid").nexa.props.editGrid; return [p.info({ rows: 50, cols: 10, cells: { A1: 1, B1: 2 }, cellRules: [{}], merges: ["A1:B2"], populate: [{}, {}], locks: [{}] }), p.info({})]; })()`);
+    await ok('the Edit grid row of the inspector says what the sheets have', async () => {
+        const r = await js(`(function () { var p = NEXA.getComponent("nexa-ui-data-grid").nexa.props.editGrid; return [
+            p.info({ sheets: [{ name: "A", rows: 50, cols: 10, cells: { A1: 1, B1: 2 }, cellRules: [{}], merges: ["A1:B2"], populate: [{}, {}], locks: [{}] }] }), p.info({}),
+            p.info({ sheets: [{ name: "Main", cells: { A1: 1 } }, { name: "Data", cells: { A1: 1, A2: 2 }, populate: [{}] }, { name: "Notes" }] })]; })()`);
         assert.strictEqual(r[0], '50 rows x 10 columns, 2 cells typed, 1 type / style rule, 2 populate rules, 1 merged, 1 lock rule');
         assert.strictEqual(r[1], '100 rows x 26 columns');
+        assert.strictEqual(r[2], '3 sheets: Main, Data, Notes, 3 cells typed, 1 populate rule');
     });
 
-    await ok('the inspector: the groups and every setting of the sheet are there', async () => {
+    await ok('the inspector: what is the grid\'s own (the sheets are edited in the dialog)', async () => {
         const r = await js(`(async function () {
-            var t = NexaTest.inspector("nexa-ui-${ID}", { populate: [{ at: "B2", direction: "right" }] });
+            var t = NexaTest.inspector("nexa-ui-${ID}", {});
             await new Promise(function (r) { setTimeout(r, 250); });
             var labels = NexaTest.rows(t.box).map(function (x) { return x.label; });
             t.destroy();
             return labels;
         })()`);
-        for (const l of ['Rows', 'Columns', 'Column width', 'Row height', 'Area shown', 'Frozen rows', 'Frozen columns', 'Populate from messages', 'Mode', 'Saving', 'Show the column letters and row numbers', 'Show the grid lines', 'Selection']) assert.ok(r.includes(l), 'inspector: ' + l + ' in ' + r.join(' | '));
+        for (const l of ['Edit grid', 'Show the sheet tabs', 'Sheet shown', 'Saving', 'Show the formula bar', 'Selection', 'The user can sort (on the page)', 'Ctrl+F finds in the sheet']) assert.ok(r.includes(l), 'inspector: ' + l + ' in ' + r.join(' | '));
+        for (const l of ['Rows', 'Column width', 'Populate from messages', 'Mode']) assert.ok(!r.includes(l), l + ' belongs to a sheet, not to the inspector of the grid');
+    });
+
+    await ok('the Edit grid dialog: the tree has every setting of the sheet on show and the settings of the whole grid', async () => {
+        await js(`window.__runEditor({}, { set: function () {} })`);
+        await settle(); await wait(300);
+        const labels = await js(`NexaTest.rows(document.querySelector("nexa-data-grid-editor .dge-form")).map(function (x) { return x.label; })`);
+        for (const l of ['Selection', 'Sheet', 'Name', 'Shown as a tab', 'Mode', 'Rows', 'Columns', 'Column width', 'Row height', 'Area shown', 'Frozen rows', 'Frozen columns', 'Show the column letters and row numbers', 'Show the grid lines',
+            'Populate from messages', 'Types and styles', 'Whole grid', 'Show the sheet tabs', 'Show the formula bar', 'The user can sort (on the page)']) assert.ok(labels.includes(l), 'dialog: ' + l + ' in ' + labels.join(' | '));
+        await clickAt(`Array.from(document.querySelectorAll(".nx-dialog-foot button")).filter(function (b) { return b.textContent.trim() === "Cancel"; })[0]`);
     });
 
     await ok('light and dark: the grid reads the theme (no fixed colours), and a screenshot of it', async () => {
@@ -1198,6 +1243,219 @@ withHarness({
         assert.ok(/<c r="B1" s="\d+" t="e"><f>1\/0<\/f><v>#DIV\/0!<\/v><\/c>/.test(sheet), 'an error cell');
         assert.ok(/<c r="B2" s="\d+" t="str"><f>A1&amp;&quot;x&quot;<\/f><v>5x<\/v><\/c>/.test(sheet) || /<c r="B2" s="\d+" t="str"><f>A1&amp;"x"<\/f><v>5x<\/v><\/c>/.test(sheet), 'a text result');
         assert.ok(/<c r="B3" s="\d+" t="b"><f>A1&gt;1<\/f><v>1<\/v><\/c>/.test(sheet), 'a boolean result');
+    });
+
+    // ---- sheets ------------------------------------------------------------------------------------------------------------------------------
+    const tabsOf = (n) => js(qa(n, '.tab') + '.map(function (e) { return e.textContent; })');
+    const onTab = (n) => js(qa(n, '.tab.on') + '.map(function (e) { return e.textContent; })');
+    const tab = (n, i) => q(n, `[data-tab="${i}"]`);
+
+    await ok('sheets: tabs under the sheet; each sheet has its own content, size and mode; a hidden sheet has no tab; a click switches and Logic is told', async () => {
+        await mount('sh', { sheets: [
+            { name: 'Main', mode: 'editable', cells: { A1: 'main' } },
+            { name: 'Data', cells: { A1: 'data' }, rows: 5, cols: 3 },
+            { name: 'Secret', visible: false, cells: { A1: 'hidden' } }] }, { width: 700, height: 300 });
+        assert.deepStrictEqual(await tabsOf('sh'), ['Main', 'Data'], 'the hidden sheet has no tab');
+        assert.deepStrictEqual(await onTab('sh'), ['Main']);
+        assert.strictEqual(await text('sh', 0, 0), 'main');
+        const barTop = await js(`(function () { var b = ${q('sh', '.tabs')}.getBoundingClientRect(), g = ${q('sh', '.grid')}.getBoundingClientRect(); return { bottom: Math.round(b.bottom), grid: Math.round(g.bottom) }; })()`);
+        assert.ok(barTop.bottom <= barTop.grid + 1 && barTop.bottom >= barTop.grid - 1, 'the tabs sit at the bottom of the grid: ' + JSON.stringify(barTop));
+        // main is editable
+        await clickAt(cell('sh', 0, 0), 2);
+        assert.strictEqual(await js(q('sh', '[data-edit]') + ' ? 1 : 0'), 1, 'Main is editable');
+        await press('Escape');
+        // a click on a tab
+        await clickAt(tab('sh', 1));
+        assert.strictEqual(await text('sh', 0, 0), 'data');
+        assert.deepStrictEqual(await onTab('sh'), ['Data']);
+        assert.deepStrictEqual(await heads('sh'), ['A', 'B', 'C'], 'its own size: three columns');
+        const changed = await eventsOf('sh', 'sheetChange');
+        assert.deepStrictEqual([changed[0].sheet, changed[0].index, changed[0].previous], ['Data', 1, 'Main'], 'Logic is told');
+        await clickAt(cell('sh', 0, 0), 2);
+        assert.strictEqual(await js(q('sh', '[data-edit]') + ' ? 1 : 0'), 0, 'Data is read only: its own mode');
+        // an event carries the sheet it is about
+        await clickAt(cell('sh', 0, 0));
+        assert.strictEqual((await eventsOf('sh', 'cellClick')).pop().sheet, 'Data');
+        // a hidden sheet can still be shown by a message, and has no tab then either
+        await js('NexaTest.invoke("sh", "selectSheet", "Secret")'); await settle(); await wait(80);
+        assert.strictEqual(await text('sh', 0, 0), 'hidden');
+        assert.deepStrictEqual(await onTab('sh'), [], 'no tab is the active one');
+        await js('NexaTest.invoke("sh", "selectSheet", { index: 0 })'); await settle(); await wait(80);
+        assert.strictEqual(await text('sh', 0, 0), 'main', 'by place');
+        await js('NexaTest.invoke("sh", "selectSheet", "nothing like it")'); await settle(); await wait(60);
+        assert.strictEqual(await text('sh', 0, 0), 'main', 'a name that is not there changes nothing');
+    });
+
+    await ok('sheets: the user\'s choice stays until the binding gives another name; what was typed in a sheet is still there when it comes back; the tabs can be hidden', async () => {
+        await mount('sh2', { activeSheet: 'Main', sheets: [{ name: 'Main', mode: 'editable', cells: { A1: 'one' } }, { name: 'Other', cells: { A1: 'two' } }] }, { width: 700, height: 300 });
+        await typeInto('sh2', 1, 0, 'typed');
+        await clickAt(tab('sh2', 1));
+        assert.strictEqual(await text('sh2', 0, 0), 'two');
+        await js('NexaTest.setProps("sh2", { showFormulaBar: true })'); await settle(); await wait(80);
+        assert.strictEqual(await text('sh2', 0, 0), 'two', 'an unrelated change of the props keeps the sheet the user chose');
+        await clickAt(tab('sh2', 0));
+        assert.strictEqual(await text('sh2', 1, 0), 'typed', 'what was typed in Main waited for it');
+        await clickAt(tab('sh2', 1));
+        await js('NexaTest.setProps("sh2", { activeSheet: "Other" })'); await settle(); await wait(80);
+        await js('NexaTest.setProps("sh2", { activeSheet: "Main" })'); await settle(); await wait(80);
+        assert.strictEqual(await text('sh2', 0, 0), 'one', 'a new value of the binding switches the sheet');
+        await js('NexaTest.setProps("sh2", { showSheetTabs: false })'); await settle(); await wait(80);
+        assert.strictEqual(await js(q('sh2', '.tabs') + ' ? 1 : 0'), 0, 'the tabs can be hidden');
+        await mount('sh3', { cells: { A1: 1 } });
+        assert.strictEqual(await js(q('sh3', '.tabs') + ' ? 1 : 0'), 0, 'one sheet has no tabs');
+    });
+
+    await ok('sheets: a formula reads another sheet (Data!A1, \'Raw data\'!A1:A3); a change there reaches it; a sheet that is not there is #REF!', async () => {
+        await mount('xs', { sheets: [
+            { name: 'Summary', cells: { A1: '=Data!A1*2', A2: "=SUM('Raw data'!A1:A3)", A3: '=Nope!A1', A4: '=data!A1+1' } },
+            { name: 'Data', mode: 'editable', cells: { A1: 21 } },
+            { name: 'Raw data', cells: { A1: 1, A2: 2, A3: 3 } }] }, { width: 700, height: 300 });
+        assert.deepStrictEqual([await text('xs', 0, 0), await text('xs', 1, 0), await text('xs', 2, 0), await text('xs', 3, 0)], ['42', '6', '#REF!', '22']);
+        await js('NexaTest.invoke("xs", "selectSheet", "Data")'); await settle(); await wait(60);
+        await typeInto('xs', 0, 0, '5');
+        await js('NexaTest.invoke("xs", "selectSheet", "Summary")'); await settle(); await wait(60);
+        assert.deepStrictEqual([await text('xs', 0, 0), await text('xs', 3, 0)], ['10', '6'], 'the new value in Data reached Summary');
+    });
+
+    await ok('sheets: a message populates the sheet it is for, also one that is not on show; an action names the sheet it is for', async () => {
+        await mount('ps2', { sheets: [{ name: 'Main', cells: { A1: 'main' } }, { name: 'Feed', populate: [{ at: 'A1', value: bind('v') }] }] }, { width: 700, height: 300 });
+        await message('ps2', { v: [10, 20, 30] });
+        await js('NexaTest.invoke("ps2", "selectSheet", "Feed")'); await settle(); await wait(60);
+        assert.deepStrictEqual([await text('ps2', 0, 0), await text('ps2', 1, 0), await text('ps2', 2, 0)], ['10', '20', '30'], 'the sheet that was not on show was filled');
+        await js('NexaTest.invoke("ps2", "selectSheet", "Main")'); await settle(); await wait(60);
+        await js('NexaTest.invoke("ps2", "setCell", { sheet: "Feed", address: "C1", value: 7 })'); await settle(); await wait(60);
+        assert.strictEqual(await text('ps2', 0, 2), '', 'Main did not get it');
+        await js('NexaTest.invoke("ps2", "getData", { sheet: "Feed" })'); await settle();
+        const d = (await eventsOf('ps2', 'data')).pop();
+        assert.strictEqual(d.sheet, 'Feed');
+        assert.deepStrictEqual(d.cells, { A1: 10, A2: 20, A3: 30, C1: 7 });
+        await js('NexaTest.invoke("ps2", "getData")'); await settle();
+        assert.strictEqual((await eventsOf('ps2', 'data')).pop().sheet, 'Main', 'without a name, the sheet on show');
+    });
+
+    await ok('sheets: changes waiting in several sheets are saved, each sheet telling its own On Save', async () => {
+        await mount('sv2', { saveMode: 'message', sheets: [{ name: 'A', mode: 'editable', cells: { A1: 'a' } }, { name: 'B', mode: 'editable', cells: { A1: 'b' } }] }, { width: 700, height: 300 });
+        await typeInto('sv2', 0, 0, 'a2');
+        await clickAt(tab('sv2', 1));
+        await typeInto('sv2', 0, 0, 'b2');
+        await js('NexaTest.invoke("sv2", "save")'); await settle();
+        const saved = (await eventsOf('sv2', 'save')).map((s) => [s.sheet, s.cells.map((c) => c.new)]);
+        assert.deepStrictEqual(saved, [['A', ['a2']], ['B', ['b2']]]);
+    });
+
+    await ok('sheets: export to Excel has every sheet (names, hidden, the open one), formulas across sheets stay formulas; the corner button does the same', async () => {
+        await mount('xw', { exportable: true, sheets: [
+            { name: 'Summary', cells: { A1: '=Data!A1*2' } },
+            { name: 'Data', cells: { A1: 21 } },
+            { name: 'Secret', visible: false, cells: { A1: 'x' } }] }, { width: 700, height: 300 });
+        await hookDownload();
+        await js('NexaTest.invoke("xw", "exportXlsx", "book")');
+        const d = await download();
+        assert.strictEqual(d.name, 'book.xlsx');
+        const files = readZip(d.data);
+        assert.deepStrictEqual(Object.keys(files).filter((n) => /worksheets/.test(n)), ['xl/worksheets/sheet1.xml', 'xl/worksheets/sheet2.xml', 'xl/worksheets/sheet3.xml']);
+        const wb = files['xl/workbook.xml'];
+        assert.ok(wb.includes('<sheet name="Summary" sheetId="1" r:id="rId1"/>') && wb.includes('<sheet name="Data" sheetId="2" r:id="rId2"/>') && wb.includes('<sheet name="Secret" sheetId="3" state="hidden" r:id="rId3"/>'), wb);
+        assert.ok(wb.includes('activeTab="0"'));
+        assert.ok(/<c r="A1" s="\d+"><f>Data!A1\*2<\/f><v>42<\/v><\/c>/.test(files['xl/worksheets/sheet1.xml']), 'the formula across sheets, with its result: ' + files['xl/worksheets/sheet1.xml'].slice(0, 400));
+        assert.ok(files['xl/worksheets/sheet2.xml'].includes('<v>21</v>'));
+        const bad = await js(`(function () { var f = ${JSON.stringify(files)}; return Object.keys(f).filter(function (n) { var d = new DOMParser().parseFromString(f[n], "application/xml"); return d.getElementsByTagName("parsererror").length > 0; }); })()`);
+        assert.deepStrictEqual(bad, [], 'every file parses as XML');
+        await js('NexaTest.invoke("xw", "selectSheet", "Data")'); await settle(); await wait(60);
+        await js('window.__dl = null');
+        await js('NexaTest.invoke("xw", "exportXlsx")');
+        assert.ok(readZip((await download()).data)['xl/workbook.xml'].includes('activeTab="1"'), 'the sheet on show opens first');
+    });
+
+    await ok('the Edit grid dialog: sheets are added, copied, renamed (formulas that read the old name follow), hidden, made editable, moved and taken away; Apply sets the sheets', async () => {
+        const dlg = (sel) => `document.querySelector("nexa-data-grid-editor ${sel}")`;
+        const btn = (title) => `Array.from(document.querySelectorAll("nexa-data-grid-editor button")).filter(function (b) { return b.title === ${JSON.stringify(title)}; })[0]`;
+        const ed = (code) => js(`(function () { var ed = document.querySelector("nexa-data-grid-editor"); ${code} })()`);
+        const foot = async (label) => { await clickAt(`Array.from(document.querySelectorAll(".nx-dialog-foot button")).filter(function (b) { return b.textContent.trim() === ${JSON.stringify(label)}; })[0]`); await wait(120); };
+        await js(`window.__sets = []; window.__runEditor({ sheets: [{ name: "Main", cells: { A1: "=Data!A1+1", A2: "='Data'!A1" } }, { name: "Data", cells: { A1: 5 } }] }, { set: function (k, v) { window.__sets.push([k, v]); } })`);
+        await settle(); await wait(300);
+        assert.strictEqual(await js(dlg('.dge-sheet') + '.textContent'), 'Main (1 / 2)');
+        const names = () => ed('return ed.design().sheets.map(function (s) { return s.name; });');
+        // the preview's own tabs switch what the dialog edits
+        await clickAt(`${dlg('.dge-prev')}.firstElementChild.shadowRoot.querySelector('[data-tab="1"]')`);
+        assert.strictEqual(await js(dlg('.dge-sheet') + '.textContent'), 'Data (2 / 2)', 'the dialog follows the tab of the preview');
+        // add: a new sheet after this one, and it is the one edited now
+        await clickAt(btn('A new empty sheet after this one'));
+        assert.deepStrictEqual(await names(), ['Main', 'Data', 'Sheet3']);
+        assert.strictEqual(await js(dlg('.dge-sheet') + '.textContent'), 'Sheet3 (3 / 3)');
+        // rename through the tree's own path; the formulas of Main that read Data are written for the new name
+        await clickAt(btn('Move the tab to the left'));
+        assert.deepStrictEqual(await names(), ['Main', 'Sheet3', 'Data']);
+        await ed('ed._sheetShown("Data");'); await settle(); await wait(80);
+        await ed('ed._setProp("name", "Raw data");'); await settle(); await wait(80);
+        const main = await ed('return ed.design().sheets[0].cells;');
+        assert.deepStrictEqual(main, { A1: "='Raw data'!A1+1", A2: "='Raw data'!A1" }, 'formulas follow the new name');
+        // a name another sheet has is made different, and the user is told
+        await ed('ed._setProp("name", "main");'); await settle(); await wait(80);
+        assert.deepStrictEqual(await names(), ['Main', 'Sheet3', 'main (2)']);
+        assert.ok((await js(dlg('.dge-status') + '.textContent')).includes('taken'), 'told');
+        // hidden and editable are properties of the sheet on show
+        await ed('ed._setProp("visible", false); ed._setProp("mode", "editable");'); await settle(); await wait(80);
+        // copy the sheet on show: a separate copy right after it
+        await clickAt(btn('A copy of this sheet'));
+        assert.strictEqual((await names()).length, 4);
+        // delete it again, and undo brings it back
+        await clickAt(btn('Take this sheet away'));
+        assert.strictEqual((await names()).length, 3);
+        await ed('ed._undo();'); await settle(); await wait(80);
+        assert.strictEqual((await names()).length, 4, 'Undo brings a deleted sheet back');
+        await ed('ed._redo();'); await settle(); await wait(80);
+        await foot('Apply');
+        const s = Object.fromEntries(await js('window.__sets'));
+        assert.deepStrictEqual(Object.keys(s), ['sheets']);
+        assert.deepStrictEqual(s.sheets.map((x) => x.name), ['Main', 'Sheet3', 'main (2)']);
+        assert.deepStrictEqual([s.sheets[2].visible, s.sheets[2].mode], [false, 'editable'], 'the hidden, editable sheet');
+        // the last sheet cannot be taken away
+        await js(`window.__runEditor({}, { set: function () {} })`); await settle(); await wait(300);
+        assert.ok(await js(btn('Take this sheet away') + '.disabled'), 'the only sheet stays');
+        await foot('Cancel');
+    });
+
+    await ok('the Edit grid dialog: an Excel file is read into sheets (names, hidden, values, formulas across sheets, formats); Undo brings the old sheets back; a file that is not Excel is told', async () => {
+        // a workbook made by the grid itself, then read by the dialog
+        await mount('src', { exportable: true, sheets: [
+            { name: 'Plant', cells: { A1: 'Machine', B1: 71.456, C1: '=B1*2', D1: '2026-01-01T12:00:00' }, cellRules: [{ range: 'A1', bold: true, fill: '#d0e2ff' }, { range: 'B1', type: 'number', decimals: 1, suffix: ' °C' }, { range: 'D1', type: 'date' }], merges: ['F1:G2'], colRules: [{ columns: 'A', width: 200 }] },
+            { name: 'Notes', visible: false, cells: { A1: '=Plant!B1+1' } }] });
+        await hookDownload();
+        await js('NexaTest.invoke("src", "exportXlsx")');
+        const file = await download();
+        await js(`window.__runEditor({ sheets: [{ name: "Old", cells: { A1: "old" } }] }, { set: function () {} })`);
+        await settle(); await wait(300);
+        const result = await js(`(async function () {
+            var ed = document.querySelector("nexa-data-grid-editor");
+            var bytes = Uint8Array.from(atob(${JSON.stringify(file.data)}), function (c) { return c.charCodeAt(0); });
+            await ed._import(new File([bytes], "plant.xlsx"));
+            var d = ed.design();
+            return { names: d.sheets.map(function (s) { return s.name; }), hidden: d.sheets.map(function (s) { return s.visible === false; }), plant: d.sheets[0], notes: d.sheets[1], note: ed._note };
+        })()`);
+        await settle(); await wait(100);
+        assert.deepStrictEqual(result.names, ['Plant', 'Notes']);
+        assert.deepStrictEqual(result.hidden, [false, true]);
+        assert.strictEqual(result.plant.cells.A1, 'Machine');
+        assert.strictEqual(result.plant.cells.B1, 71.456);
+        assert.strictEqual(result.plant.cells.C1, '=B1*2', 'a formula stays a formula');
+        assert.strictEqual(result.notes.cells.A1, '=Plant!B1+1', 'across sheets');
+        assert.ok(result.plant.cellRules.some((r) => /B1/.test(r.range) && r.type === 'number' && r.decimals === 1 && r.suffix === ' °C'), 'the number format');
+        assert.ok(result.plant.cellRules.some((r) => r.range === 'A1' && r.bold === true && r.fill === '#d0e2ff'), 'the style');
+        assert.deepStrictEqual(result.plant.merges, ['F1:G2']);
+        assert.ok(result.plant.colRules.some((r) => r.columns === 'A' && r.width === 200), 'the width');
+        assert.ok(result.note.startsWith('Read 2 sheets from plant.xlsx'), result.note);
+        // the preview shows it
+        assert.strictEqual(await js(`${dlg0()}.firstElementChild.shadowRoot.querySelector('[data-r="0"][data-c="2"]').textContent.trim()`), '142.912', 'the imported formula works in the grid');
+        // Undo takes the old sheets back
+        await js(`document.querySelector("nexa-data-grid-editor")._undo()`); await settle(); await wait(80);
+        assert.deepStrictEqual(await js(`document.querySelector("nexa-data-grid-editor").design().sheets.map(function (s) { return s.name; })`), ['Old']);
+        // not an Excel file
+        const bad = await js(`(async function () { var ed = document.querySelector("nexa-data-grid-editor"); await ed._import(new File([new Uint8Array(40)], "nope.xlsx")); return ed._note; })()`);
+        assert.ok(/Could not read nope\.xlsx/.test(bad), bad);
+        assert.deepStrictEqual(await js(`document.querySelector("nexa-data-grid-editor").design().sheets.map(function (s) { return s.name; })`), ['Old'], 'nothing changed');
+        await clickAt(`Array.from(document.querySelectorAll(".nx-dialog-foot button")).filter(function (b) { return b.textContent.trim() === "Cancel"; })[0]`);
+        function dlg0() { return 'document.querySelector("nexa-data-grid-editor .dge-prev")'; }
     });
 
     await ok('no JavaScript errors in the page', async () => {

@@ -27,12 +27,14 @@ import { createCalc } from "./calc.js";
 import { isFormula, shiftFormula } from "./formula.js";
 import { isError, dateToSerial, serialToDate } from "./xlvalue.js";
 import { seriesValues, fillTarget } from "./fill.js";
+import { normalizeSheets, indexOfSheet, activeIndex, visibleIndexes, isVisible } from "./sheets.js";
 import { rulesFromCells } from "./design.js";
 
 export const CATEGORY_DATA = "UI · Data";
 
 const HEAD_H = 26;                 // the row of column letters
 const BAR_H = 28;                  // the formula bar above the sheet (when it is shown)
+const TAB_H = 30;                  // the row of sheet tabs under the sheet (when it is shown)
 const MAX_VALUES_IN_EVENT = 400;   // a selection of more cells sends its range only, not its values
 
 const safeUrl = (v) => { const t = String(v === undefined || v === null ? "" : v).trim(); return /^(https?:|mailto:|tel:|\/|\.\/|#|data:image\/)/i.test(t) ? t : ""; };
@@ -42,6 +44,39 @@ const safeName = (n) => String(n || "").replace(/[^A-Za-z0-9_-]/g, "");
 function paletteStyle(name) {
     const bg = theme.token(`colors.${name}.subtle`), fg = theme.token(`colors.${name}.fg`);
     return `background: var(--nexa-colors-${name}-subtle${bg !== undefined ? ", " + bg : ""}); color: var(--nexa-colors-${name}-fg${fg !== undefined ? ", " + fg : ""})`;
+}
+
+
+// What a sheet keeps of its own while the grid runs. The grid holds one of these per sheet; the one on show is reached as this._<key> (an accessor on the view), so
+// the code that works with "the sheet" reads like the code of a grid with one sheet. A new sheet starts blank.
+const SHEET_STATE_KEYS = ["name", "sheet", "sp", "stage", "edits", "cells", "populated", "popConfig", "popValues", "rules", "merges", "edges", "locks", "freeze", "size", "area", "scroll",
+    "sel", "selSig", "selRange", "colSz", "rowSz", "sizeEdits", "fit", "fitSig", "actionStyles", "sortArea", "sortState", "perm", "inv", "permSig", "sortVersion"];
+
+function makeSheetState(name) {
+    return {
+        name, sheet: { name }, sp: {},
+        stage: createStage(),
+        edits: new Map(),           // what the user typed on the page: "r,c" -> value (kept until the page is reloaded, or a message fills the cell)
+        cells: new Map(),           // what was typed in the design
+        populated: { map: new Map(), styles: new Map(), blocks: [] },
+        popConfig: "", popValues: [],
+        rules: [], merges: [], edges: { h: new Map(), v: new Map() }, locks: [],
+        freeze: { rows: 0, cols: 0 },
+        size: { rows: 100, cols: 26 },
+        area: { r1: 0, c1: 0, r2: 99, c2: 25 },
+        scroll: { left: 0, top: 0 },
+        sel: noSelection(), selSig: "", selRange: null,
+        colSz: [],                  // every column's size by the rules: { width, min, max, adjustable }
+        rowSz: new Map(),           // the rows a rule talks about: { height, min, max, adjustable, fit }
+        sizeEdits: { cols: new Map(), rows: new Map() },    // what the user dragged on the page: column -> width, row -> height
+        fit: new Map(), fitSig: "",   // row -> the height its wrapped text needs
+        actionStyles: new Map(),    // "r,c" -> the type / style fields a cell object of the action Fill cells set
+        sortArea: null,             // the rows under the heading and the columns of the area to sort: { r1, r2, c1, c2 }
+        sortState: null,            // what the user chose: { c, dir }
+        perm: null, inv: null,      // the rows of the area in the order shown: the place i of the view shows the row perm[i] of the area
+        permSig: "",
+        sortVersion: 0              // grows when the props or a message change what is sorted (not when the user edits a cell: a row does not jump while it is typed in)
+    };
 }
 
 const DATA_GRID_CSS = css`
@@ -74,6 +109,11 @@ const DATA_GRID_CSS = css`
     .srt.on { color: var(--cp-solid, #0f62fe); }
     .srt .icon svg { width: 12px; height: 12px; }
     .body { position: absolute; left: 0; right: 0; bottom: 0; }
+    .tabs { position: absolute; left: 0; right: 0; bottom: 0; height: 30px; box-sizing: border-box; display: flex; align-items: flex-start; gap: 2px; padding: 0 6px; overflow-x: auto; overflow-y: hidden; background: var(--bg-subtle); border-top: 1px solid var(--bd); z-index: 5; }
+    .tab { all: unset; cursor: pointer; box-sizing: border-box; height: 26px; padding: 0 14px; display: inline-flex; align-items: center; font-size: 12px; color: var(--fg-muted); border: 1px solid transparent; border-top: none; border-radius: 0 0 var(--r) var(--r); white-space: nowrap; flex: 0 0 auto; }
+    .tab:hover { background: var(--bg-emph); }
+    .tab.on { background: var(--bg); color: var(--fg); border-color: var(--bd); box-shadow: inset 0 -2px 0 var(--cp-solid, #0f62fe); font-weight: 600; }
+    .tab:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
     .fbar { position: absolute; left: 0; right: 0; top: 0; height: 28px; box-sizing: border-box; display: flex; align-items: center; gap: 6px; padding: 0 6px; border-bottom: 1px solid var(--bd); background: var(--bg-subtle); z-index: 5; }
     .fbar .fa { min-width: 44px; text-align: center; color: var(--fg-muted); font: 12px var(--mono); }
     .fbar .fx { color: var(--fg-muted); font: italic 12px serif; padding: 0 4px; border-left: 1px solid var(--bd); }
@@ -133,59 +173,30 @@ export const dataGrid = defineUI({
     help: "A sheet like Excel: columns A…ZZ, rows 1…1000, cells with addresses. Type in the cells, or let a message fill them (a populate rule lays a list down from a cell). Types and styles per range of cells, merged cells, frozen rows and columns, borders, locks; the live page can show one area and let the user edit or not. Only the cells in view are drawn.",
     version: 1,
     css: "",
-    groups: ["Sheet", "Columns", "Rows", "Populate", "Sort and find", "Editing", "Display", "Style"],
+    groups: ["Sheets", "Sort and find", "Editing", "Display", "Style"],
     properties: {
-        editGrid: { type: "action", group: "Sheet", label: "Edit grid",
+        editGrid: { type: "action", group: "Sheets", label: "Edit grid",
             info: (p) => summaryOf(p),
             help: "Opens the sheet with a toolbar and the property tree: select cells and type in them, merge, freeze, lock, draw borders, give ranges a type and a style, set up the populate rules. Nothing changes until Apply.",
             buttons: [{ label: "Edit grid…", icon: "fa fa-table", title: "Type in the cells and design the sheet", run: (p, api) => openGridEditor(p, api) }] },
-        rows: { type: "number", default: 100, min: 1, max: 1000, group: "Sheet", label: "Rows", help: "Up to 1000." },
-        cols: { type: "number", default: 26, min: 1, max: 702, group: "Sheet", label: "Columns", help: "Up to 702 (A … ZZ)." },
-        colWidth: { type: "number", default: 110, min: 24, unit: "px", group: "Columns", label: "Column width", help: "What a column has when no rule below says otherwise." },
-        colRules: { type: "list", default: [], group: "Columns", label: "Column sizes", noun: "column rule", itemLabel: "columns", help: "A width, and the smallest and largest it can be dragged to, for some columns.",
-            item: { row: true, fields: COL_RULE_SCHEMA, create: () => ({ columns: "A" }) } },
-        adjustCols: { type: "boolean", default: true, group: "Columns", label: "The user can drag the column widths", help: "On the page: drag the line between two letters. What is dragged stays until the page is reloaded. A column rule can say otherwise." },
-        minColWidth: { type: "number", default: 30, min: 0, unit: "px", group: "Columns", label: "Smallest a column can be dragged to" },
-        maxColWidth: { type: "number", default: 600, min: 0, unit: "px", group: "Columns", label: "Largest a column can be dragged to" },
-        rowHeight: { type: "number", default: 28, min: 16, max: 200, unit: "px", group: "Rows", label: "Row height", help: "What a row has when no rule below says otherwise." },
-        rowRules: { type: "list", default: [], group: "Rows", label: "Row sizes", noun: "row rule", itemLabel: "rows", help: "A height, the limits, and whether it grows to fit wrapped text, for some rows.",
-            item: { row: true, fields: ROW_RULE_SCHEMA, create: () => ({ rows: "1" }) } },
-        adjustRows: { type: "boolean", default: true, group: "Rows", label: "The user can drag the row heights", help: "On the page: drag the line between two numbers. A row rule can say otherwise." },
-        autoFit: { type: "boolean", default: true, group: "Rows", label: "Rows grow to fit wrapped text", help: "A cell with Wrap text makes its row as tall as the text needs, up to the largest height; past it, the text scrolls in the cell. A row that cannot be adjusted keeps its height." },
-        minRowHeight: { type: "number", default: 18, min: 0, unit: "px", group: "Rows", label: "Smallest a row can be dragged to" },
-        maxRowHeight: { type: "number", default: 400, min: 0, unit: "px", group: "Rows", label: "Largest a row can be dragged to, and grow to" },
-        viewArea: { type: "string", default: "", group: "Sheet", label: "Area shown", placeholder: "A1:H20",
-            help: "The page shows only this area of the sheet (the headers keep their letters and numbers). Empty: the whole sheet." },
-        freezeRows: { type: "number", default: 0, min: 0, group: "Sheet", label: "Frozen rows", help: "The first rows of what is shown stay in place while the rest scrolls." },
-        freezeCols: { type: "number", default: 0, min: 0, group: "Sheet", label: "Frozen columns", help: "The first columns stay in place." },
+        showSheetTabs: { type: "boolean", default: true, group: "Sheets", label: "Show the sheet tabs", help: "A row of tabs under the sheet, like Excel, when more than one sheet is shown. A sheet can be hidden from it (Shown as a tab in the sheet's settings); a message or the action Select sheet can still switch to it." },
+        activeSheet: { type: "string", default: "", group: "Sheets", label: "Sheet shown", placeholder: "(the first one)", help: "The name of the sheet on show. Bind it to a message to switch sheets from Logic; the user's own clicks on the tabs work too, and a new value from the binding switches again." },
+        sheets: { type: "json", default: [{ name: "Sheet1" }], group: "Sheets", label: "Sheets", hidden: true, noReset: true, bindable: false },
         sortable: { type: "boolean", default: true, group: "Sort and find", label: "The user can sort (on the page)", help: "A small button on the letter of each column of the area to sort: ascending, descending, back to the order of the sheet. Only the view is sorted: the cells keep their addresses, and a message still fills the cell it was meant for." },
-        sortArea: { type: "string", default: "", group: "Sort and find", label: "Area to sort", placeholder: "A1:F200", help: "The columns and rows that are sorted together (a row moves as one). Empty: no sorting." },
-        sortHeader: { type: "boolean", default: true, group: "Sort and find", label: "The first row of the area is a heading", help: "A heading stays in place; the rows under it are sorted." },
         exportable: { type: "boolean", default: false, group: "Sort and find", label: "A button in the corner exports to Excel (.xlsx)", help: "On the page, the corner where the letters and the numbers meet downloads the sheet as an .xlsx file. The action Export to Excel does the same from Logic." },
         findable: { type: "boolean", default: true, group: "Sort and find", label: "Ctrl+F finds in the sheet", help: "A search box over the grid: the cells that hold the text are marked, Enter goes to the next one." },
-        populate: { type: "list", default: [], group: "Populate", label: "Populate from messages", noun: "rule", itemLabel: "at",
-            help: "A rule takes a value from a message (or a variable, a tag) and puts it in the cells from one cell on: one value, a list down or to the right, a table.",
-            item: { row: true, fields: POPULATE_SCHEMA, create: (items) => ({ at: "A1", direction: "down", enabled: true }) } },
-        mode: { type: "enum", default: "readonly", group: "Editing", label: "Mode", style: "segmented", options: [{ value: "readonly", label: "Read only" }, { value: "editable", label: "Editable" }],
-            help: "Read only: nothing can be edited, whatever is unlocked. Editable: every cell can be, except the ones a lock rule locks. Bind it to change it while the page runs." },
         saveMode: { type: "enum", default: "instant", group: "Editing", label: "Saving", style: "select",
             options: [{ value: "instant", label: "At once: Enter saves the cell" }, { value: "bar", label: "A small box with Save and Discard" }, { value: "message", label: "When a message says (the action Save)" }],
             help: "What the user types is told to Logic with On Cell Change in every mode. On Save is the one that means \"keep this\": at once, after each cell (a paste or a fill: once, with all its cells); with the box, when the user presses Save; with a message, when the action Save arrives (the action Discard throws the waiting changes away). In the last two the changed cells wait, marked in the corner, and what the user types stays in the page until it is reloaded." },
-        showHeaders: { type: "boolean", default: true, group: "Display", label: "Show the column letters and row numbers" },
-        showGridLines: { type: "boolean", default: true, group: "Display", label: "Show the grid lines" },
         showFormulaBar: { type: "boolean", default: false, group: "Display", label: "Show the formula bar", help: "A line above the sheet with the address of the selected cell and what is in it: the formula as it was written, or the value. Typing in it edits the cell (Enter keeps it)." },
         selection: { type: "enum", default: "range", group: "Display", label: "Selection", style: "segmented", options: [{ value: "none", label: "None" }, { value: "cell", label: "Cell" }, { value: "range", label: "Range" }] },
         // what the Edit grid dialog edits: no row of the inspector each, they are in the dialog
-        cells: { type: "json", default: {}, group: "Sheet", label: "Cells", hidden: true, noReset: true, bindable: false },
-        cellRules: { type: "list", default: [], group: "Sheet", label: "Types and styles", hidden: true, noReset: true, noun: "rule", itemLabel: "range", item: { row: true, fields: RULE_SCHEMA } },
-        merges: { type: "list", default: [], group: "Sheet", label: "Merged cells", hidden: true, noReset: true, noun: "merge", item: { type: "string" } },
-        borders: { type: "list", default: [], group: "Sheet", label: "Borders", hidden: true, noReset: true, noun: "border rule", itemLabel: "range", item: { row: true, fields: BORDER_SCHEMA } },
-        locks: { type: "list", default: [], group: "Editing", label: "Locked / open cells", hidden: true, noReset: true, noun: "lock rule", itemLabel: "range", item: { row: true, fields: LOCK_SCHEMA } },
         size: sizeProp("md"),
         colorPalette: paletteProp(),
         radius: radiusProp("md")
     },
     events: {
+        sheetChange: { label: "On Sheet Change (another sheet is on show)", payload: { sheet: "string", index: "number", previous: "string" } },
         cellChange: { label: "On Cell Change (the user edited a cell)", payload: { address: "string", old: "any", new: "any", staged: "boolean" } },
         save: { label: "On Save (the cells to keep: at once, with the box's Save, or the action Save)", payload: { cells: "array" } },
         discard: { label: "On Discard (the waiting changes were thrown away)", payload: { count: "number" } },
@@ -198,7 +209,8 @@ export const dataGrid = defineUI({
         data: { label: "On Data (after Get data)", payload: { cells: "object", range: "string" } }
     },
     actions: {
-        setCell: { label: "Set one cell", help: "Puts a value in a cell, as if the user had typed it, but without an event. It lasts until the page is reloaded.", example: "{ address: \"B2\", value: 42 }" },
+        selectSheet: { label: "Select a sheet", help: "Shows the sheet with this name (any case), or at this place (from 0). A hidden sheet can be shown this way too. On Sheet Change tells Logic.", example: "\"Data\"  or  { sheet: \"Data\" }  or  { index: 2 }" },
+        setCell: { label: "Set one cell", help: "Puts a value in a cell, as if the user had typed it, but without an event. It lasts until the page is reloaded.", example: "{ address: \"B2\", value: 42, sheet: \"Data\" }  (sheet: the one on show when left out)" },
         setRange: { label: "Fill cells from a cell on", help: "Lays a value down from a cell, like a populate rule: a list down or to the right, a list of lists as a block, a list of objects as a table. An element can be a cell object { value, fill, type, ... } that carries its own type and style.", example: "{ at: \"B2\", values: [[1, { value: 2, fill: \"red\" }], [3, 4]], direction: \"down\" }" },
         clearRange: { label: "Empty cells", help: "Empties the cells of a range.", example: "\"B2:D9\"  or  { range: \"B2:D9\" }" },
         selectCell: { label: "Select a cell", help: "Selects a cell by its address.", example: "\"C5\"  or  { address: \"C5\" }" },
@@ -217,36 +229,16 @@ export const dataGrid = defineUI({
 
         // The host calls propsChanged() while the base constructor runs, and the field initialisers below run after it, so what that first call set would be
         // reset. _prepare() is therefore also called from render(), and it only does work when the props are a new object.
-        _stage = createStage();
-        _edits = new Map();         // what the user typed on the page: "r,c" -> value (kept until the page is reloaded, or a message fills the cell)
-        _cells = new Map();         // what was typed in the design
-        _populated = { map: new Map(), styles: new Map(), blocks: [] };
-        _popConfig = "";
-        _popValues = [];
-        _rules = [];
-        _merges = [];
-        _edges = { h: new Map(), v: new Map() };
-        _locks = [];
-        _freeze = { rows: 0, cols: 0 };
-        _size = { rows: 100, cols: 26 };
-        _area = { r1: 0, c1: 0, r2: 99, c2: 25 };
         _geo = null;
-        _scroll = { left: 0, top: 0 };
         _sbw = 0;
         _sbh = 0;
-        _sel = noSelection();
-        _selSig = "";
-        _selRange = null;
         _edit = null;               // { r, c, text } while a cell is being edited
         _dragging = "";             // "" | "cells" | "cols" | "rows"
         _preparedFor = null;
+        _asked = undefined;         // the last value of "Sheet shown" the binding gave: a new one switches the sheet
+        _restoreScroll = false;     // a sheet was switched to: its scroll position is put back after the next draw
         _focusEdit = false;
-        _colSz = [];                // every column's size by the rules: { width, min, max, adjustable }
-        _rowSz = new Map();         // the rows a rule talks about: { height, min, max, adjustable, fit }
-        _sizeEdits = { cols: new Map(), rows: new Map() };   // what the user dragged on the page: column -> width, row -> height
         _resize = null;             // { kind, indexes, x, y, start, min, max } while a line between two headers is dragged
-        _fit = new Map();           // row -> the height its wrapped text needs
-        _fitSig = "";
         _dataVersion = 0;           // grows when the values or the sizes change: the heights that fit the text are measured again
         _calcCache = null;          // the calculator of the formulas, made again when the data changed or the clock ticked (NOW, TODAY)
         _calcKey = "";
@@ -255,13 +247,6 @@ export const dataGrid = defineUI({
         _editFit = null;            // { r, h }: the row of the cell being typed in grows with the text
         _measure = null;
         _fill = null;               // { source, plan } while the fill handle is dragged
-        _actionStyles = new Map();  // "r,c" -> the type / style fields a cell object of the action Fill cells set
-        _sortArea = null;           // the rows under the heading and the columns of the area to sort: { r1, r2, c1, c2 }
-        _sortState = null;          // what the user chose: { c, dir }
-        _perm = null;               // the rows of the area in the order shown: the place i of the view shows the row perm[i] of the area
-        _inv = null;
-        _permSig = "";
-        _sortVersion = 0;           // grows when the props or a message change what is sorted (not when the user edits a cell: a row does not jump while it is typed in)
         _find = { open: false, text: "", cs: false, at: -1, focus: false };
         _matches = [];
         _matchSet = new Set();
@@ -275,11 +260,57 @@ export const dataGrid = defineUI({
             this.listen(window, "mousemove", (e) => this._dragResize(e));
         }
 
+        // The state of a sheet is reached as this._<key> (see SHEET_STATE_KEYS): these accessors read and write the state of the sheet on show.
+        static {
+            SHEET_STATE_KEYS.forEach((k) => Object.defineProperty(this.prototype, "_" + k, { get() { return this._cur[k]; }, set(v) { this._cur[k] = v; }, configurable: true }));
+        }
+        // (made when first asked: the base constructor calls propsChanged() before the field initialisers above have run)
+        get _cur() {
+            if (!this.__st) this.__st = { list: [makeSheetState("Sheet1")], index: 0 };
+            return this.__st.list[this.__st.index];
+        }
+        get _states() { this._cur; return this.__st.list; }
+        get _index() { this._cur; return this.__st.index; }
+        get _sp() { return this._cur.sp; }
+        // something done with sheet i as if it were on show (reading, editing, exporting it), and then back
+        _withSheet(i, fn) {
+            this._cur;
+            const st = this.__st, was = st.index;
+            st.index = i;
+            try { return fn(); } finally { st.index = was; }
+        }
+        _sheetNames() { return this._states.map((s) => s.name); }
+        // the events say which sheet they are about
+        fire(name, payload) { super.fire(name, Object.assign({ sheet: this._name }, payload)); }
+
         // ---- reading the props -----------------------------------------------------------------------------------
         _prepare() {
             const p = this.p || {};
             if (p === this._preparedFor) return;
             this._preparedFor = p;
+            const sheets = normalizeSheets(p.sheets);
+            const old = new Map(this._states.map((s) => [s.name, s]));
+            const before = this._cur.name;
+            // a sheet that is still there (by its name) keeps what the user did in it
+            const list = sheets.map((sheet) => {
+                const st = old.get(sheet.name) || makeSheetState(sheet.name);
+                st.name = sheet.name; st.sheet = sheet; st.sp = Object.assign({}, p, sheet);
+                return st;
+            });
+            // the sheet on show: the user's last choice stays, until the binding gives another name
+            let want = before;
+            if (p.activeSheet !== this._asked) { this._asked = p.activeSheet; if (p.activeSheet) want = p.activeSheet; }
+            const shown = activeIndex(sheets, want);
+            this.__st = { list, index: 0 };
+            list.forEach((st, i) => { this.__st.index = i; this._prepareSheet(); });
+            this.__st.index = shown;
+            if (this.__ready && list[shown].name !== before) this._afterSwitch(before);
+            this._dataVersion++;
+        }
+
+        // one sheet, as `this._cur`
+        _prepareSheet() {
+            const p = this._sp;
             const size = this._size = sizeOf(p.rows, p.cols);
             const area = this._area = viewAreaOf(p.viewArea, size.rows, size.cols);
             this._cells = parseCells(p.cells, size.rows, size.cols);
@@ -294,7 +325,52 @@ export const dataGrid = defineUI({
             this._sortArea = g && g.r2 - g.r1 + 1 > head ? { r1: g.r1 + head, r2: g.r2, c1: g.c1, c2: g.c2 } : null;
             if (!this._sortArea || p.sortable === false || (this._sortState && (this._sortState.c < this._sortArea.c1 || this._sortState.c > this._sortArea.c2))) this._sortState = null;
             this._sortVersion++;
+        }
+
+        // ---- the sheets: the tabs, switching --------------------------------------------------------------------------------
+        // another sheet is on show now: what belongs to one sheet's screen starts again (an edit, the find box), and Logic is told
+        _afterSwitch(previous) {
+            this._edit = null;
+            this._editFit = null;
+            this._find = Object.assign({}, this._find, { open: false });
+            this._matches = [];
+            this._matchSet = new Set();
+            this._matchSig = "";
+            this._geo = null;
+            this._restoreScroll = true;
+            this._selSig = "\u0000";
             this._dataVersion++;
+            this.requestUpdate();
+            this._announceSelection();
+            this.dispatchEvent(new CustomEvent("nexa-sheet", { detail: { name: this._name, index: this._index }, bubbles: true, composed: true }));
+            this.fire("sheetChange", { sheet: this._name, index: this._index, previous });
+        }
+
+        _selectSheet(i) {
+            const st = this.__st;
+            if (i === st.index || i < 0 || i >= st.list.length) return;
+            if (this._edit) this._commitEdit(this._editText());
+            const previous = this._name;
+            st.index = i;
+            this._afterSwitch(previous);
+        }
+
+        // the tabs are drawn when the grid says so and more than one sheet is shown as a tab
+        _tabsShown() { return this._sp.showSheetTabs !== false && visibleIndexes(this._states.map((s) => s.sheet)).length >= 2; }
+
+        _tabBar() {
+            const at = this._index;
+            return html`<div class="tabs" part="tabs" role="tablist">${this._states.map((st, i) => (isVisible(st.sheet)
+                ? html`<button type="button" role="tab" class="tab ${i === at ? "on" : ""}" data-tab=${i} aria-selected=${i === at ? "true" : "false"} tabindex="-1" title=${st.name}>${st.name}</button>` : nothing))}</div>`;
+        }
+
+        // an action may name a sheet ({ sheet: "Data", ... }, or a number): it is done in that sheet; without one, in the sheet on show
+        _onSheetOf(params, fn) {
+            const name = params && typeof params === "object" ? params.sheet : undefined;
+            if (name === undefined || name === null || name === "") return fn();
+            const i = typeof name === "number" ? name : indexOfSheet(this._states.map((s) => s.sheet), name);
+            if (!(i >= 0 && i < this._states.length)) return undefined;
+            return this._withSheet(i, fn);
         }
 
         // the order of the rows of the area to sort, made again when the props, a message or the user's choice changed it
@@ -360,48 +436,53 @@ export const dataGrid = defineUI({
             this._populated.map.forEach((v, k) => { this._edits.delete(k); this._actionStyles.delete(k); stageDrop(this._stage, k); });
         }
 
-        _mode() { return (this.p || {}).mode === "editable" ? "editable" : "readonly"; }
+        _mode() { return this._sp.mode === "editable" ? "editable" : "readonly"; }
         // changes wait (marked, not yet saved) with the small box and with the message; at once, they do not
-        _staged() { const m = (this.p || {}).saveMode; return m === "bar" || m === "message"; }
+        _staged() { const m = this._sp.saveMode; return m === "bar" || m === "message"; }
         _designing() { return this.isEditor && this.hasAttribute("data-interactive"); }
 
-        _layers() { return { cells: this._cells, populated: this._populated.map, edits: this._edits }; }
+        _layers(st) { const s = st || this._cur; return { cells: s.cells, populated: s.populated.map, edits: s.edits }; }
         _baseValue(r, c) { return valueAt(this._layers(), this._src(r, c), c); }
         // What is stored in a cell of the sheet (r, c count in the sheet, not in the sorted view): a number, a text, a boolean, nothing. A formula is stored as its text ("=A1+2").
-        _rawAt(r, c) { return stageValue(this._stage, cellKey(r, c), "v", valueAt(this._layers(), r, c)); }
+        _rawIn(st, r, c) { return stageValue(st.stage, cellKey(r, c), "v", valueAt(this._layers(st), r, c)); }
+        _rawAt(r, c) { return this._rawIn(this._cur, r, c); }
         _raw(r, c) { return this._rawAt(this._src(r, c), c); }
         // The formula a cell holds, or null. What a message populated is data and never a formula, even when it starts with "="; what was typed, set by an action or designed is.
-        _formulaAt(r, c) {
-            const raw = this._rawAt(r, c);
+        _formulaIn(st, r, c) {
+            const raw = this._rawIn(st, r, c);
             if (!isFormula(raw)) return null;
             const k = cellKey(r, c);
-            if (!stageHas(this._stage, k, "v") && !this._edits.has(k) && this._populated.map.has(k)) return null;
+            if (!stageHas(st.stage, k, "v") && !st.edits.has(k) && st.populated.map.has(k)) return null;
             return raw;
         }
+        _formulaAt(r, c) { return this._formulaIn(this._cur, r, c); }
         _formula(r, c) { return this._formulaAt(this._src(r, c), c); }
         // The calculator of this state of the data. Each cell is worked out once and only when it is asked for.
         _calc() {
             const key = this._dataVersion + "|" + this._tick;
             if (this._calcCache && this._calcKey === key) return this._calcCache;
             this._calcKey = key;
-            const size = this._size;
-            return (this._calcCache = createCalc((r, c) => this._rawAt(r, c), {
-                now: new Date(), rows: size.rows, cols: size.cols,
-                formulaAt: (r, c) => this._formulaAt(r, c) !== null,
-                coerce: (r, c, raw) => this._forFormula(r, c, raw)
+            // a formula may read any sheet (Sheet2!A1): the calculator is given all of them, by their number in the list
+            const states = this._states, names = states.map((s) => s.name.toLowerCase());
+            return (this._calcCache = createCalc((s, r, c) => this._rawIn(states[s], r, c), {
+                now: new Date(),
+                sheetIndex: (name) => names.indexOf(String(name).toLowerCase()),
+                size: (s) => states[s].size,
+                formulaAt: (s, r, c) => this._formulaIn(states[s], r, c) !== null,
+                coerce: (s, r, c, raw) => this._forFormulaIn(states[s], r, c, raw)
             }));
         }
         // What a formula sees in a plain cell: a date-typed cell is a serial number (as in Excel), a boolean-typed one a boolean
-        _forFormula(r, c, raw) {
+        _forFormulaIn(st, r, c, raw) {
             if (raw === null || raw === undefined || raw === "") return raw;
             const k = cellKey(r, c);
-            const type = Object.assign({}, fieldsAt(this._rules, r, c), this._populated.styles.get(k), this._actionStyles.get(k)).type;
+            const type = Object.assign({}, fieldsAt(st.rules, r, c), st.populated.styles.get(k), st.actionStyles.get(k)).type;
             if (type === "date") { const d = toDate(raw); return d ? dateToSerial(d) : raw; }
             if (type === "boolean") return raw === true || raw === "true" || raw === 1;
             return raw;
         }
         // The value of a cell of the sheet: a formula worked out (an error stays an error value), anything else as stored
-        _atSource(r, c) { return this._formulaAt(r, c) !== null ? this._calc().value(r, c) : this._rawAt(r, c); }
+        _atSource(r, c) { return this._formulaAt(r, c) !== null ? this._calc().value(this._index, r, c) : this._rawAt(r, c); }
         // The value of a cell of the view, as Logic is told it (an error as its text, "#DIV/0!")
         _value(r, c) { const v = this._atSource(this._src(r, c), c); return isError(v) ? v.code : v; }
         // The value of a cell of the view as it is drawn: the result of a formula fits the cell's type (a serial number in a date cell is a date; TRUE in a general cell is the word)
@@ -448,7 +529,7 @@ export const dataGrid = defineUI({
 
         // ---- geometry -------------------------------------------------------------------------------------------
         _geometry() {
-            const p = this.p || {};
+            const p = this._sp;
             const area = this._area;
             const nR = area.r2 - area.r1 + 1, nC = area.c2 - area.c1 + 1;
             const dd = this._sizeDefaults(p);
@@ -467,7 +548,7 @@ export const dataGrid = defineUI({
             const frozenW = colAxis.offsetOf(FC), frozenRowsH = rowAxis.offsetOf(F);
             const W = Math.max(this.size.w || this.clientWidth || 0, 0), H = Math.max(this.size.h || this.clientHeight || 0, 0);
             const bar = p.showFormulaBar === true ? BAR_H : 0;
-            const inW = Math.max(0, W - 2), inH = Math.max(0, H - 2 - bar);                 // inside the border, under the formula bar
+            const inW = Math.max(0, W - 2), inH = Math.max(0, H - 2 - bar - (this._tabsShown() ? TAB_H : 0));      // inside the border, between the formula bar and the tabs
             const topH = hh + frozenRowsH;
             const viewW = Math.max(0, inW - frozenW - this._sbw), viewH = Math.max(0, inH - topH - this._sbh);
             const rows = visibleRange(rowAxis, this._scroll.top, viewH, 4, F);
@@ -570,7 +651,7 @@ export const dataGrid = defineUI({
         // the button on the letter of a column of the area to sort: ascending, descending, back to the order of the sheet (on a page only; the dialog sorts the typed cells)
         _sortButton(c) {
             const a = this._sortArea, s = this._sortState;
-            if (!a || this.isEditor || this.p.sortable === false || c < a.c1 || c > a.c2) return nothing;
+            if (!a || this.isEditor || this._sp.sortable === false || c < a.c1 || c > a.c2) return nothing;
             const on = !!s && s.c === c;
             return html`<button type="button" class="srt ${on ? "on" : ""}" data-sortc=${c} title="Sort this column" tabindex="-1">${on ? icon(s.dir === "asc" ? "arrow-up" : "arrow-down") : html`<span aria-hidden="true">↕</span>`}</button>`;
         }
@@ -639,7 +720,7 @@ export const dataGrid = defineUI({
         }
 
         _openFind() {
-            if (this.p.findable === false) return;
+            if (this._sp.findable === false) return;
             this._find.open = true;
             this._find.focus = true;
             this._matchSig = "";
@@ -720,7 +801,7 @@ export const dataGrid = defineUI({
             this._prepare();
             this._ensurePerm();
             this._ensureMatches();
-            const p = this.p || {};
+            const p = this._sp;
             // where the populate rules start, for the marker the editor shows
             this._populateAt = new Map();
             (Array.isArray(p.populate) ? p.populate : []).forEach((item) => {
@@ -745,12 +826,14 @@ export const dataGrid = defineUI({
             const bl = g.FC ? this._pane(g, g.rows.from, g.rows.to, 0, g.FC, false, true) : [];
             const br = this._pane(g, g.rows.from, g.rows.to, Math.max(g.cols.from, g.FC), g.cols.to, false, false);
             const frozenTop = g.hh + g.frozenRowsH;
-            const staged = (this.p || {}).saveMode === "bar" && stageCount(this._stage) > 0;
+            const stagedCount = this._stagedTotal();
+            const staged = this._sp.saveMode === "bar" && stagedCount > 0;
+            const tabsH = this._tabsShown() ? TAB_H : 0;
             const bar = p.showFormulaBar === true;
             return html`<div class="grid ${p.showGridLines === false ? "nolines" : ""}" part="root" tabindex="0" role="grid" aria-rowcount=${g.nR} aria-colcount=${g.nC}
                 @mousedown=${this._onMouseDown} @mouseover=${this._onMouseOver} @click=${this._onClick} @dblclick=${this._onDblClick} @keydown=${this._onKey} @copy=${this._onCopy} @cut=${this._onCut} @paste=${this._onPaste} @change=${this._onChange} @focusout=${this._onFocusOut}>
                 ${bar ? this._formulaBar() : nothing}
-                <div class="body" style="top:${bar ? BAR_H : 0}px">
+                <div class="body" style="top:${bar ? BAR_H : 0}px;bottom:${tabsH}px">
                 <div class="pane" style="left:0;top:0;width:${g.frozenW}px;height:${frozenTop}px"><div class="inner">${headTL}${tl}</div></div>
                 <div class="pane" style="left:${g.frozenW}px;top:0;width:${g.viewW}px;height:${frozenTop}px"><div class="inner" data-pane="tr" style="transform:translateX(${-sl}px)">${headTR}${tr}</div></div>
                 <div class="pane" style="left:0;top:${frozenTop}px;width:${g.frozenW}px;height:${g.viewH}px"><div class="inner" data-pane="bl" style="transform:translateY(${-st}px)">${bl}</div></div>
@@ -759,16 +842,25 @@ export const dataGrid = defineUI({
                 </div>
                 </div>
                 ${this._find.open ? this._findBar() : nothing}
-                ${staged ? html`<div class="staged"><span>${stageCount(this._stage)} unsaved</span><button type="button" data-staged="save">Save</button><button type="button" class="ghost" data-staged="discard">Discard</button></div>` : nothing}
+                ${tabsH ? this._tabBar() : nothing}
+                ${staged ? html`<div class="staged" style="bottom:${tabsH + 8}px"><span>${stagedCount} unsaved</span><button type="button" data-staged="save">Save</button><button type="button" class="ghost" data-staged="discard">Discard</button></div>` : nothing}
             </div>`;
         }
 
         updated(changed) {
             super.updated(changed);
+            // from now on a change of the sheet on show is news (the first draws only found it)
+            this.__ready = true;
             // the SDK turns pointer events off in editor mode so that the canvas takes the clicks; the Edit grid dialog hosts the grid to click on it
             if (this.hasAttribute("data-interactive")) this.style.pointerEvents = "auto";
             this._measureFit();
             this._keepTime();
+            // a sheet was switched to: it is shown where the user left it
+            if (this._restoreScroll) {
+                this._restoreScroll = false;
+                const sc = this.renderRoot.querySelector("[data-scroller]");
+                if (sc && (sc.scrollTop !== this._scroll.top || sc.scrollLeft !== this._scroll.left)) { sc.scrollTop = this._scroll.top; sc.scrollLeft = this._scroll.left; }
+            }
             if (this._find.open && this._find.focus) {
                 const input = this.renderRoot.querySelector("[data-find]");
                 if (input) { this._find.focus = false; input.focus(); input.select(); }
@@ -808,7 +900,7 @@ export const dataGrid = defineUI({
 
         // the rows whose wrapped cells need more than the row's height: measured after a render (it needs the DOM), again only when the values or the sizes changed
         _measureFit() {
-            const p = this.p || {};
+            const p = this._sp;
             const sig = this._dataVersion + "|" + this._colSz.length + "|" + [...this._sizeEdits.cols.entries()].join(";");
             if (sig === this._fitSig) return;
             this._fitSig = sig;
@@ -839,14 +931,14 @@ export const dataGrid = defineUI({
             if (this._designing()) return true;
             if (this.isEditor) return false;
             if (kind === "c") { const s = this._colSz[index]; return !!s && s.adjustable !== false; }
-            return rowSizeAt(this._rowSz, index, this._sizeDefaults(this.p).row).adjustable !== false;
+            return rowSizeAt(this._rowSz, index, this._sizeDefaults(this._sp).row).adjustable !== false;
         }
 
         _beginResize(e, handle) {
             const kind = handle.dataset.rz, index = Number(handle.dataset.i);
             if (!this._canAdjust(kind, index) || !this._geo) return;
             const g = this._geo, a = this._area;
-            const dd = this._sizeDefaults(this.p);
+            const dd = this._sizeDefaults(this._sp);
             const start = kind === "c" ? g.colAxis.sizeOf(index - a.c1 + g.rn) : g.rowAxis.sizeOf(index - a.r1);
             // a column inside a selection of whole columns moves them all, as in a sheet
             const sel = this._selRange;
@@ -894,7 +986,7 @@ export const dataGrid = defineUI({
         _fitSize(handle) {
             const kind = handle.dataset.rz, index = Number(handle.dataset.i);
             if (!this._canAdjust(kind, index)) return;
-            const dd = this._sizeDefaults(this.p), a = this._area;
+            const dd = this._sizeDefaults(this._sp), a = this._area;
             let size;
             if (kind === "c") {
                 const m = this._measurer();
@@ -943,7 +1035,7 @@ export const dataGrid = defineUI({
         }
 
         _select(sel) {
-            if (this.p.selection === "none") return;
+            if (this._sp.selection === "none") return;
             this._sel = sel;
             this.requestUpdate();
             this._announceSelection();
@@ -953,7 +1045,7 @@ export const dataGrid = defineUI({
         _selectRows(r1, r2) { const a = this._area; this._select({ anchor: { r: r1, c: a.c1 }, focus: { r: r2, c: a.c2 } }); }
 
         _announceSelection() {
-            const range = this.p.selection === "none" ? null : growToMerges(rangeOf(this._sel), this._merges);
+            const range = this._sp.selection === "none" ? null : growToMerges(rangeOf(this._sel), this._merges);
             const sig = range ? [range.r1, range.c1, range.r2, range.c2].join(",") : "";
             if (sig === this._selSig) return;
             this._selSig = sig;
@@ -971,7 +1063,7 @@ export const dataGrid = defineUI({
             if (e.button !== 0) return;
             const handle = e.target.closest && e.target.closest("[data-rz]");
             if (handle) { this._beginResize(e, handle); return; }
-            if (e.target.closest && (e.target.closest("[data-sortc]") || e.target.closest("[data-xlsx]") || e.target.closest(".findbar") || e.target.closest(".fbar"))) return;
+            if (e.target.closest && (e.target.closest("[data-sortc]") || e.target.closest("[data-xlsx]") || e.target.closest(".findbar") || e.target.closest(".fbar") || e.target.closest(".tabs"))) return;
             if (e.target.closest && e.target.closest("[data-fill]") && this._selRange) { this._fill = { source: Object.assign({}, this._selRange), plan: null }; e.preventDefault(); return; }
             const head = this._headAt(e);
             if (head) {
@@ -990,9 +1082,9 @@ export const dataGrid = defineUI({
             const hit = this._at(e);
             if (!hit || e.target.closest("[data-edit]") || e.target.closest("input, select")) return;
             if (this._edit) this._commitEdit(this._editText());
-            if (e.shiftKey && this.p.selection === "range") this._select(extendTo(this._sel, hit.r, hit.c));
+            if (e.shiftKey && this._sp.selection === "range") this._select(extendTo(this._sel, hit.r, hit.c));
             else this._select(selectCell(hit.r, hit.c));
-            this._dragging = this.p.selection === "range" ? "cells" : "";
+            this._dragging = this._sp.selection === "range" ? "cells" : "";
         }
 
         _onMouseOver(e) {
@@ -1009,6 +1101,8 @@ export const dataGrid = defineUI({
         }
 
         _onClick(e) {
+            const tab = e.target.closest && e.target.closest("[data-tab]");
+            if (tab) { this._selectSheet(Number(tab.dataset.tab)); return; }
             if (e.target.closest && e.target.closest("[data-xlsx]")) { this.exportXlsx(); return; }
             const srt = e.target.closest && e.target.closest("[data-sortc]");
             if (srt) { this._toggleSort(Number(srt.dataset.sortc)); return; }
@@ -1147,11 +1241,11 @@ export const dataGrid = defineUI({
                 else if (e.key === "Escape") { e.preventDefault(); this._cancelEdit(); this._focusGrid(); }
                 return;
             }
-            if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && String(e.key).toLowerCase() === "f" && this.p.findable !== false) { e.preventDefault(); this._openFind(); return; }
+            if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && String(e.key).toLowerCase() === "f" && this._sp.findable !== false) { e.preventDefault(); this._openFind(); return; }
             if (e.target.closest && e.target.closest("input, select")) return;
-            if (this.p.selection === "none") return;
+            if (this._sp.selection === "none") return;
             const f = this._sel.focus || { r: a.r1, c: a.c1 };
-            const extend = e.shiftKey && this.p.selection === "range";
+            const extend = e.shiftKey && this._sp.selection === "range";
             const page = Math.max(1, Math.floor((this._geo ? this._geo.viewH : 300) / (this._geo ? this._geo.rh : 28)) - 1);
             const move = { ArrowDown: [1, 0], ArrowUp: [-1, 0], ArrowRight: [0, 1], ArrowLeft: [0, -1], PageDown: [page, 0], PageUp: [-page, 0], Tab: [0, e.shiftKey ? -1 : 1] }[e.key];
             if (move) {
@@ -1173,7 +1267,7 @@ export const dataGrid = defineUI({
                 e.preventDefault(); this._clearSelection();
             } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
                 if (cellSpec(this._fields(f.r, f.c)).type !== "boolean" && this._startEdit(f.r, f.c, e.key)) e.preventDefault();
-            } else if ((e.key === "a" || e.key === "A") && (e.ctrlKey || e.metaKey) && this.p.selection === "range") {
+            } else if ((e.key === "a" || e.key === "A") && (e.ctrlKey || e.metaKey) && this._sp.selection === "range") {
                 e.preventDefault(); this._commitSelection({ anchor: { r: a.r1, c: a.c1 }, focus: { r: a.r2, c: a.c2 } });
             }
         }
@@ -1200,7 +1294,7 @@ export const dataGrid = defineUI({
         }
 
         // the fill handle shows where the user can fill: in the Edit grid dialog, and on an editable page
-        _canFill() { return !!this._selRange && this.p.selection !== "none" && (this._designing() || (!this.isEditor && this._mode() === "editable")); }
+        _canFill() { return !!this._selRange && this._sp.selection !== "none" && (this._designing() || (!this.isEditor && this._mode() === "editable")); }
 
         // the style fields of a cell, the ones a rule can have
         _styleOf(r, c) {
@@ -1236,7 +1330,7 @@ export const dataGrid = defineUI({
         _onPaste(e) {
             if (!e.clipboardData || (e.target.closest && e.target.closest("input, select, textarea"))) return;
             const range = this._selRange;
-            if (!range || this.p.selection === "none") return;
+            if (!range || this._sp.selection === "none") return;
             e.preventDefault();
             const packed = unpackCells(e.clipboardData.getData(GRID_MIME));
             const text = packed ? null : parseTsv(e.clipboardData.getData("text/plain"));
@@ -1321,7 +1415,20 @@ export const dataGrid = defineUI({
             return parseAddress(text);
         }
 
-        setCell(params) {
+        // the sheet to show: by name or by place
+        selectSheet(params) {
+            const given = params && typeof params === "object" ? (params.sheet !== undefined ? params.sheet : params.index) : params;
+            const i = typeof given === "number" ? given : indexOfSheet(this._states.map((s) => s.sheet), given);
+            if (i >= 0 && i < this._states.length) this._selectSheet(i);
+        }
+
+        setCell(params) { this._onSheetOf(params, () => this._setCell(params)); }
+        setRange(params) { this._onSheetOf(params, () => this._setRange(params)); }
+        clearRange(params) { this._onSheetOf(params, () => this._clearRange(params)); }
+        sortColumn(params) { this._onSheetOf(params, () => this._sortColumn(params)); }
+        getData(params) { this._onSheetOf(params, () => this._getData()); }
+
+        _setCell(params) {
             const a = this._addressOf(params);
             if (!a || a.r >= this._size.rows || a.c >= this._size.cols || !params || typeof params !== "object" || params.value === undefined) return;
             this._edits.set(cellKey(a.r, a.c), params.value);
@@ -1330,7 +1437,7 @@ export const dataGrid = defineUI({
             this.requestUpdate();
         }
 
-        setRange(params) {
+        _setRange(params) {
             const p = params && typeof params === "object" ? params : {};
             const at = parseAddress(p.at);
             if (!at) return;
@@ -1345,7 +1452,7 @@ export const dataGrid = defineUI({
             this.requestUpdate();
         }
 
-        clearRange(params) {
+        _clearRange(params) {
             const text = params && typeof params === "object" ? params.range : params;
             const g = viewAreaOf(text, this._size.rows, this._size.cols);
             if (!String(text || "").trim()) return;
@@ -1359,13 +1466,16 @@ export const dataGrid = defineUI({
             this.requestUpdate();
         }
 
+        // these two bring the sheet they name on show first
         selectCell(params) {
+            this.selectSheet(params && typeof params === "object" && params.sheet !== undefined ? { sheet: params.sheet } : undefined);
             const a = this._addressOf(params);
             if (!a || a.r >= this._size.rows || a.c >= this._size.cols) return;
             this._commitSelection(selectCell(a.r, a.c));
         }
 
         scrollToCell(params) {
+            this.selectSheet(params && typeof params === "object" && params.sheet !== undefined ? { sheet: params.sheet } : undefined);
             const a = this._addressOf(params);
             if (a && a.r < this._size.rows && a.c < this._size.cols) this._ensureVisible(a.r, a.c);
         }
@@ -1374,7 +1484,7 @@ export const dataGrid = defineUI({
         // The model of the file from the grid as it is shown (the order of a sorted view, the area shown, what the user typed): the box of the cells that have a
         // value or are merged, with the types, formats and styles the cells have, the sizes, the merges and the frozen panes. Positions count from the box's corner.
         _xlsxModel() {
-            const p = this.p || {}, a = this._area, dd = this._sizeDefaults(p);
+            const p = this._sp, a = this._area, dd = this._sizeDefaults(p);
             let r0 = Infinity, c0 = Infinity, r1 = -1, c1 = -1;
             const grow = (r, c) => { if (r < r0) r0 = r; if (r > r1) r1 = r; if (c < c0) c0 = c; if (c > c1) c1 = c; };
             const keys = new Set([...this._cells.keys(), ...this._populated.map.keys(), ...this._edits.keys()]);
@@ -1387,7 +1497,9 @@ export const dataGrid = defineUI({
             });
             this._merges.forEach((m) => { if (m.r2 >= a.r1 && m.r1 <= a.r2 && m.c2 >= a.c1 && m.c1 <= a.c2) { grow(Math.max(m.r1, a.r1), Math.max(m.c1, a.c1)); grow(Math.min(m.r2, a.r2), Math.min(m.c2, a.c2)); } });
             if (r1 < 0) { r0 = a.r1; c0 = a.c1; r1 = a.r1; c1 = a.c1; }
-            const model = { name: "Sheet1", cells: [], cols: {}, rows: {}, merges: [], defaultCol: dd.col.width, defaultRow: dd.row.height, freeze: { rows: 0, cols: 0 } };
+            // a sheet whose area starts at A1 keeps its addresses in the file (the formulas of other sheets read them); another area starts at its own corner
+            if (a.r1 === 0 && a.c1 === 0) { r0 = 0; c0 = 0; }
+            const model = { name: this._name, hidden: !isVisible(this._sheet), cells: [], cols: {}, rows: {}, merges: [], defaultCol: dd.col.width, defaultRow: dd.row.height, freeze: { rows: 0, cols: 0 } };
             const edge = (map, key) => { const s = map.get(key); return s ? { style: s.style, width: s.width, color: s.color } : null; };
             for (let r = r0; r <= r1 && model.cells.length < 200000; r++) {
                 for (let c = c0; c <= c1; c++) {
@@ -1432,7 +1544,10 @@ export const dataGrid = defineUI({
             const given = params && typeof params === "object" ? params.name : params;
             let name = typeof given === "string" && given.trim() ? given.trim().replace(/[\\/:*?"<>|]+/g, "_") : "sheet";
             if (!/\.xlsx$/i.test(name)) name += ".xlsx";
-            const blob = zipStore(buildXlsxFiles(this._xlsxModel()));
+            // the whole workbook: every sheet, the one on show opens first
+            const book = { sheets: this._states.map((st, i) => this._withSheet(i, () => this._xlsxModel())), active: this._index };
+            book.sheets[this._index].active = true;
+            const blob = zipStore(buildXlsxFiles(book));
             const url = URL.createObjectURL(blob);
             const link = document.createElement("a");
             link.href = url; link.download = name;
@@ -1442,7 +1557,7 @@ export const dataGrid = defineUI({
             this.after(4000, () => URL.revokeObjectURL(url));
         }
 
-        sortColumn(params) {
+        _sortColumn(params) {
             const p = params && typeof params === "object" ? params : {};
             const c = parseAddress(String(p.column || "") + "1");
             const dir = p.direction === "asc" || p.direction === "desc" ? p.direction : "";
@@ -1455,7 +1570,14 @@ export const dataGrid = defineUI({
             this.requestUpdate();
         }
 
-        save() {
+        // the changes waiting in every sheet
+        _stagedTotal() { return this._states.reduce((n, st) => n + stageCount(st.stage), 0); }
+
+        // each sheet that has changes waiting tells its own On Save
+        save() { this._states.forEach((st, i) => this._withSheet(i, () => this._saveSheet())); }
+        discard() { this._states.forEach((st, i) => this._withSheet(i, () => this._discardSheet())); }
+
+        _saveSheet() {
             const cells = [];
             this._stage.edits.forEach((fields, key) => {
                 const [r, c] = key.split(",").map(Number);
@@ -1469,7 +1591,7 @@ export const dataGrid = defineUI({
             this.fire("save", { cells });
         }
 
-        discard() {
+        _discardSheet() {
             const count = stageCount(this._stage);
             if (!count) return;
             stageClear(this._stage);
@@ -1478,7 +1600,7 @@ export const dataGrid = defineUI({
             this.fire("discard", { count });
         }
 
-        getData() {
+        _getData() {
             const keys = new Set([...this._cells.keys(), ...this._populated.map.keys(), ...this._edits.keys()]);
             const cells = {}, formulas = {};
             let r1 = Infinity, c1 = Infinity, r2 = -1, c2 = -1;

@@ -86,3 +86,45 @@ export const ROW_RULE_SCHEMA = {
     adjustable: Object.assign({ label: "The user can drag its height", help: "Empty: what the grid says (Rows can be dragged)." }, adjustable),
     fit: Object.assign({ label: "Grows to fit wrapped text", help: "Empty: what the grid says. No: the height stays and long text scrolls in the cell." }, adjustable)
 };
+
+/**
+ * What a sheet has of its own (the stored keys of one entry of the grid's `sheets`): the name, whether it is shown as a tab, whether it can be edited, its size,
+ * its content and its rules. The Edit grid dialog builds its tree from this; the view reads the same keys. The groups are the dialog's.
+ */
+export const SHEET_PROPS = {
+    name: { type: "string", default: "Sheet1", group: "Sheet", label: "Name", bindable: false, help: "The name on the tab, and what a formula writes before an exclamation mark to read this sheet (Sheet2!A1; with a space in the name: 'My data'!A1). Up to 31 characters, none of [ ] : * ? / \\." },
+    visible: { type: "boolean", default: true, group: "Sheet", label: "Shown as a tab", help: "Off: the tab is hidden, but formulas can still read the sheet and a message can still switch to it." },
+    rows: { type: "number", default: 100, min: 1, max: 1000, group: "Sheet", label: "Rows", help: "Up to 1000." },
+    cols: { type: "number", default: 26, min: 1, max: 702, group: "Sheet", label: "Columns", help: "Up to 702 (A … ZZ)." },
+    viewArea: { type: "string", default: "", group: "Sheet", label: "Area shown", placeholder: "A1:H20",
+        help: "The page shows only this area of the sheet (the headers keep their letters and numbers). Empty: the whole sheet." },
+    freezeRows: { type: "number", default: 0, min: 0, group: "Sheet", label: "Frozen rows", help: "The first rows of what is shown stay in place while the rest scrolls." },
+    freezeCols: { type: "number", default: 0, min: 0, group: "Sheet", label: "Frozen columns", help: "The first columns stay in place." },
+    showHeaders: { type: "boolean", default: true, group: "Display", label: "Show the column letters and row numbers" },
+    showGridLines: { type: "boolean", default: true, group: "Display", label: "Show the grid lines" },
+    mode: { type: "enum", default: "readonly", group: "Sheet", label: "Mode", style: "segmented", options: [{ value: "readonly", label: "Read only" }, { value: "editable", label: "Editable" }],
+        help: "Read only: nothing can be edited, whatever is unlocked. Editable: every cell can be, except the ones a lock rule locks. Bind it to change it while the page runs." },
+    colWidth: { type: "number", default: 110, min: 24, unit: "px", group: "Columns", label: "Column width", help: "What a column has when no rule below says otherwise." },
+    colRules: { type: "list", default: [], group: "Columns", label: "Column sizes", noun: "column rule", itemLabel: "columns", help: "A width, and the smallest and largest it can be dragged to, for some columns.",
+        item: { row: true, fields: COL_RULE_SCHEMA, create: () => ({ columns: "A" }) } },
+    adjustCols: { type: "boolean", default: true, group: "Columns", label: "The user can drag the column widths", help: "On the page: drag the line between two letters. What is dragged stays until the page is reloaded. A column rule can say otherwise." },
+    minColWidth: { type: "number", default: 30, min: 0, unit: "px", group: "Columns", label: "Smallest a column can be dragged to" },
+    maxColWidth: { type: "number", default: 600, min: 0, unit: "px", group: "Columns", label: "Largest a column can be dragged to" },
+    rowHeight: { type: "number", default: 28, min: 16, max: 200, unit: "px", group: "Rows", label: "Row height", help: "What a row has when no rule below says otherwise." },
+    rowRules: { type: "list", default: [], group: "Rows", label: "Row sizes", noun: "row rule", itemLabel: "rows", help: "A height, the limits, and whether it grows to fit wrapped text, for some rows.",
+        item: { row: true, fields: ROW_RULE_SCHEMA, create: () => ({ rows: "1" }) } },
+    adjustRows: { type: "boolean", default: true, group: "Rows", label: "The user can drag the row heights", help: "On the page: drag the line between two numbers. A row rule can say otherwise." },
+    autoFit: { type: "boolean", default: true, group: "Rows", label: "Rows grow to fit wrapped text", help: "A cell with Wrap text makes its row as tall as the text needs, up to the largest height; past it, the text scrolls in the cell. A row that cannot be adjusted keeps its height." },
+    minRowHeight: { type: "number", default: 18, min: 0, unit: "px", group: "Rows", label: "Smallest a row can be dragged to" },
+    maxRowHeight: { type: "number", default: 400, min: 0, unit: "px", group: "Rows", label: "Largest a row can be dragged to, and grow to" },
+    sortArea: { type: "string", default: "", group: "Sort and find", label: "Area to sort", placeholder: "A1:F200", help: "The columns and rows that are sorted together (a row moves as one). Empty: no sorting." },
+    sortHeader: { type: "boolean", default: true, group: "Sort and find", label: "The first row of the area is a heading", help: "A heading stays in place; the rows under it are sorted." },
+    populate: { type: "list", default: [], group: "Populate", label: "Populate from messages", noun: "rule", itemLabel: "at",
+        help: "A rule takes a value from a message (or a variable, a tag) and puts it in the cells from one cell on: one value, a list down or to the right, a table.",
+        item: { row: true, fields: POPULATE_SCHEMA, create: (items) => ({ at: "A1", direction: "down", enabled: true }) } },
+    cells: { type: "json", default: {}, group: "Sheet", label: "Cells", hidden: true, noReset: true, bindable: false },
+    cellRules: { type: "list", default: [], group: "Sheet", label: "Types and styles", hidden: true, noReset: true, noun: "rule", itemLabel: "range", item: { row: true, fields: RULE_SCHEMA } },
+    merges: { type: "list", default: [], group: "Sheet", label: "Merged cells", hidden: true, noReset: true, noun: "merge", item: { type: "string" } },
+    borders: { type: "list", default: [], group: "Sheet", label: "Borders", hidden: true, noReset: true, noun: "border rule", itemLabel: "range", item: { row: true, fields: BORDER_SCHEMA } },
+    locks: { type: "list", default: [], group: "Editing", label: "Locked / open cells", hidden: true, noReset: true, noun: "lock rule", itemLabel: "range", item: { row: true, fields: LOCK_SCHEMA } },
+};

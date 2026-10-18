@@ -10,11 +10,11 @@ const path = require('path');
 
 // The modules are plain ES modules. They are loaded without a bundler: each one in its own function scope, an `import { a } from "./x.js"`
 // becoming a destructuring of what x.js exported (so the order below is the order of the imports).
-const ORDER = ['address.js', 'sizes.js', 'cell-types.js', 'populate.js', 'sheet.js', 'clipboard.js', 'layout.js', 'window.js', 'stage.js', 'selection.js', 'design.js', 'fill.js', 'sort.js', 'xlsx.js', 'xlvalue.js', 'xlfuncs.js', 'formula.js', 'calc.js'];
+const ORDER = ['address.js', 'sizes.js', 'cell-types.js', 'populate.js', 'sheet.js', 'clipboard.js', 'layout.js', 'window.js', 'stage.js', 'selection.js', 'design.js', 'fill.js', 'sort.js', 'xlvalue.js', 'xlsx.js', 'xlfuncs.js', 'formula.js', 'calc.js', 'sheets.js', 'xlsx-read.js'];
 const M = {};
 ORDER.forEach((file) => {
     let src = fs.readFileSync(path.join(__dirname, '..', 'dist', 'data-grid', file), 'utf8');
-    const names = [...src.matchAll(/^export (?:var|let|const|function|class) (\w+)/gm)].map((m) => m[1]);
+    const names = [...src.matchAll(/^export (?:var|let|const|(?:async )?function|class) (\w+)/gm)].map((m) => m[1]);
     src = src.replace(/^import \{([^}]*)\} from "\.\/([\w-]+\.js)";?\s*$/gm, (all, list, from) => 'const {' + list + '} = __m["' + from + '"];');
     src = src.replace(/^export /gm, '');
     M[file] = new Function('__m', src + '\nreturn {' + names.join(',') + '};')(M);
@@ -813,8 +813,8 @@ ok('design: commonFields: what the selected cells have in common, nothing for a 
 const Fm = M['formula.js'], C = M['calc.js'], V = M['xlvalue.js'];
 // a sheet from { A1: 5, B1: "=A1*2" } -> a function that gives the value of an address
 function sheet(cells, extra) {
-    const calc = C.createCalc((r, c) => { const v = cells[A.addressOf(r, c)]; return v === undefined ? null : v; }, extra);
-    return (addr) => { const a = A.parseAddress(addr); const v = calc.value(a.r, a.c); return V.isError(v) ? v.code : v; };
+    const calc = C.createCalc((s, r, c) => { const v = cells[A.addressOf(r, c)]; return v === undefined ? null : v; }, extra);
+    return (addr) => { const a = A.parseAddress(addr); const v = calc.value(0, a.r, a.c); return V.isError(v) ? v.code : v; };
 }
 const calcOf = (formula, cells) => sheet(Object.assign({ Z1: formula }, cells || {}))('Z1');
 function serialOf(y, m, d) { return Math.floor(V.dateToSerial(new Date(y, m - 1, d))); }
@@ -965,12 +965,12 @@ ok('functions: date and time work on serial numbers; NOW and TODAY are volatile'
     const noon = new Date(2026, 5, 1, 12, 0, 0);
     assert.strictEqual(sheet({ A1: '=TODAY()' }, { now: noon })('A1'), serialOf(2026, 6, 1));
     assert.strictEqual(sheet({ A1: '=NOW()-TODAY()' }, { now: noon })('A1'), 0.5);
-    const calc = C.createCalc((r, c) => (r === 0 && c === 0 ? '=NOW()' : 1));
+    const calc = C.createCalc((s, r, c) => (r === 0 && c === 0 ? '=NOW()' : 1));
     assert.strictEqual(calc.volatile, false);
-    calc.value(0, 0);
+    calc.value(0, 0, 0);
     assert.strictEqual(calc.volatile, true);
     const plainCalc = C.createCalc(() => '=1+1');
-    plainCalc.value(0, 0);
+    plainCalc.value(0, 0, 0);
     assert.strictEqual(plainCalc.volatile, false, 'a plain formula is not volatile');
 });
 
@@ -1062,4 +1062,255 @@ ok('xlvalue: compare order, criteria, 15-digit numbers, dates round trip', () =>
     assert.ok(V.criterion('>5')(6) && !V.criterion('>5')(5) && V.criterion('a*')('Apple') && V.criterion('<>a')('b'));
 });
 
-console.log('\n' + passed + ' passed');
+// a workbook: { "Sheet1": { A1: 1 }, "My Data": { ... } } -> the value of a cell by (sheet name, address)
+function book(sheets, extra) {
+    const names = Object.keys(sheets);
+    const calc = C.createCalc((s, r, c) => { const v = sheets[names[s]][A.addressOf(r, c)]; return v === undefined ? null : v; },
+        Object.assign({ sheetIndex: (n) => names.findIndex((x) => x.toLowerCase() === String(n).toLowerCase()), size: () => ({ rows: 100, cols: 26 }) }, extra));
+    return (name, addr) => { const a = A.parseAddress(addr); const v = calc.value(names.indexOf(name), a.r, a.c); return V.isError(v) ? v.code : v; };
+}
+
+ok('sheets: a formula reads another sheet: Sheet2!A1, a name with spaces in quotes, ranges, whole columns, any case; no sheet is the formula\'s own', () => {
+    const v = book({ Sheet1: { A1: '=Sheet2!A1*2', A2: "='My Data'!B1+1", A3: '=SUM(Sheet2!A1:A3)', A4: '=SUM(sheet2!A:A)', A5: '=A1+Sheet2!A1', A6: '=Nope!A1', A7: "=SUM('My Data'!B1:B2)" },
+        Sheet2: { A1: 5, A2: 6, A3: 7 }, 'My Data': { B1: 10, B2: 20 } });
+    assert.strictEqual(v('Sheet1', 'A1'), 10);
+    assert.strictEqual(v('Sheet1', 'A2'), 11);
+    assert.strictEqual(v('Sheet1', 'A3'), 18);
+    assert.strictEqual(v('Sheet1', 'A4'), 18, 'whole column, any case of the name');
+    assert.strictEqual(v('Sheet1', 'A5'), 15, 'A1 is of Sheet1 (=Sheet2!A1*2 = 10), Sheet2!A1 is 5');
+    assert.strictEqual(v('Sheet1', 'A6'), '#REF!', 'a sheet that is not there');
+    assert.strictEqual(v('Sheet1', 'A7'), 30);
+});
+
+ok('sheets: a formula in another sheet reads its own sheet by default; a loop across sheets is #CYCLE!', () => {
+    const v = book({ A: { A1: '=B!A1+1', A2: '=A1' }, B: { A1: '=A!A1+1', A2: '=A1*10', A3: '=A!A2' } });
+    assert.strictEqual(v('A', 'A1'), '#CYCLE!');
+    assert.strictEqual(v('B', 'A1'), '#CYCLE!');
+    const w = book({ A: { A1: 3, A2: '=B!A2' }, B: { A1: 4, A2: '=A1*10' } });
+    assert.strictEqual(w('A', 'A2'), 40, 'B!A2 is =A1*10 in B: its own A1 (4), not the A1 of A');
+});
+
+ok('sheets: shiftFormula moves the references and leaves the sheet name alone; the tokenizer reads quoted names with a quote in them', () => {
+    assert.strictEqual(Fm.shiftFormula('=Sheet2!A1+B1', 1, 0), '=Sheet2!A2+B2');
+    assert.strictEqual(Fm.shiftFormula("='My Data'!$A1:B2", 1, 1), "='My Data'!$A2:C3");
+    const t = Fm.tokenize("'It''s'!A1");
+    assert.deepStrictEqual([t.tokens[0].type, t.tokens[0].text, t.tokens[1].type], ['sheet', "It's", 'cell']);
+    assert.ok(!Fm.parseFormula('=Sheet2!5').ast, 'a sheet name must be followed by a cell or a range');
+});
+
+const Sh = M['sheets.js'];
+
+ok('sheets: names are clean (31 characters, none of []:*?/\\), different from each other in any case, at least one sheet; a good list is kept as it is', () => {
+    assert.deepStrictEqual(Sh.normalizeSheets(undefined), [{ name: 'Sheet1' }]);
+    assert.deepStrictEqual(Sh.normalizeSheets([]), [{ name: 'Sheet1' }]);
+    const good = [{ name: 'A' }, { name: 'B', visible: false }];
+    const out = Sh.normalizeSheets(good);
+    assert.strictEqual(out[0], good[0], 'the same object when nothing needed changing');
+    assert.deepStrictEqual(Sh.normalizeSheets([{ name: 'Data' }, { name: 'data' }, { name: '' }, { name: 'x/y:z' }, 5, null]).map((s) => s.name), ['Data', 'data (2)', 'Sheet3', 'x_y_z']);
+    assert.strictEqual(Sh.cleanName('a'.repeat(40)).length, 31);
+    assert.strictEqual(Sh.cleanName("'quoted'"), 'quoted');
+    assert.strictEqual(Sh.uniqueName('Sheet1', ['sheet1', 'Sheet1 (2)']), 'Sheet1 (3)');
+});
+
+ok('sheets: active sheet by name (any case), else the first one that is shown; the visible tabs; add, remove (never the last), move, duplicate, rename', () => {
+    const list = [{ name: 'Hidden', visible: false }, { name: 'Main' }, { name: 'Other' }];
+    assert.strictEqual(Sh.activeIndex(list, 'other'), 2);
+    assert.strictEqual(Sh.activeIndex(list, 'nothing'), 1, 'the first one that is shown');
+    assert.strictEqual(Sh.activeIndex(list, 'Hidden'), 0, 'a hidden sheet can still be the active one: a message asked for it');
+    assert.deepStrictEqual(Sh.visibleIndexes(list), [1, 2]);
+    assert.deepStrictEqual(Sh.addSheet(list).map((s) => s.name), ['Hidden', 'Main', 'Other', 'Sheet4']);
+    assert.deepStrictEqual(Sh.addSheet(list, 0).map((s) => s.name), ['Hidden', 'Sheet4', 'Main', 'Other'], 'after a sheet');
+    assert.deepStrictEqual(Sh.removeSheet(list, 1).map((s) => s.name), ['Hidden', 'Other']);
+    assert.strictEqual(Sh.removeSheet([{ name: 'Only' }], 0).length, 1, 'the last sheet stays');
+    assert.deepStrictEqual(Sh.moveSheet(list, 2, -1).map((s) => s.name), ['Hidden', 'Other', 'Main']);
+    assert.strictEqual(Sh.moveSheet(list, 0, -1), list, 'cannot move past the end');
+    const dup = Sh.duplicateSheet([{ name: 'A', cells: { A1: 1 } }], 0);
+    assert.deepStrictEqual(dup.map((s) => s.name), ['A', 'A (2)']);
+    dup[1].cells.A1 = 9;
+    assert.strictEqual(dup[0].cells.A1, 1, 'a copy, not the same cells');
+    const r = Sh.renameSheet(list, 1, 'Other');
+    assert.strictEqual(r.name, 'Other (2)', 'a name another sheet has');
+    assert.strictEqual(Sh.renameSheet(list, 1, '').name, 'Main', 'an empty name changes nothing');
+});
+
+ok('sheets: renameInFormula writes the new name where a formula read the old one (quotes when needed, any case), and leaves the rest', () => {
+    assert.strictEqual(Fm.renameInFormula('=Data!A1+B1', 'data', 'Raw'), '=Raw!A1+B1');
+    assert.strictEqual(Fm.renameInFormula('=Data!A1+B1', 'Data', 'My data'), "='My data'!A1+B1");
+    assert.strictEqual(Fm.renameInFormula("=SUM('My data'!A1:A3)+Other!B1", 'my data', "It's"), "=SUM('It''s'!A1:A3)+Other!B1");
+    assert.strictEqual(Fm.renameInFormula('=Data!A1', 'Data', 'A1'), "='A1'!A1", 'a name that looks like a cell is quoted');
+    assert.strictEqual(Fm.renameInFormula('="Data!A1"&A1', 'Data', 'X'), '="Data!A1"&A1', 'a text is not a reference');
+    assert.strictEqual(Fm.renameInFormula('plain', 'Data', 'X'), 'plain');
+    assert.strictEqual(Fm.formulaProblem('=SUM(A1:A3)*2'), '');
+    assert.strictEqual(Fm.formulaProblem('=FOO(A1)'), 'FOO');
+    assert.strictEqual(Fm.formulaProblem('=Total*2'), 'a name');
+    assert.strictEqual(Fm.formulaProblem('=1+'), 'a formula it cannot read');
+});
+
+// ---- reading Excel files ------------------------------------------------------------------------------------------------------------------------
+const zlib = require('zlib');
+const Xr = M['xlsx-read.js'], Xw = M['xlsx.js'];
+const later = [];
+function okLater(label, fn) { later.push([label, fn]); }
+
+// a zip made here, to read it back: files = { name: text }, deflated or stored
+function makeZip(files, deflate) {
+    const enc = new TextEncoder(), parts = [], central = [];
+    let offset = 0;
+    Object.keys(files).forEach((name) => {
+        const raw = Buffer.from(enc.encode(files[name]));
+        const body = deflate ? zlib.deflateRawSync(raw) : raw;
+        const nm = Buffer.from(name), crc = zlib.crc32(raw);
+        const head = Buffer.alloc(30);
+        head.writeUInt32LE(0x04034b50, 0); head.writeUInt16LE(20, 4); head.writeUInt16LE(0, 6); head.writeUInt16LE(deflate ? 8 : 0, 8);
+        head.writeUInt32LE(crc >>> 0, 14); head.writeUInt32LE(body.length, 18); head.writeUInt32LE(raw.length, 22); head.writeUInt16LE(nm.length, 26);
+        parts.push(head, nm, body);
+        const c = Buffer.alloc(46);
+        c.writeUInt32LE(0x02014b50, 0); c.writeUInt16LE(20, 4); c.writeUInt16LE(20, 6); c.writeUInt16LE(deflate ? 8 : 0, 10);
+        c.writeUInt32LE(crc >>> 0, 16); c.writeUInt32LE(body.length, 20); c.writeUInt32LE(raw.length, 24); c.writeUInt16LE(nm.length, 28); c.writeUInt32LE(offset, 42);
+        central.push(c, nm);
+        offset += head.length + nm.length + body.length;
+    });
+    const dir = Buffer.concat(central);
+    const end = Buffer.alloc(22);
+    end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(Object.keys(files).length, 8); end.writeUInt16LE(Object.keys(files).length, 10); end.writeUInt32LE(dir.length, 12); end.writeUInt32LE(offset, 16);
+    return new Uint8Array(Buffer.concat(parts.concat([dir, end])));
+}
+const asFiles = (list) => { const o = {}; list.forEach((f) => { o[f.name] = f.text; }); return o; };
+
+ok('xlsx read: the XML reader: attributes, entities, CDATA, self-closing, prefixes, comments', () => {
+    const root = Xr.parseXml('<?xml version="1.0"?><!-- c --><a:r xmlns:a="x" a:id="rId1" n=\'q&amp;r\'><t xml:space="preserve"> a &lt;b&gt; &#65;&#x42;</t><e/><![CDATA[<raw>]]></a:r>');
+    const r = root.children[0];
+    assert.strictEqual(r.name, 'r');
+    assert.strictEqual(r.attrs.id, 'rId1', 'the prefix is dropped');
+    assert.strictEqual(r.attrs.n, 'q&r');
+    assert.strictEqual(r.children[0].text, ' a <b> AB');
+    assert.strictEqual(r.children[1].name, 'e');
+    assert.strictEqual(r.text, '<raw>');
+});
+
+ok('xlsx read: number formats mean decimals, a unit, a date, a time, text; percents and the rest are general', () => {
+    assert.deepStrictEqual(Xr.formatFields('0.00'), { type: 'number', decimals: 2, suffix: '' });
+    assert.deepStrictEqual(Xr.formatFields('#,##0'), { type: 'number', decimals: 0, suffix: '' });
+    assert.deepStrictEqual(Xr.formatFields('0.0" °C"'), { type: 'number', decimals: 1, suffix: ' °C' });
+    assert.deepStrictEqual(Xr.formatFields('0" kg"'), { type: 'number', decimals: 0, suffix: ' kg' });
+    assert.deepStrictEqual(Xr.formatFields('yyyy-mm-dd'), { type: 'date', dateFormat: 'date' });
+    assert.deepStrictEqual(Xr.formatFields('hh:mm:ss'), { type: 'date', dateFormat: 'time' });
+    assert.deepStrictEqual(Xr.formatFields('yyyy-mm-dd hh:mm'), { type: 'date', dateFormat: '' });
+    assert.deepStrictEqual(Xr.formatFields('@'), { type: 'text' });
+    assert.deepStrictEqual(Xr.formatFields('0%'), {});
+    assert.deepStrictEqual(Xr.formatFields('General'), {});
+    assert.deepStrictEqual(Xr.formatFields('"Total: "0'), { type: 'number', decimals: 0, suffix: '' });
+});
+
+ok('xlsx read: boxesOf makes a few ranges of many cells, exactly covering them', () => {
+    const keys = ['0,0', '0,1', '1,0', '1,1', '2,0', '0,3', '5,5'];
+    const boxes = Xr.boxesOf(keys);
+    assert.deepStrictEqual(boxes, [{ r1: 0, c1: 0, r2: 1, c2: 1 }, { r1: 0, c1: 3, r2: 0, c2: 3 }, { r1: 2, c1: 0, r2: 2, c2: 0 }, { r1: 5, c1: 5, r2: 5, c2: 5 }]);
+    const covered = new Set();
+    boxes.forEach((b) => { for (let r = b.r1; r <= b.r2; r++) for (let c = b.c1; c <= b.c2; c++) covered.add(r + ',' + c); });
+    assert.deepStrictEqual([...covered].sort(), keys.slice().sort(), 'the same cells, no more');
+});
+
+okLater('xlsx read: a zip, stored or deflated, is unpacked; a file that is not a zip is refused with a word', async () => {
+    const files = { 'a.txt': 'hello', 'dir/b.xml': '<x>' + 'y'.repeat(5000) + '</x>' };
+    for (const deflate of [false, true]) {
+        const out = await Xr.unzip(makeZip(files, deflate));
+        assert.strictEqual(new TextDecoder().decode(out.get('a.txt')), 'hello');
+        assert.strictEqual(out.get('dir/b.xml').length, 5007);
+    }
+    await assert.rejects(() => Xr.readXlsx(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23])), /not an Excel file/);
+    await assert.rejects(() => Xr.readXlsx(makeZip({ 'x.txt': 'no workbook' }, false)), /not an Excel workbook/);
+});
+
+okLater('xlsx read: what the grid writes it reads back: values, formulas, formats, styles, merges, sizes, freeze, borders, two sheets (one hidden)', async () => {
+    const font = (o) => Object.assign({ b: false, i: false, u: false, s: false, sz: 0, color: null, name: '' }, o);
+    const one = {
+        name: 'Plant', defaultCol: 110, defaultRow: 28, freeze: { rows: 1, cols: 0 }, merges: [{ r1: 0, c1: 3, r2: 0, c2: 4 }], cols: { 0: 200 }, rows: { 2: 60 },
+        cells: [
+            { r: 0, c: 0, kind: 's', v: 'Machine', fmt: '', font: font({ b: true, color: 'FFFF0000' }), fill: 'FFD0E2FF', border: { b: { style: 'solid', width: 2, color: '#0f62fe' } }, align: { h: 'center', v: 'center', wrap: true } },
+            { r: 1, c: 0, kind: 's', v: 'Mixer', fmt: '', font: font({}), fill: null, border: {}, align: {} },
+            { r: 1, c: 1, kind: 'n', v: 71.456, fmt: '0.0" °C"', font: font({}), fill: null, border: {}, align: {} },
+            { r: 2, c: 1, kind: 'n', v: 12, fmt: '', font: font({}), fill: null, border: {}, align: {} },
+            { r: 3, c: 1, kind: 'n', v: 83.456, fmt: '', formula: '=B2+B3', font: font({}), fill: null, border: {}, align: {} },
+            { r: 1, c: 2, kind: 'b', v: true, fmt: '', font: font({}), fill: null, border: {}, align: {} },
+            { r: 1, c: 3, kind: 'n', v: 46023.5, fmt: 'yyyy-mm-dd', font: font({}), fill: null, border: {}, align: {} },
+            { r: 4, c: 1, kind: 'e', v: '#DIV/0!', formula: '=1/0', fmt: '', font: font({}), fill: null, border: {}, align: {} }
+        ]
+    };
+    const two = { name: 'Notes', hidden: true, cells: [{ r: 0, c: 0, kind: 's', v: 'see Plant', fmt: '', font: font({}), fill: null, border: {}, align: {} }], defaultCol: 110, defaultRow: 28 };
+    const out = await Xr.readXlsx(makeZip(asFiles(Xw.buildXlsxFiles({ sheets: [one, two], active: 1 })), true));
+    assert.deepStrictEqual(out.sheets.map((s) => s.name), ['Plant', 'Notes']);
+    assert.strictEqual(out.active, 1);
+    const p = out.sheets[0], n = out.sheets[1];
+    assert.strictEqual(n.visible, false, 'the hidden sheet');
+    assert.strictEqual(p.visible, undefined);
+    assert.strictEqual(p.cells.A1, 'Machine');
+    assert.strictEqual(p.cells.B3, 12);
+    assert.strictEqual(p.cells.B4, '=B2+B3', 'a formula stays a formula');
+    assert.strictEqual(p.cells.B5, '=1/0', 'a formula that gives an error is still the formula');
+    assert.strictEqual(p.cells.C2, true);
+    assert.strictEqual(p.cells.D2, '2026-01-01', 'a date-only format: the day, as text the date cell reads');
+    const rule = (range) => p.cellRules.filter((r) => r.range === range);
+    assert.ok(rule('A1').some((r) => r.bold === true && r.fill === '#d0e2ff' && r.color === '#ff0000' && r.align === 'center' && r.wrap === true), 'bold, colours, alignment, wrap: ' + JSON.stringify(p.cellRules));
+    assert.ok(p.cellRules.some((r) => /B2/.test(r.range) && r.type === 'number' && r.decimals === 1 && r.suffix === ' °C'), 'number format: decimals and a unit');
+    assert.ok(p.cellRules.some((r) => /D2/.test(r.range) && r.type === 'date' && r.dateFormat === 'date'), 'a date format');
+    assert.ok(p.cellRules.some((r) => /C2/.test(r.range) && r.type === 'boolean'), 'a boolean cell');
+    assert.deepStrictEqual(p.merges, ['D1:E1']);
+    assert.strictEqual(p.freezeRows, 1);
+    assert.ok(p.colRules.some((r) => r.columns === 'A' && r.width === 200), 'the width of A');
+    assert.ok(p.rowRules.some((r) => r.rows === '3' && r.height === 60), 'the height of row 3');
+    assert.ok(p.borders.some((b) => b.range === 'A1' && b.sides === 'bottom' && b.width === 2 && b.color === '#0f62fe'), 'the border: ' + JSON.stringify(p.borders));
+    assert.deepStrictEqual(out.warnings, []);
+    // and the grid takes it back as it is: the formulas work
+    const cells = p.cells;
+    const calc = C.createCalc((s, r, c) => { const v = cells[A.addressOf(r, c)]; return v === undefined ? null : v; });
+    assert.strictEqual(calc.value(0, 3, 1), 83.456, 'B2+B3 worked out by the grid: 71.456 + 12');
+});
+
+okLater('xlsx read: a file as Excel writes it: shared strings, rich text, shared formulas, formulas the grid has not (the value stays), errors, booleans, an inline string, a hidden sheet, the open sheet', async () => {
+    const head = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
+    const ns = 'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"';
+    const files = {
+        '[Content_Types].xml': head + '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>',
+        'xl/workbook.xml': head + '<workbook ' + ns + ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><bookViews><workbookView activeTab="1"/></bookViews><sheets><sheet name="Data" sheetId="1" r:id="rId1"/><sheet name="Calc" sheetId="2" state="hidden" r:id="rId2"/></sheets><definedNames><definedName name="Total">Data!$A$1</definedName></definedNames></workbook>',
+        'xl/_rels/workbook.xml.rels': head + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="x/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="x/worksheet" Target="/xl/worksheets/sheet2.xml"/></Relationships>',
+        'xl/sharedStrings.xml': head + '<sst ' + ns + ' count="3" uniqueCount="3"><si><t>Name</t></si><si><r><t>Rich </t></r><r><rPr><b/></rPr><t>text</t></r></si><si><t>Tom &amp; Jerry</t></si></sst>',
+        'xl/styles.xml': head + '<styleSheet ' + ns + '><numFmts count="1"><numFmt numFmtId="164" formatCode="0.00&quot; kg&quot;"/></numFmts><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="14"/><color rgb="FF00AA00"/><name val="Consolas"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFFFF00"/></patternFill></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellXfs count="3"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/><xf numFmtId="164" fontId="1" fillId="2" borderId="0"/><xf numFmtId="14" fontId="0" fillId="0" borderId="0"/></cellXfs></styleSheet>',
+        'xl/worksheets/sheet1.xml': head + '<worksheet ' + ns + '><sheetFormatPr defaultRowHeight="15"/><sheetData>'
+            + '<row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c><c r="C1" t="s"><v>2</v></c><c r="D1" t="inlineStr"><is><t>inline</t></is></c></row>'
+            + '<row r="2"><c r="A2"><v>5</v></c><c r="B2" s="1"><f t="shared" ref="B2:B4" si="0">A2*2</f><v>10</v></c><c r="C2" t="b"><v>1</v></c><c r="D2" s="2"><v>45000</v></c><c r="E2" t="e"><v>#N/A</v></c></row>'
+            + '<row r="3"><c r="A3"><v>6</v></c><c r="B3" s="1"><f t="shared" si="0"/><v>12</v></c><c r="C3"><f>FOO(A3)</f><v>99</v></c><c r="D3"><f>SUMPRODUCT(A2:A3,A2:A3)</f><v>61</v></c></row>'
+            + '<row r="4"><c r="A4"><v>7</v></c><c r="B4" s="1"><f t="shared" si="0"/><v>14</v></c><c r="C4"><f>Total*2</f><v>2</v></c></row>'
+            + '</sheetData></worksheet>',
+        'xl/worksheets/sheet2.xml': head + '<worksheet ' + ns + '><sheetData><row r="1"><c r="A1"><f>Data!A2+1</f><v>6</v></c></row></sheetData><drawing r:id="rId9" xmlns:r="x"/></worksheet>'
+    };
+    const out = await Xr.readXlsx(makeZip(files, true));
+    const d = out.sheets[0];
+    assert.strictEqual(d.cells.A1, 'Name');
+    assert.strictEqual(d.cells.B1, 'Rich text', 'rich text is its runs together');
+    assert.strictEqual(d.cells.C1, 'Tom & Jerry');
+    assert.strictEqual(d.cells.D1, 'inline');
+    assert.deepStrictEqual([d.cells.B2, d.cells.B3, d.cells.B4], ['=A2*2', '=A3*2', '=A4*2'], 'a shared formula is each cell\'s own, its references moved');
+    assert.strictEqual(d.cells.C2, true);
+    assert.ok(/^2023-03-15/.test(d.cells.D2), 'a serial under a date format is a date: ' + d.cells.D2);
+    assert.strictEqual(d.cells.E2, '=#N/A');
+    assert.strictEqual(d.cells.C3, 99, 'a function the grid has not: the value stays');
+    assert.strictEqual(d.cells.D3, 61);
+    assert.strictEqual(d.cells.C4, 2, 'a name from the workbook: the value stays');
+    assert.ok(d.cellRules.some((r) => r.type === 'number' && r.decimals === 2 && r.suffix === ' kg' && r.bold === true && r.fill === '#ffff00' && r.fontFamily === 'mono' && r.fontSize === 19 && r.color === '#00aa00'), 'font, fill and number format of a style: ' + JSON.stringify(d.cellRules));
+    assert.strictEqual(d.rowHeight, 20, 'Excel\'s 15 points');
+    assert.strictEqual(d.colWidth, 64, 'and its default column');
+    assert.strictEqual(out.sheets[1].visible, false);
+    assert.strictEqual(out.sheets[1].cells.A1, '=Data!A2+1', 'a formula across sheets is kept');
+    assert.strictEqual(out.active, 1);
+    assert.ok(out.warnings.some((w) => /FOO/.test(w) && /SUMPRODUCT/.test(w)), 'the warnings name the functions: ' + JSON.stringify(out.warnings));
+    assert.ok(out.warnings.some((w) => /named ranges/.test(w)));
+    assert.ok(out.warnings.some((w) => /pictures/.test(w)), 'and what was not taken');
+});
+
+// the tests that wait for something (the inflating of a zip) run one after the other at the end
+(async () => {
+    for (const [label, fn] of later) { await fn(); passed++; console.log('✔ ' + label); }
+    console.log('\n' + passed + ' passed');
+})().catch((e) => { console.error(e); process.exit(1); });
+

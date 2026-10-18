@@ -8,6 +8,7 @@ import { FUNCTIONS } from "./xlfuncs.js";
 // ---- reading the text ------------------------------------------------------------------------------------------------------------------------------
 
 const RE = {
+    sheet: /^(?:'(?:[^']|'')+'|[A-Za-z_][A-Za-z0-9_.]*)!/,
     number: /^(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?/i,
     colRange: /^\$?[A-Za-z]{1,3}:\$?[A-Za-z]{1,3}(?![A-Za-z0-9_(.])/,
     rowRange: /^\$?\d+:\$?\d+(?![A-Za-z0-9_.])/,
@@ -37,6 +38,13 @@ export function tokenize(src) {
             i = j + 1;
             continue;
         }
+        // Sheet2!A1, 'My sheet'!B:B: the name of the sheet a reference is in
+        if ((m = RE.sheet.exec(rest))) {
+            const raw = m[0].slice(0, -1);
+            out.push({ type: "sheet", text: raw[0] === "'" ? raw.slice(1, -1).replace(/''/g, "'") : raw, start: i, end: i + m[0].length });
+            i += m[0].length;
+            continue;
+        }
         if ((m = RE.error.exec(rest))) { out.push({ type: "err", text: m[0].toUpperCase(), start: i, end: i + m[0].length }); i += m[0].length; continue; }
         if ((m = RE.colRange.exec(rest))) { out.push({ type: "colrange", text: m[0], start: i, end: i + m[0].length }); i += m[0].length; continue; }
         if ((m = RE.rowRange.exec(rest))) { out.push({ type: "rowrange", text: m[0], start: i, end: i + m[0].length }); i += m[0].length; continue; }
@@ -59,7 +67,7 @@ function cellOf(text) {
 // ---- the tree --------------------------------------------------------------------------------------------------------------------------------------
 
 /**
- * "=A1+2" (or "A1+2") -> { ast } or { error: "..." }. Precedence as in Excel, from the loosest: comparisons, &, + -, * /, ^ (left to right: 2^3^2 is 64), a minus in front
+ * "=A1+2" (or "A1+2" or "=Sheet2!A1+2") -> { ast } or { error: "..." }. Precedence as in Excel, from the loosest: comparisons, &, + -, * /, ^ (left to right: 2^3^2 is 64), a minus in front
  * (-2^2 is 4), % behind.
  */
 export function parseFormula(text) {
@@ -90,6 +98,12 @@ export function parseFormula(text) {
         if (tok.type === "num") return { t: "num", v: Number(tok.text) };
         if (tok.type === "str") return { t: "str", v: tok.text };
         if (tok.type === "err") return { t: "err", v: errorOf(tok.text) };
+        if (tok.type === "sheet") {
+            const node = primary();
+            if (node.t !== "ref" && node.t !== "range") fail("a sheet name must be followed by a cell or a range");
+            node.sheet = tok.text;
+            return node;
+        }
         if (tok.type === "cell") return reference(tok);
         if (tok.type === "colrange") {
             const [x, y] = tok.text.split(":").map((s) => colIndex(s.replace("$", "")));
@@ -163,7 +177,7 @@ export function parseFormula(text) {
 const outside = (r, c) => r < 0 || c < 0 || r >= MAX_ROWS || c >= MAX_COLS;
 
 /**
- * The value of a tree. `env` is { cell(r, c) -> value, range(r1, c1, r2, c2) -> XlRange, now: Date, at: { r, c }, volatile() }.
+ * The value of a tree. `env` is { cell(r, c, sheet) -> value, range(r1, c1, r2, c2, sheet) -> XlRange, now: Date, at: { r, c }, volatile() }.
  * An error never throws: it is the value (and travels on through the sums and the functions, as in Excel).
  */
 export function evaluate(node, env) {
@@ -180,8 +194,8 @@ export function evaluate(node, env) {
     switch (node.t) {
         case "num": case "str": case "bool": case "err": return node.v;
         case "empty": return null;
-        case "ref": return outside(node.r, node.c) ? ERR.REF : env.cell(node.r, node.c);
-        case "range": return outside(node.r2, node.c2) ? ERR.REF : env.range(node.r1, node.c1, node.r2, node.c2);
+        case "ref": return outside(node.r, node.c) ? ERR.REF : env.cell(node.r, node.c, node.sheet);
+        case "range": return outside(node.r2, node.c2) ? ERR.REF : env.range(node.r1, node.c1, node.r2, node.c2, node.sheet);
         case "un": { const x = toNumber(scalar(node.a)); return isError(x) ? x : -x; }
         case "pct": { const x = toNumber(scalar(node.a)); return isError(x) ? x : roundSig(x / 100); }
         case "bin": {
@@ -210,7 +224,7 @@ export function evaluate(node, env) {
             if (f.lazy) return f.fn(node.args.map((a) => () => scalar(a)), env);
             const args = node.args.map((a) => {
                 // ROW(A5) wants to know where the cell is, not what is in it
-                if (f.refs && a.t === "ref") return outside(a.r, a.c) ? ERR.REF : env.range(a.r, a.c, a.r, a.c);
+                if (f.refs && a.t === "ref") return outside(a.r, a.c) ? ERR.REF : env.range(a.r, a.c, a.r, a.c, a.sheet);
                 return evaluate(a, env);
             });
             if (!f.errors) { const bad = args.find(isError); if (bad) return bad; }
@@ -250,6 +264,41 @@ export function shiftFormula(text, dr, dc) {
         if (repl !== null) { out += body.slice(at, t.start) + repl; at = t.end; }
     }
     return "=" + out + body.slice(at);
+}
+
+/** The formula with every reference to the sheet `from` (any case) written for the sheet `to`: "=Old!A1+B1" -> "='New name'!A1+B1". What it does not read is left as it is. */
+export function renameInFormula(text, from, to) {
+    const s = String(text);
+    if (!s.startsWith("=")) return s;
+    const body = s.slice(1);
+    const lexed = tokenize(body);
+    if (lexed.error) return s;
+    const want = String(from).toLowerCase();
+    const plain = /^[A-Za-z_][A-Za-z0-9_.]*$/.test(to) && !/^[A-Za-z]{1,3}\d+$/.test(to);
+    const written = plain ? String(to) : "'" + String(to).replace(/'/g, "''") + "'";
+    let out = "", at = 0;
+    for (const t of lexed.tokens) {
+        if (t.type === "sheet" && t.text.toLowerCase() === want) { out += body.slice(at, t.start) + written + "!"; at = t.end; }
+    }
+    return "=" + out + body.slice(at);
+}
+
+/**
+ * Why a formula cannot be kept by the grid: "" when it can (it reads, and every function in it is one the grid has), else the first function it does not have, or a word
+ * for the other cases. Used when a file from Excel is read: a formula the grid cannot work out is replaced by the value Excel worked out.
+ */
+export function formulaProblem(text) {
+    const res = parseFormula(text);
+    if (!res.ast) return "a formula it cannot read";
+    let problem = "";
+    const walk = (n) => {
+        if (!n || problem) return;
+        if (n.t === "call") { if (!FUNCTIONS[n.name]) { problem = n.name; return; } n.args.forEach(walk); }
+        else if (n.t === "err" && n.v === ERR.NAME) problem = "a name";
+        else if (n.a) { walk(n.a); if (n.b) walk(n.b); }
+    };
+    walk(res.ast);
+    return problem;
 }
 
 /** True for a text that is a formula: it starts with "=" and has something after it. */

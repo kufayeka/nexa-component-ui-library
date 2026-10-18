@@ -13,12 +13,15 @@ import { parseRules, parseCells, mergesFromProps, rangedFromProps } from "./shee
 import { normalizeMerges, normalizeLocks, lockRuleAt } from "./layout.js";
 import { sortRangeCells } from "./sort.js";
 import { crossesFreeze, mergeRange, unmergeRange, mergesTouching, addBorder, clearBorders, addLock, resetLocks, lockState, describeRange, addRule, commonFields, toTextMerges, toTextRules } from "./design.js";
-import { RULE_SCHEMA } from "./fields.js";
+import { RULE_SCHEMA, SHEET_PROPS } from "./fields.js";
+import { normalizeSheets, activeIndex, indexOfSheet, addSheet, removeSheet, moveSheet, duplicateSheet, renameSheet } from "./sheets.js";
+import { renameInFormula, isFormula } from "./formula.js";
+import { readXlsx } from "./xlsx-read.js";
 
 const COMPONENT_ID = "nexa-ui-data-grid";
 
-// What the dialog edits: these props, as one draft (the keys are the component's stored names).
-export const DESIGN_KEYS = ["rows", "cols", "viewArea", "freezeRows", "freezeCols", "showHeaders", "showGridLines", "colWidth", "colRules", "adjustCols", "minColWidth", "maxColWidth", "rowHeight", "rowRules", "adjustRows", "autoFit", "minRowHeight", "maxRowHeight", "sortable", "sortArea", "sortHeader", "findable", "exportable", "populate", "cells", "cellRules", "merges", "borders", "locks"];
+// What the dialog edits: the sheets (each with everything it has of its own) and these settings of the whole grid, as one draft (the keys are the component's stored names).
+export const GRID_KEYS = ["sortable", "findable", "exportable", "showFormulaBar", "showSheetTabs"];
 const SEL_KEYS = Object.keys(RULE_SCHEMA).filter((k) => k !== "range");
 const BORDER_COLORS = [{ value: "bd", label: "Light line" }, { value: "bd-strong", label: "Strong line" }, { value: "fg", label: "Text colour" }, { value: "primary", label: "Primary" }, { value: "error", label: "Error" }, { value: "custom", label: "Other colour…" }];
 const BORDER_STYLES = ["solid", "dashed", "dotted", "double"].map((v) => ({ value: v, label: v }));
@@ -26,12 +29,13 @@ const BORDER_STYLES = ["solid", "dashed", "dotted", "double"].map((v) => ({ valu
 const clone = (v) => JSON.parse(JSON.stringify(v));
 const def = () => (window.NEXA && window.NEXA.getComponent ? window.NEXA.getComponent(COMPONENT_ID) : null);
 
-/** The part of the props the dialog works on, complete (a prop never set has its default). */
+/** The part of the props the dialog works on: { grid: the settings of the whole grid (a prop never set has its default), sheets: the list of sheets, active: the place of the one on show }. */
 export function designOf(p) {
     const meta = def() && def().nexa ? def().nexa.props : {};
-    const out = {};
-    DESIGN_KEYS.forEach((k) => { out[k] = clone(p && p[k] !== undefined && p[k] !== null ? p[k] : meta[k] ? meta[k].default : null); });
-    return out;
+    const grid = {};
+    GRID_KEYS.forEach((k) => { grid[k] = clone(p && p[k] !== undefined && p[k] !== null ? p[k] : meta[k] ? meta[k].default : null); });
+    const sheets = clone(normalizeSheets(p && p.sheets));
+    return { grid, sheets, active: activeIndex(sheets, p && p.activeSheet) };
 }
 
 /** The Edit grid button of the inspector: open the dialog, and put the changed props in the component on Apply. */
@@ -46,21 +50,27 @@ export function openGridEditor(p, api) {
         buttons: [{ label: "Cancel", value: null }, { label: "Apply", primary: true, value: (host) => { const el = host.querySelector("nexa-data-grid-editor"); return el ? { design: el.design() } : null; } }]
     }).then((res) => {
         if (!res || !res.design) return;
-        DESIGN_KEYS.forEach((k) => { if (JSON.stringify(res.design[k]) !== JSON.stringify(start[k])) api.set(k, res.design[k]); });
+        // only what changed is set: the sheets as one prop, and each setting of the grid
+        if (JSON.stringify(res.design.sheets) !== JSON.stringify(start.sheets)) api.set("sheets", res.design.sheets);
+        GRID_KEYS.forEach((k) => { if (JSON.stringify(res.design.grid[k]) !== JSON.stringify(start.grid[k])) api.set(k, res.design.grid[k]); });
     });
 }
 
 /** One line for the Edit grid row of the inspector. */
 export function summaryOf(p) {
-    const size = sizeOf(p && p.rows, p && p.cols);
-    const n = (k) => (Array.isArray(p && p[k]) ? p[k].length : 0);
-    const typed = p && p.cells && typeof p.cells === "object" ? Object.keys(p.cells).length : 0;
-    const bits = [size.rows + " rows x " + size.cols + " columns"];
+    const sheets = normalizeSheets(p && p.sheets);
+    const sum = (k, f) => sheets.reduce((n, s) => n + f(s[k]), 0);
+    const len = (v) => (Array.isArray(v) ? v.length : 0);
+    const typed = sum("cells", (v) => (v && typeof v === "object" ? Object.keys(v).length : 0));
+    const bits = [];
+    if (sheets.length === 1) { const size = sizeOf(sheets[0].rows, sheets[0].cols); bits.push(size.rows + " rows x " + size.cols + " columns"); }
+    else bits.push(sheets.length + " sheets: " + sheets.slice(0, 4).map((s) => s.name).join(", ") + (sheets.length > 4 ? " ..." : ""));
     if (typed) bits.push(typed + " cell" + (typed === 1 ? "" : "s") + " typed");
-    if (n("cellRules")) bits.push(n("cellRules") + " type / style rule" + (n("cellRules") === 1 ? "" : "s"));
-    if (n("populate")) bits.push(n("populate") + " populate rule" + (n("populate") === 1 ? "" : "s"));
-    if (n("merges")) bits.push(n("merges") + " merged");
-    if (n("locks")) bits.push(n("locks") + " lock rule" + (n("locks") === 1 ? "" : "s"));
+    const rules = sum("cellRules", len), pops = sum("populate", len), merges = sum("merges", len), locks = sum("locks", len);
+    if (rules) bits.push(rules + " type / style rule" + (rules === 1 ? "" : "s"));
+    if (pops) bits.push(pops + " populate rule" + (pops === 1 ? "" : "s"));
+    if (merges) bits.push(merges + " merged");
+    if (locks) bits.push(locks + " lock rule" + (locks === 1 ? "" : "s"));
     return bits.join(", ");
 }
 
@@ -77,6 +87,7 @@ nexa-data-grid-editor .dge-grp nx-select, nexa-data-grid-editor .dge-grp nx-numb
 nexa-data-grid-editor .dge-grp nx-number { width: 70px; }
 nexa-data-grid-editor .dge-prev { flex: 1 1 auto; min-height: 220px; position: relative; border: 1px solid var(--nx-border, #c6c6c6); background: var(--nx-bg, #fff); }
 nexa-data-grid-editor .dge-prev > * { position: absolute; inset: 0; }
+nexa-data-grid-editor .dge-sheet { font-size: 12px; font-weight: 600; margin-right: 4px; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 nexa-data-grid-editor .dge-status { font-size: 12px; color: var(--nx-text, #161616); min-height: 18px; display: flex; gap: 12px; flex-wrap: wrap; }
 nexa-data-grid-editor .dge-status .dge-note { color: var(--nx-warn, #8e6a00); }
 nexa-data-grid-editor .dge-side { min-height: 0; min-width: 0; border: 1px solid var(--nx-border, #c6c6c6); background: var(--nx-bg, #fff); overflow: hidden; display: flex; flex-direction: column; }
@@ -97,7 +108,9 @@ defineInspectorWidget("nexa-data-grid-editor", ({ KitElement, html: h, nothing }
     constructor() {
         super();
         this.props = {};
-        this._draft = null;
+        this._doc = null;           // { grid, sheets, active }: what is edited; this._draft is the sheet on show with the grid's settings, flat
+        this._flatFor = null;
+        this._flat = null;
         this._range = null;
         this._note = "";
         this._bstyle = "solid";
@@ -112,11 +125,24 @@ defineInspectorWidget("nexa-data-grid-editor", ({ KitElement, html: h, nothing }
         this._future = [];          // what Ctrl+Z took back: Ctrl+Y
     }
 
-    /** The design as edited here. */
-    design() { return clone(this._draft || designOf(this.props)); }
+    /** The design as edited here: { grid, sheets }. */
+    design() { const d = this._doc || designOf(this.props); return { grid: clone(d.grid), sheets: clone(d.sheets) }; }
 
     willUpdate(changed) {
-        if (changed.has("props") && !this._draft) this._draft = designOf(this.props);
+        if (changed.has("props") && !this._doc) this._doc = designOf(this.props);
+    }
+
+    // the sheet on show, complete (what it does not say has its default) and with the grid's settings beside it: the toolbar and the tree read this
+    get _draft() {
+        const d = this._doc;
+        if (!d) return null;
+        if (this._flatFor !== d) {
+            const defaults = {};
+            Object.keys(SHEET_PROPS).forEach((k) => { defaults[k] = clone(SHEET_PROPS[k].default); });
+            this._flat = Object.assign({}, d.grid, defaults, d.sheets[d.active]);
+            this._flatFor = d;
+        }
+        return this._flat;
     }
 
     updated() {
@@ -146,10 +172,9 @@ defineInspectorWidget("nexa-data-grid-editor", ({ KitElement, html: h, nothing }
     _previewProps() {
         // what the dialog needs the grid to do while designing: show the whole sheet, select ranges, show the locks; a populate rule has no value here
         // (its value is a binding, which only a page can resolve), so only its marker shows
-        return Object.assign({}, this._draft, {
-            selection: "range", mode: "editable", saveMode: "instant", viewArea: "", sortable: false,
-            populate: (this._draft.populate || []).map((i) => Object.assign({}, i, { value: undefined }))
-        });
+        const d = this._doc;
+        const sheets = d.sheets.map((s) => Object.assign({}, s, { mode: "editable", viewArea: "", visible: true, populate: (s.populate || []).map((i) => Object.assign({}, i, { value: undefined })) }));
+        return Object.assign({}, d.grid, { sheets, activeSheet: d.sheets[d.active].name, showSheetTabs: true, selection: "range", saveMode: "instant", sortable: false });
     }
 
     _mountPreview() {
@@ -162,6 +187,7 @@ defineInspectorWidget("nexa-data-grid-editor", ({ KitElement, html: h, nothing }
             host.addEventListener("nexa-cell-edit", (e) => this._typed(e.detail.address, e.detail.value));
             host.addEventListener("nexa-resize", (e) => this._resized(e.detail));
             host.addEventListener("nexa-cells", (e) => this._cellsChanged(e.detail));
+            host.addEventListener("nexa-sheet", (e) => this._sheetShown(e.detail && e.detail.name));
         }
         const props = this._previewProps();
         const sig = JSON.stringify(props);
@@ -191,17 +217,19 @@ defineInspectorWidget("nexa-data-grid-editor", ({ KitElement, html: h, nothing }
         });
         props.sel_width = K.normalizeProp("sel_width", { type: "number", label: "Column width", default: "", min: 24, unit: "px", group: group("Selection"), section: "Size", bindable: false, noReset: true, enabledWhen: (p) => !!p.__hasSelection });
         props.sel_height = K.normalizeProp("sel_height", { type: "number", label: "Row height", default: "", min: 16, unit: "px", group: group("Selection"), section: "Size", bindable: false, noReset: true, enabledWhen: (p) => !!p.__hasSelection });
-        // the sheet's own settings and its lists, from the component's definition: the same fields, the same help
-        const take = (k, g) => { const f = d.nexa.props[k]; if (f) props[k] = Object.assign({}, f, { hidden: false, group: group(g), section: undefined }); };
-        ["rows", "cols", "viewArea", "freezeRows", "freezeCols", "showHeaders", "showGridLines"].forEach((k) => take(k, "Sheet"));
+        // the sheet's own settings and its lists (SHEET_PROPS), and the settings of the whole grid (from the component's definition): the same fields, the same help
+        const take = (k, g) => { const f = SHEET_PROPS[k] || d.nexa.props[k]; if (f) props[k] = Object.assign({}, f, { hidden: false, group: group(g), section: undefined }); };
+        ["name", "visible", "mode", "rows", "cols", "viewArea", "freezeRows", "freezeCols", "showHeaders", "showGridLines"].forEach((k) => take(k, "Sheet"));
         ["colWidth", "colRules", "adjustCols", "minColWidth", "maxColWidth"].forEach((k) => take(k, "Columns"));
         ["rowHeight", "rowRules", "adjustRows", "autoFit", "minRowHeight", "maxRowHeight"].forEach((k) => take(k, "Rows"));
-        ["sortable", "sortArea", "sortHeader", "findable", "exportable"].forEach((k) => take(k, "Sort and find"));
+        ["sortArea", "sortHeader"].forEach((k) => take(k, "Sort and find"));
         take("populate", "Populate from messages");
         take("cellRules", "Types and styles");
         take("merges", "Merged cells");
         take("borders", "Borders");
         take("locks", "Locked / open cells");
+        // the whole grid
+        ["sortable", "findable", "exportable", "showFormulaBar", "showSheetTabs"].forEach((k) => take(k, "Whole grid"));
         return { id: "nexa-data-grid-design", label: "Edit grid", props, stateList: [], partList: [], inputs: [], outputs: [], eventList: [], actionList: [], groupOrder: order };
     }
 
@@ -239,15 +267,24 @@ defineInspectorWidget("nexa-data-grid-editor", ({ KitElement, html: h, nothing }
 
     _setProp(key, value) {
         if (key.indexOf("sel_") === 0) { this._applySelection(key.slice(4), value); return; }
+        if (key === "name") { this._rename(value); return; }
         this._set({ [key]: value });
     }
 
     // ---- editing the draft -----------------------------------------------------------------------------------------
+    // a change of the sheet on show (or of a setting of the grid): one step of history
     _set(patch, note) {
-        this._past.push(JSON.stringify(this._draft));
+        const d = this._doc, grid = {}, own = {};
+        Object.keys(patch).forEach((k) => { (GRID_KEYS.indexOf(k) !== -1 ? grid : own)[k] = patch[k]; });
+        this._commit({ grid: Object.assign({}, d.grid, grid), sheets: d.sheets.map((s, i) => (i === d.active ? Object.assign({}, s, own) : s)), active: d.active }, note);
+    }
+
+    // the whole workbook changed (a sheet added, taken away, moved, renamed, a file imported): one step of history
+    _commit(doc, note) {
+        this._past.push(JSON.stringify(this._doc));
         if (this._past.length > 100) this._past.shift();
         this._future = [];
-        this._draft = Object.assign({}, this._draft, patch);
+        this._doc = doc;
         this._note = note || "";
         this.requestUpdate();       // the draft is not a reactive property, and an unchanged note would not draw the new preview
     }
@@ -255,16 +292,18 @@ defineInspectorWidget("nexa-data-grid-editor", ({ KitElement, html: h, nothing }
     // Undo / Redo: the draft as it was before the last change / what Undo took back
     _undo() {
         if (!this._past.length) return;
-        this._future.push(JSON.stringify(this._draft));
-        this._draft = JSON.parse(this._past.pop());
+        this._future.push(JSON.stringify(this._doc));
+        this._doc = JSON.parse(this._past.pop());
+        this._range = null;
         this._note = "";
         this.requestUpdate();
     }
 
     _redo() {
         if (!this._future.length) return;
-        this._past.push(JSON.stringify(this._draft));
-        this._draft = JSON.parse(this._future.pop());
+        this._past.push(JSON.stringify(this._doc));
+        this._doc = JSON.parse(this._future.pop());
+        this._range = null;
         this._note = "";
         this.requestUpdate();
     }
@@ -280,6 +319,64 @@ defineInspectorWidget("nexa-data-grid-editor", ({ KitElement, html: h, nothing }
         const k = String(e.key).toLowerCase();
         if (k === "z" && !e.shiftKey) { e.preventDefault(); e.stopPropagation(); this._undo(); }
         else if (k === "y" || (k === "z" && e.shiftKey)) { e.preventDefault(); e.stopPropagation(); this._redo(); }
+    }
+
+    // ---- the sheets --------------------------------------------------------------------------------------------------------------
+    // the preview's own tabs were clicked: this is the sheet to edit now (no step of history: it is where the user looks, not what the design says)
+    _sheetShown(name) {
+        const d = this._doc, i = indexOfSheet(d.sheets, name);
+        if (i < 0 || i === d.active) return;
+        this._doc = Object.assign({}, d, { active: i });
+        this._range = null;
+        this._note = "";
+        this.requestUpdate();
+    }
+
+    _addSheet() { const d = this._doc; this._commit({ grid: d.grid, sheets: addSheet(d.sheets, d.active), active: d.active + 1 }); this._range = null; }
+    _copySheet() { const d = this._doc; this._commit({ grid: d.grid, sheets: duplicateSheet(d.sheets, d.active), active: d.active + 1 }); this._range = null; }
+    _removeSheet() {
+        const d = this._doc;
+        if (d.sheets.length <= 1) { this._note = "A grid keeps at least one sheet."; this.requestUpdate(); return; }
+        const gone = d.sheets[d.active].name;
+        this._commit({ grid: d.grid, sheets: removeSheet(d.sheets, d.active), active: Math.min(d.active, d.sheets.length - 2) }, "Sheet '" + gone + "' was taken away; formulas that read it show #REF!.");
+        this._range = null;
+    }
+    _moveSheet(by) {
+        const d = this._doc, list = moveSheet(d.sheets, d.active, by);
+        if (list !== d.sheets) this._commit({ grid: d.grid, sheets: list, active: d.active + by });
+    }
+    // a new name; the formulas of every sheet that read the old one are written with the new, as Excel does
+    _rename(value) {
+        const d = this._doc, before = d.sheets[d.active].name;
+        const r = renameSheet(d.sheets, d.active, value);
+        if (r.name === before) { this.requestUpdate(); return; }
+        const sheets = r.sheets.map((s) => {
+            if (!s.cells || typeof s.cells !== "object") return s;
+            let changed = false;
+            const cells = {};
+            Object.keys(s.cells).forEach((a) => {
+                const v = s.cells[a], w = isFormula(v) ? renameInFormula(v, before, r.name) : v;
+                if (w !== v) changed = true;
+                cells[a] = w;
+            });
+            return changed ? Object.assign({}, s, { cells }) : s;
+        });
+        this._commit({ grid: d.grid, sheets, active: d.active }, r.name !== String(value).trim() ? "That name is taken or not allowed: the sheet is called '" + r.name + "'." : "");
+    }
+
+    // an Excel file: its sheets replace the ones here (one step of history: Ctrl+Z brings the old ones back)
+    async _import(file) {
+        if (!file) return;
+        try {
+            const out = await readXlsx(new Uint8Array(await file.arrayBuffer()));
+            const d = this._doc;
+            this._commit({ grid: d.grid, sheets: out.sheets, active: out.active }, "Read " + out.sheets.length + " sheet" + (out.sheets.length === 1 ? "" : "s") + " from " + file.name + ". Undo takes the old ones back."
+                + (out.warnings.length ? " " + out.warnings.join(" · ") : ""));
+            this._range = null;
+        } catch (e) {
+            this._note = "Could not read " + file.name + ": " + (e && e.message ? e.message : e);
+            this.requestUpdate();
+        }
     }
 
     // a value typed in a cell of the preview: the content of the design
@@ -398,8 +495,17 @@ defineInspectorWidget("nexa-data-grid-editor", ({ KitElement, html: h, nothing }
                 ${this._btn(h`<i>I</i>`, "Italic", () => this._toggle("italic"), { on: common.italic === true })}
                 ${this._btn(h`<u>U</u>`, "Underline", () => this._toggle("underline"), { on: common.underline === true })}
                 ${align("left", "Left", "Align left")}${align("center", "Centre", "Align in the middle")}${align("right", "Right", "Align right")}</div>
-            <div class="dge-grp"><span class="dge-t">Export</span>
-                <button type="button" class="nx-btn" title="Download the sheet as an Excel file (.xlsx)" @click=${() => this._exportXlsx()}>Excel (.xlsx)</button></div>
+            <div class="dge-grp"><span class="dge-t">Sheets</span>
+                <span class="dge-sheet" title="The sheet being edited">${this._doc.sheets[this._doc.active].name} (${this._doc.active + 1} / ${this._doc.sheets.length})</span>
+                <button type="button" class="nx-btn" title="A new empty sheet after this one" @click=${() => this._addSheet()}>Add</button>
+                <button type="button" class="nx-btn" title="A copy of this sheet" @click=${() => this._copySheet()}>Copy</button>
+                <button type="button" class="nx-btn" title="Take this sheet away" ?disabled=${this._doc.sheets.length <= 1} @click=${() => this._removeSheet()}>Delete</button>
+                <button type="button" class="nx-btn" title="Move the tab to the left" ?disabled=${this._doc.active === 0} @click=${() => this._moveSheet(-1)}>◀</button>
+                <button type="button" class="nx-btn" title="Move the tab to the right" ?disabled=${this._doc.active >= this._doc.sheets.length - 1} @click=${() => this._moveSheet(1)}>▶</button></div>
+            <div class="dge-grp"><span class="dge-t">Excel</span>
+                <button type="button" class="nx-btn" title="Download every sheet as an Excel file (.xlsx)" @click=${() => this._exportXlsx()}>Export .xlsx</button>
+                <button type="button" class="nx-btn" title="Read an Excel file: its sheets replace the ones here (Undo takes them back)" @click=${() => this.querySelector("[data-import]").click()}>Import .xlsx…</button>
+                <input type="file" data-import accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden @change=${(e) => { const f = e.target.files && e.target.files[0]; e.target.value = ""; this._import(f); }}></div>
             <div class="dge-grp"><span class="dge-t">Sort</span>
                 ${this._btn("A→Z", "Sort the selected rows by the first column of the selection, ascending (the typed cells move)", () => this._sortSelection("asc"))}
                 ${this._btn("Z→A", "Sort the selected rows by the first column of the selection, descending (the typed cells move)", () => this._sortSelection("desc"))}</div>
@@ -446,7 +552,7 @@ defineInspectorWidget("nexa-data-grid-editor", ({ KitElement, html: h, nothing }
     }
 
     render() {
-        if (!this._draft) this._draft = designOf(this.props);
+        if (!this._doc) this._doc = designOf(this.props);
         return h`<style>${STYLE}</style>
             <div class="dge">
                 <div class="dge-main">${this._toolbar()}<div class="dge-prev"></div>${this._status()}</div>
