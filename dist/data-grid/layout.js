@@ -1,8 +1,7 @@
 // Data Grid: the layout of the cells (merges, frozen rows and columns, borders) and who may edit which cell. Pure.
 //
-// Rows are counted in the order shown (the view's rows, 0-based) and columns in the order of the columns list: the grid is positional,
-// like a sheet. A rule says "these cells", not "this record". That is why a merge in the body switches sorting and filtering off
-// (the rows under a merged cell would no longer be the rows it was made for).
+// Rows and columns are counted from 0 (A1 is row 0, column 0): the rules here take ranges as numbers; the props store them as Excel text and
+// sheet.js reads them into numbers.
 
 const int = (v, d) => { const n = Math.floor(Number(v)); return isFinite(n) ? n : d; };
 
@@ -160,14 +159,10 @@ export function lockRuleAt(locks, r, c) {
 }
 
 /**
- * May this cell be edited? The master switch first: a read-only grid edits nothing, whatever the rules say. In an editable grid the
- * most specific rule wins: a range rule (cell) > the row's lock (a field in its data) > the column > the grid.
- * `columnEditable` is the column's own switch; `rowLocked` is the row's lock field (truthy = locked).
+ * May this cell be edited? The master switch first: a read-only grid edits nothing, whatever the rules say. In an editable grid a cell can be edited
+ * unless a rule locks it; the last rule that covers it wins (an "open" rule over a "locked" one opens it).
  */
-export function cellEditable(mode, columnEditable, rowLocked, locks, r, c) {
+export function cellEditable(mode, locks, r, c) {
     if (mode !== "editable") return false;
-    const rule = lockRuleAt(locks, r, c);
-    if (rule !== undefined) return !rule;
-    if (rowLocked) return false;
-    return columnEditable !== false;
+    return lockRuleAt(locks, r, c) !== true;
 }

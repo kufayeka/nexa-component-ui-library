@@ -1,7 +1,10 @@
 // Data Grid: what the "Edit grid" dialog does to the design, as plain functions. Pure (no imports, no DOM), tested in Node.
 //
-// A range is { r1, c1, r2, c2 } (inclusive, from 0, in the order shown). Every function gives back a NEW list: the dialog keeps a draft
+// A range is { r1, c1, r2, c2 } (inclusive, from 0; A1 is row 0, column 0). Every function gives back a NEW list: the dialog keeps a draft
 // and only Apply puts it in the component, so nothing here may change what it is given.
+
+import { rangeText, rangeLabel } from "./address.js";
+import { fieldsAt } from "./sheet.js";
 
 const clone = (list) => (Array.isArray(list) ? list.map((x) => Object.assign({}, x)) : []);
 const same = (a, b) => a.r1 === b.r1 && a.c1 === b.c1 && a.r2 === b.r2 && a.c2 === b.c2;
@@ -79,32 +82,61 @@ export function lockState(range, ruleAt) {
     return locked ? "locked" : open ? "open" : "default";
 }
 
-/** Keep the draft consistent after the grid's shape changed (a column removed, rows frozen): rules past the last column go; the others stay. */
-export function dropColumn(draft, index) {
-    // a rule only on that column goes; one that spans it gets one column narrower; one after it moves one column left
-    const shift = (list) => clone(list).filter((x) => !(x.c1 === index && x.c2 === index)).map((x) => Object.assign({}, x, { c1: x.c1 > index ? x.c1 - 1 : x.c1, c2: x.c2 >= index ? x.c2 - 1 : x.c2 }));
-    return { merges: shift(draft.merges), borders: shift(draft.borders), locks: shift(draft.locks) };
-}
-
-/** A column moved from `from` to `to` in the list: the rules keep their cells' columns, so they are mapped to where those columns went. */
-export function moveColumn(draft, from, to) {
-    const map = (c) => (c === from ? to : from < to ? (c > from && c <= to ? c - 1 : c) : (c >= to && c < from ? c + 1 : c));
-    const remap = (list) => clone(list).map((x) => {
-        // a range of several columns that the move would tear apart is not a range any more: it keeps its first and last column's new places
-        const a = map(x.c1), b = map(x.c2);
-        return Object.assign({}, x, { c1: Math.min(a, b), c2: Math.max(a, b) });
-    });
-    return { merges: remap(draft.merges), borders: remap(draft.borders), locks: remap(draft.locks) };
-}
-
-/** One line for the dialog's status bar: "Rows 2-4 x columns 1-3 (9 cells)". Counted from 1 for people. */
+/** One line for the dialog's status bar: "B2:C4 (6 cells)". */
 export function describeRange(range) {
     if (!range) return "Nothing selected: click a cell, or drag over several.";
-    const rows = range.r1 === range.r2 ? "Row " + (range.r1 + 1) : "Rows " + (range.r1 + 1) + "-" + (range.r2 + 1);
-    const cols = range.c1 === range.c2 ? "column " + (range.c1 + 1) : "columns " + (range.c1 + 1) + "-" + (range.c2 + 1);
     const n = cellCount(range);
-    return rows + ", " + cols + " (" + n + " cell" + (n === 1 ? "" : "s") + ")";
+    return rangeText(range) + " (" + n + " cell" + (n === 1 ? "" : "s") + ")";
 }
 
 /** Whether two ranges are the same box. */
 export const sameRange = (a, b) => !!a && !!b && same(a, b);
+
+// ---- the lists as the props store them: Excel text -----------------------------------------------------------------------
+
+/** Merges as the props store them: [{ r1, c1, r2, c2 }] -> ["A1:B2"]. */
+export function toTextMerges(list) { return list.map(rangeText); }
+
+/** Border / lock rules as the props store them: the numbers go, the range is text ("B:C" when it is whole columns, "2:5" whole rows). */
+export function toTextRules(list, rows, cols) {
+    return list.map((x) => {
+        const o = { range: rangeLabel(x, rows, cols) };
+        Object.keys(x).forEach((k) => { if (["r1", "c1", "r2", "c2", "range"].indexOf(k) === -1) o[k] = x[k]; });
+        return o;
+    });
+}
+
+// ---- the type and style rules of cells ------------------------------------------------------------------------------------
+
+/**
+ * A change to the cells of a range as a rule: when the last rule has this very range, the change goes into it (turning Bold on and off does not make a
+ * list of rules); otherwise a new rule follows. An empty value is "back to the default" and is kept: it covers what an earlier rule said.
+ */
+export function addRule(rules, rangeStr, patch) {
+    const out = (Array.isArray(rules) ? rules : []).map((r) => Object.assign({}, r));
+    const last = out[out.length - 1];
+    if (last && last.range === rangeStr) Object.assign(last, patch);
+    else out.push(Object.assign({ range: rangeStr }, patch));
+    return out;
+}
+
+/**
+ * What the cells of a range have in common: { key: value } for each key whose value is the same in every cell looked at; a key whose cells differ is left
+ * out. `rules` are the parsed rules (sheet.js parseRules). At most 1500 cells are looked at: a whole column is sampled from its top.
+ */
+export function commonFields(rules, range, keys) {
+    const out = {}, mixed = {};
+    let seen = 0;
+    for (let r = range.r1; r <= range.r2 && seen < 1500; r++) {
+        for (let c = range.c1; c <= range.c2 && seen < 1500; c++, seen++) {
+            const f = fieldsAt(rules, r, c);
+            keys.forEach((k) => {
+                if (mixed[k]) return;
+                const has = Object.prototype.hasOwnProperty.call(f, k);
+                if (seen === 0) { if (has) out[k] = f[k]; return; }
+                if (has !== Object.prototype.hasOwnProperty.call(out, k) || (has && JSON.stringify(f[k]) !== JSON.stringify(out[k]))) { mixed[k] = true; delete out[k]; }
+            });
+        }
+    }
+    return out;
+}

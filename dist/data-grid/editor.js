@@ -1,28 +1,35 @@
-// Data Grid: the "Edit grid" dialog, like the SVG's Inspect dialog: the real grid on the left to select cells on, a toolbar over it (merge, freeze,
-// borders, lock), and on the right the columns and the settings. It works on a DRAFT: nothing is written until Apply, and Apply is the only
-// way the component's props change. Editor only (a page never opens it; the registration below is a no-op there).
+// Data Grid: the "Edit grid" dialog, like the SVG's Inspect dialog. Left, the real grid: select cells, type in them like a sheet. Over it a toolbar (merge,
+// freeze, lock, bold / italic / underline, alignment, borders). Right, the same tree and property panel as the editor's Properties: "Selection" (the type
+// and the style of the selected cells: changing a field puts a rule on them, as Excel's ribbon does), the sheet's own settings, the populate rules, and the
+// lists of rules (types and styles, merges, borders, locks). It works on a DRAFT: nothing is written until Apply, and Apply sets only the props that changed.
+// Editor only (a page never opens it; the registration below is a no-op there).
 //
-// The grid in the preview is the component itself, mounted the way the editor's canvas mounts it, so what the dialog shows is what the page shows
-// (merges, frozen panes, borders, locked cells hatched). Its selection reaches this dialog as the DOM event "nexa-selection".
+// The grid in the preview is the component itself, mounted the way the editor's canvas mounts it, so what the dialog shows is what the page shows. Its
+// selection reaches this dialog as the DOM event "nexa-selection", a value the user types as "nexa-cell-edit".
 import { defineInspectorWidget, html } from "../../../nexa-sdk/nexa-component-sdk.js";
-import { columnsOf } from "./columns.js";
-import { COLUMN_FIELDS } from "./column-fields.js";
+import { colName, sizeOf } from "./address.js";
+import { parseRules, parseCells, mergesFromProps, rangedFromProps } from "./sheet.js";
 import { normalizeMerges, normalizeLocks, lockRuleAt } from "./layout.js";
-import { crossesFreeze, mergeRange, unmergeRange, mergesTouching, addBorder, clearBorders, addLock, resetLocks, lockState, dropColumn, moveColumn, describeRange } from "./design.js";
+import { crossesFreeze, mergeRange, unmergeRange, mergesTouching, addBorder, clearBorders, addLock, resetLocks, lockState, describeRange, addRule, commonFields, toTextMerges, toTextRules } from "./design.js";
+import { rangeLabel } from "./address.js";
+import { RULE_SCHEMA } from "./fields.js";
+
+const COMPONENT_ID = "nexa-ui-data-grid";
 
 // What the dialog edits: these props, as one draft (the keys are the component's stored names).
-export const DESIGN_KEYS = ["columns", "merges", "borders", "locks", "freezeRows", "freezeCols", "rowHeight", "headerHeight", "showRowNumbers"];
-const DEFAULTS = { columns: [], merges: [], borders: [], locks: [], freezeRows: 0, freezeCols: 0, rowHeight: 36, headerHeight: 40, showRowNumbers: false };
-const COMPONENT_ID = "nexa-ui-data-grid";
+export const DESIGN_KEYS = ["rows", "cols", "colWidth", "rowHeight", "viewArea", "freezeRows", "freezeCols", "showHeaders", "showGridLines", "populate", "cells", "cellRules", "colWidths", "rowHeights", "merges", "borders", "locks"];
+const SEL_KEYS = Object.keys(RULE_SCHEMA).filter((k) => k !== "range");
 const BORDER_COLORS = [{ value: "bd", label: "Light line" }, { value: "bd-strong", label: "Strong line" }, { value: "fg", label: "Text colour" }, { value: "primary", label: "Primary" }, { value: "error", label: "Error" }, { value: "custom", label: "Other colour…" }];
 const BORDER_STYLES = ["solid", "dashed", "dotted", "double"].map((v) => ({ value: v, label: v }));
 
 const clone = (v) => JSON.parse(JSON.stringify(v));
+const def = () => (window.NEXA && window.NEXA.getComponent ? window.NEXA.getComponent(COMPONENT_ID) : null);
 
 /** The part of the props the dialog works on, complete (a prop never set has its default). */
 export function designOf(p) {
+    const meta = def() && def().nexa ? def().nexa.props : {};
     const out = {};
-    DESIGN_KEYS.forEach((k) => { out[k] = clone(p && p[k] !== undefined && p[k] !== null ? p[k] : DEFAULTS[k]); });
+    DESIGN_KEYS.forEach((k) => { out[k] = clone(p && p[k] !== undefined && p[k] !== null ? p[k] : meta[k] ? meta[k].default : null); });
     return out;
 }
 
@@ -33,8 +40,8 @@ export function openGridEditor(p, api) {
     const start = designOf(p);
     K.openDialog({
         title: "Edit grid",
-        width: 1320,
-        content: html`<nexa-data-grid-editor .props=${start} style="display:block;height:min(600px, 66vh)"></nexa-data-grid-editor>`,
+        width: 1360,
+        content: html`<nexa-data-grid-editor .props=${start} style="display:block;height:min(620px, 70vh)"></nexa-data-grid-editor>`,
         buttons: [{ label: "Cancel", value: null }, { label: "Apply", primary: true, value: (host) => { const el = host.querySelector("nexa-data-grid-editor"); return el ? { design: el.design() } : null; } }]
     }).then((res) => {
         if (!res || !res.design) return;
@@ -44,47 +51,40 @@ export function openGridEditor(p, api) {
 
 /** One line for the Edit grid row of the inspector. */
 export function summaryOf(p) {
-    const cols = columnsOf(p && p.columns, []).length;
-    const merges = Array.isArray(p && p.merges) ? p.merges.length : 0;
-    const locks = Array.isArray(p && p.locks) ? p.locks.length : 0;
-    const frozen = (Number(p && p.freezeRows) || 0) + (Number(p && p.freezeCols) || 0);
-    return (cols ? cols + " column" + (cols === 1 ? "" : "s") : "columns from the data") + (merges ? ", " + merges + " merged" : "") + (frozen ? ", frozen" : "") + (locks ? ", " + locks + " lock rule" + (locks === 1 ? "" : "s") : "");
+    const size = sizeOf(p && p.rows, p && p.cols);
+    const n = (k) => (Array.isArray(p && p[k]) ? p[k].length : 0);
+    const typed = p && p.cells && typeof p.cells === "object" ? Object.keys(p.cells).length : 0;
+    const bits = [size.rows + " rows x " + size.cols + " columns"];
+    if (typed) bits.push(typed + " cell" + (typed === 1 ? "" : "s") + " typed");
+    if (n("cellRules")) bits.push(n("cellRules") + " type / style rule" + (n("cellRules") === 1 ? "" : "s"));
+    if (n("populate")) bits.push(n("populate") + " populate rule" + (n("populate") === 1 ? "" : "s"));
+    if (n("merges")) bits.push(n("merges") + " merged");
+    if (n("locks")) bits.push(n("locks") + " lock rule" + (n("locks") === 1 ? "" : "s"));
+    return bits.join(", ");
 }
 
 const STYLE = `
 nexa-data-grid-editor { display: block; height: 100%; min-height: 320px; }
-nexa-data-grid-editor .dge { display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 8px; height: 100%; min-height: 0; }
+nexa-data-grid-editor .dge { display: grid; grid-template-columns: minmax(0, 1fr) 390px; gap: 8px; height: 100%; min-height: 0; }
 nexa-data-grid-editor .dge-main { display: flex; flex-direction: column; gap: 6px; min-height: 0; min-width: 0; }
 nexa-data-grid-editor .dge-bar { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; padding: 6px; border: 1px solid var(--nx-border, #c6c6c6); background: var(--nx-bg, #fff); }
 nexa-data-grid-editor .dge-grp { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
 nexa-data-grid-editor .dge-grp > .dge-t { font-size: 11px; color: var(--nx-text-muted, #6f6f6f); margin-right: 2px; }
 nexa-data-grid-editor .dge-grp .nx-btn { padding: 3px 9px; }
+nexa-data-grid-editor .dge-grp .nx-btn.on { background: var(--nx-selected, #d0e2ff); }
 nexa-data-grid-editor .dge-grp nx-select, nexa-data-grid-editor .dge-grp nx-number, nexa-data-grid-editor .dge-grp nx-color { width: 120px; }
 nexa-data-grid-editor .dge-grp nx-number { width: 70px; }
 nexa-data-grid-editor .dge-prev { flex: 1 1 auto; min-height: 220px; position: relative; border: 1px solid var(--nx-border, #c6c6c6); background: var(--nx-bg, #fff); }
 nexa-data-grid-editor .dge-prev > * { position: absolute; inset: 0; }
 nexa-data-grid-editor .dge-status { font-size: 12px; color: var(--nx-text, #161616); min-height: 18px; display: flex; gap: 12px; flex-wrap: wrap; }
 nexa-data-grid-editor .dge-status .dge-note { color: var(--nx-warn, #8e6a00); }
-nexa-data-grid-editor .dge-side { display: flex; flex-direction: column; min-height: 0; border: 1px solid var(--nx-border, #c6c6c6); background: var(--nx-bg, #fff); }
-nexa-data-grid-editor .dge-tabs { display: flex; border-bottom: 1px solid var(--nx-border, #c6c6c6); }
-nexa-data-grid-editor .dge-tab { flex: 1; padding: 7px 4px; text-align: center; cursor: pointer; font-size: 12px; border: 0; background: transparent; color: var(--nx-text, #161616); border-bottom: 2px solid transparent; }
-nexa-data-grid-editor .dge-tab.on { border-bottom-color: var(--nx-primary, #0f62fe); font-weight: 600; }
-nexa-data-grid-editor .dge-pane { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
-nexa-data-grid-editor .dge-pane > * { flex-shrink: 0; }
-nexa-data-grid-editor .dge-cols { display: flex; flex-direction: column; gap: 2px; max-height: 190px; overflow: auto; border: 1px solid var(--nx-border, #c6c6c6); }
-nexa-data-grid-editor .dge-col { display: flex; align-items: center; gap: 4px; padding: 3px 6px; cursor: pointer; font-size: 12px; }
-nexa-data-grid-editor .dge-col.on { background: var(--nx-selected, #d0e2ff); }
-nexa-data-grid-editor .dge-col .dge-n { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-nexa-data-grid-editor .dge-col .dge-ty { color: var(--nx-text-muted, #6f6f6f); font-size: 11px; }
-nexa-data-grid-editor .dge-col button { padding: 0 6px; }
-nexa-data-grid-editor .dge-help { font-size: 11px; color: var(--nx-text-muted, #6f6f6f); }
+nexa-data-grid-editor .dge-side { min-height: 0; min-width: 0; border: 1px solid var(--nx-border, #c6c6c6); background: var(--nx-bg, #fff); overflow: hidden; display: flex; flex-direction: column; }
+nexa-data-grid-editor .dge-form { flex: 1 1 auto; min-height: 0; overflow: hidden; }
 `;
 
 defineInspectorWidget("nexa-data-grid-editor", ({ KitElement, html: h, nothing }) => class extends KitElement {
     static properties = {
         props: { attribute: false },
-        _tab: { state: true },
-        _ci: { state: true },
         _range: { state: true },
         _note: { state: true },
         _bstyle: { state: true },
@@ -97,8 +97,6 @@ defineInspectorWidget("nexa-data-grid-editor", ({ KitElement, html: h, nothing }
         super();
         this.props = {};
         this._draft = null;
-        this._tab = "columns";
-        this._ci = 0;
         this._range = null;
         this._note = "";
         this._bstyle = "solid";
@@ -107,6 +105,8 @@ defineInspectorWidget("nexa-data-grid-editor", ({ KitElement, html: h, nothing }
         this._bcustom = "#161616";
         this._prevSig = "";
         this._prevWired = false;
+        this._form = null;
+        this._meta = null;
     }
 
     /** The design as edited here. */
@@ -116,31 +116,111 @@ defineInspectorWidget("nexa-data-grid-editor", ({ KitElement, html: h, nothing }
         if (changed.has("props") && !this._draft) this._draft = designOf(this.props);
     }
 
-    updated() { this._mountPreview(); }
+    updated() {
+        this._mountPreview();
+        this._mountForm();
+        if (this._form) this._form.update();
+    }
+
+    disconnectedCallback() {
+        super.disconnectedCallback();
+        if (this._form) { try { this._form.destroy(); } catch (e) { /* gone */ } this._form = null; }
+    }
+
+    _size() { return sizeOf(this._draft.rows, this._draft.cols); }
+    _freeze() { return { rows: Number(this._draft.freezeRows) || 0, cols: Number(this._draft.freezeCols) || 0 }; }
 
     // ---- the preview: the component itself ---------------------------------------------------------------------
     _previewProps() {
-        // what the dialog needs the grid to do while designing: select ranges, show locks, keep the rows where they are
-        return Object.assign({}, this._draft, { selection: "range", mode: "editable", editMode: "instant", sortable: false, filterable: false, rowKey: "", lockField: "", showHeader: true, emptyText: "" });
+        // what the dialog needs the grid to do while designing: show the whole sheet, select ranges, show the locks; a populate rule has no value here
+        // (its value is a binding, which only a page can resolve), so only its marker shows
+        return Object.assign({}, this._draft, {
+            selection: "range", mode: "editable", editMode: "instant", viewArea: "",
+            populate: (this._draft.populate || []).map((i) => Object.assign({}, i, { value: undefined }))
+        });
     }
 
     _mountPreview() {
         const host = this.querySelector(".dge-prev");
-        const def = window.NEXA && window.NEXA.getComponent ? window.NEXA.getComponent(COMPONENT_ID) : null;
-        if (!host || !def) return;
+        const d = def();
+        if (!host || !d) return;
         if (!this._prevWired) {
             this._prevWired = true;
             host.addEventListener("nexa-selection", (e) => { this._range = e.detail && e.detail.range ? e.detail.range : null; });
+            host.addEventListener("nexa-cell-edit", (e) => this._typed(e.detail.address, e.detail.value));
         }
         const props = this._previewProps();
         const sig = JSON.stringify(props);
         if (sig === this._prevSig) return;
         this._prevSig = sig;
-        def.render(host, props, { mode: "editor", namespace: "dg-design", getRawProps: () => props, emit() {} });
-        // the SDK switches pointer events off for a component in editor mode (the canvas selects and drags it); in this dialog the grid is the
-        // thing to click: the attribute tells the grid to keep them on (it restores them after every update)
+        d.render(host, props, { mode: "editor", namespace: "dg-design", getRawProps: () => props, emit() {} });
+        // the SDK switches pointer events off for a component in editor mode (the canvas selects and drags it); in this dialog the grid is the thing to
+        // click: the attribute tells the grid to keep them on (it restores them after every update)
         const grid = host.firstElementChild;
         if (grid) { grid.setAttribute("data-interactive", ""); grid.style.pointerEvents = "auto"; }
+    }
+
+    // ---- the tree and the properties: the kit's own, as the editor's Properties ---------------------------------------------------
+    _buildMeta() {
+        const K = window.NexaKit, d = def();
+        if (!K || !d || !d.nexa) return null;
+        const props = {}, order = [];
+        const group = (g) => { if (order.indexOf(g) === -1) order.push(g); return g; };
+        // the selection: the type and the style of the selected cells, one row each; a change makes a rule over the selection
+        SEL_KEYS.forEach((k) => {
+            const f = RULE_SCHEMA[k];
+            const vw = f.visibleWhen;
+            props["sel_" + k] = K.normalizeProp("sel_" + k, Object.assign({}, f, {
+                group: group("Selection"), section: f.section, bindable: false, noReset: true,
+                visibleWhen: vw ? (p) => vw({ type: p.sel_type }) : undefined, enabledWhen: (p) => !!p.__hasSelection
+            }));
+        });
+        props.sel_width = K.normalizeProp("sel_width", { type: "number", label: "Column width", default: "", min: 24, unit: "px", group: group("Selection"), section: "Size", bindable: false, noReset: true, enabledWhen: (p) => !!p.__hasSelection });
+        props.sel_height = K.normalizeProp("sel_height", { type: "number", label: "Row height", default: "", min: 16, unit: "px", group: group("Selection"), section: "Size", bindable: false, noReset: true, enabledWhen: (p) => !!p.__hasSelection });
+        // the sheet's own settings and its lists, from the component's definition: the same fields, the same help
+        const take = (k, g) => { const f = d.nexa.props[k]; if (f) props[k] = Object.assign({}, f, { hidden: false, group: group(g), section: undefined }); };
+        ["rows", "cols", "colWidth", "rowHeight", "viewArea", "freezeRows", "freezeCols", "showHeaders", "showGridLines"].forEach((k) => take(k, "Sheet"));
+        take("populate", "Populate from messages");
+        take("cellRules", "Types and styles");
+        take("merges", "Merged cells");
+        take("borders", "Borders");
+        take("locks", "Locked / open cells");
+        return { id: "nexa-data-grid-design", label: "Edit grid", props, stateList: [], partList: [], inputs: [], outputs: [], eventList: [], actionList: [], groupOrder: order };
+    }
+
+    // what the property rows show: the draft, and for the Selection what the selected cells have in common
+    _values() {
+        const d = this._draft, size = this._size();
+        const out = Object.assign({}, d, { __hasSelection: !!this._range });
+        let common = {};
+        if (this._range) common = commonFields(parseRules(d.cellRules, size.rows, size.cols), this._range, SEL_KEYS);
+        SEL_KEYS.forEach((k) => { out["sel_" + k] = common[k] !== undefined ? common[k] : RULE_SCHEMA[k].default; });
+        out.sel_width = ""; out.sel_height = "";
+        if (this._range) {
+            const widths = [], heights = [];
+            for (let c = this._range.c1; c <= this._range.c2 && widths.length < 702; c++) widths.push(Number((d.colWidths || {})[colName(c)]) || Number(d.colWidth) || 110);
+            for (let r = this._range.r1; r <= this._range.r2 && heights.length < 1000; r++) heights.push(Number((d.rowHeights || {})[String(r + 1)]) || Number(d.rowHeight) || 28);
+            if (widths.every((w) => w === widths[0])) out.sel_width = widths[0];
+            if (heights.every((x) => x === heights[0])) out.sel_height = heights[0];
+        }
+        return out;
+    }
+
+    _mountForm() {
+        const host = this.querySelector(".dge-form");
+        const K = window.NexaKit;
+        if (!host || !K || this._form) return;
+        this._meta = this._buildMeta();
+        if (!this._meta) return;
+        this._form = K.renderInspector(host, {
+            meta: this._meta, props: () => this._values(), persistKey: "nexa-data-grid-design", fallbacks: false,
+            set: (k, v) => this._setProp(k, v)
+        });
+    }
+
+    _setProp(key, value) {
+        if (key.indexOf("sel_") === 0) { this._applySelection(key.slice(4), value); return; }
+        this._set({ [key]: value });
     }
 
     // ---- editing the draft -----------------------------------------------------------------------------------------
@@ -150,87 +230,95 @@ defineInspectorWidget("nexa-data-grid-editor", ({ KitElement, html: h, nothing }
         this.requestUpdate();       // the draft is not a reactive property, and an unchanged note would not draw the new preview
     }
 
-    _freeze() { return { rows: Number(this._draft.freezeRows) || 0, cols: Number(this._draft.freezeCols) || 0 }; }
-    _colCount() { return columnsOf(this._draft.columns, []).filter((c) => !c.hidden).length; }
+    // a value typed in a cell of the preview: the content of the design
+    _typed(address, value) {
+        const cells = Object.assign({}, this._draft.cells);
+        if (value === null || value === "" || value === undefined) delete cells[address]; else cells[address] = value;
+        this._set({ cells });
+    }
 
-    /** Merges that no longer fit (the freeze line moved over them, a column went) are taken apart, and the user is told. */
-    _fitMerges(merges, freeze) {
-        const n = normalizeMerges(merges, Number.MAX_SAFE_INTEGER, Math.max(this._colCount(), 1), freeze);
-        return { merges: n.merges, lost: n.dropped.length };
+    // a field of the Selection: width and height go to the columns and rows; the rest is a rule over the selection
+    _applySelection(field, value) {
+        const r = this._range;
+        if (!r) return;
+        const size = this._size();
+        if (field === "width") {
+            const widths = Object.assign({}, this._draft.colWidths);
+            for (let c = r.c1; c <= r.c2 && c < size.cols; c++) { if (value === "" || value === null) delete widths[colName(c)]; else widths[colName(c)] = Number(value); }
+            this._set({ colWidths: widths });
+        } else if (field === "height") {
+            const heights = Object.assign({}, this._draft.rowHeights);
+            for (let i = r.r1; i <= r.r2 && i < size.rows; i++) { if (value === "" || value === null) delete heights[String(i + 1)]; else heights[String(i + 1)] = Number(value); }
+            this._set({ rowHeights: heights });
+        } else {
+            this._set({ cellRules: addRule(this._draft.cellRules, rangeLabel(r, size.rows, size.cols), { [field]: value }) });
+        }
+    }
+
+    _toggle(field) {
+        if (!this._range) return;
+        const size = this._size();
+        const cur = commonFields(parseRules(this._draft.cellRules, size.rows, size.cols), this._range, [field])[field] === true;
+        this._applySelection(field, !cur);
+    }
+
+    /** Merges that no longer fit (the freeze line moved over them) are taken apart, and the user is told. */
+    _fitMerges(freeze) {
+        const size = this._size();
+        const n = normalizeMerges(mergesFromProps(this._draft.merges), size.rows, size.cols, freeze);
+        return { merges: toTextMerges(n.merges), lost: n.dropped.length };
     }
 
     _merge() {
         const r = this._range;
         if (!r) return;
-        if (crossesFreeze(r, this._freeze())) { this._note = "A merged cell cannot cross the frozen line: select cells on one side of it."; return; }
-        this._set({ merges: mergeRange(this._draft.merges, r) });
+        if (crossesFreeze(r, this._freeze())) { this._note = "A merged cell cannot cross the frozen line: select cells on one side of it."; this.requestUpdate(); return; }
+        this._set({ merges: toTextMerges(mergeRange(mergesFromProps(this._draft.merges), r)) });
     }
 
-    _unmerge() { if (this._range) this._set({ merges: unmergeRange(this._draft.merges, this._range) }); }
+    _unmerge() { if (this._range) this._set({ merges: toTextMerges(unmergeRange(mergesFromProps(this._draft.merges), this._range)) }); }
 
     _freezeTo(what) {
-        const r = this._range;
-        const freeze = what === "none" ? { rows: 0, cols: 0 } : { rows: what === "cols" ? this._freeze().rows : r.r2 + 1, cols: what === "rows" ? this._freeze().cols : r.c2 + 1 };
-        const fit = this._fitMerges(this._draft.merges, freeze);
+        const r = this._range, cur = this._freeze();
+        const freeze = what === "none" ? { rows: 0, cols: 0 } : { rows: what === "cols" ? cur.rows : r.r2 + 1, cols: what === "rows" ? cur.cols : r.c2 + 1 };
+        const fit = this._fitMerges(freeze);
         this._set({ freezeRows: freeze.rows, freezeCols: freeze.cols, merges: fit.merges }, fit.lost ? fit.lost + " merged cell" + (fit.lost === 1 ? " was" : "s were") + " taken apart: they crossed the frozen line." : "");
     }
 
     _spec() { return { style: this._bstyle, width: Number(this._bwidth) || 1, color: this._bcolor === "custom" ? this._bcustom : this._bcolor }; }
-    _border(sides) { if (this._range) this._set({ borders: addBorder(this._draft.borders, this._range, sides, this._spec()) }); }
-    _clearBorders() { if (this._range) this._set({ borders: clearBorders(this._draft.borders, this._range) }); }
-    _lock(locked) { if (this._range) this._set({ locks: addLock(this._draft.locks, this._range, locked) }); }
-    _resetLock() { if (this._range) this._set({ locks: resetLocks(this._draft.locks, this._range) }); }
-
-    _addColumn() {
-        const cols = this._draft.columns.slice();
-        // an empty list means "from the data": adding the first column makes the list real, so it starts with what the data has
-        const n = cols.length + 1;
-        cols.push({ key: "field" + n, label: "Column " + n, type: "text" });
-        this._set({ columns: cols });
-        this._ci = cols.length - 1;
-    }
-
-    _removeColumn(i) {
-        const cols = this._draft.columns.slice();
-        cols.splice(i, 1);
-        const rules = dropColumn(this._draft, i);
-        this._set({ columns: cols, merges: rules.merges, borders: rules.borders, locks: rules.locks });
-        this._ci = Math.max(0, Math.min(this._ci, cols.length - 1));
-    }
-
-    _moveColumn(i, to) {
-        if (to < 0 || to >= this._draft.columns.length) return;
-        const cols = this._draft.columns.slice();
-        const [c] = cols.splice(i, 1);
-        cols.splice(to, 0, c);
-        const rules = moveColumn(this._draft, i, to);
-        this._set({ columns: cols, merges: rules.merges, borders: rules.borders, locks: rules.locks });
-        this._ci = to;
-    }
-
-    _setColumnField(i, key, value) {
-        const cols = this._draft.columns.map((c, k) => (k === i ? Object.assign({}, c, { [key]: value }) : c));
-        this._set({ columns: cols });
-    }
+    _borders(list) { const s = this._size(); this._set({ borders: toTextRules(list, s.rows, s.cols) }); }
+    _border(sides) { if (this._range) this._borders(addBorder(rangedFromProps(this._draft.borders), this._range, sides, this._spec())); }
+    _clearBorders() { if (this._range) this._borders(clearBorders(rangedFromProps(this._draft.borders), this._range)); }
+    _locks(list) { const s = this._size(); this._set({ locks: toTextRules(list, s.rows, s.cols) }); }
+    _lock(locked) { if (this._range) this._locks(addLock(rangedFromProps(this._draft.locks), this._range, locked)); }
+    _resetLock() { if (this._range) this._locks(resetLocks(rangedFromProps(this._draft.locks), this._range)); }
 
     // ---- drawing ---------------------------------------------------------------------------------------------------------
-    _btn(label, title, on, disabled) {
-        return h`<button type="button" class="nx-btn" title=${title} ?disabled=${disabled || !this._range} @click=${on}>${label}</button>`;
+    _btn(label, title, on, extra) {
+        return h`<button type="button" class="nx-btn ${extra && extra.on ? "on" : ""}" title=${title} ?disabled=${!this._range} @click=${on}>${label}</button>`;
     }
 
     _toolbar() {
+        const d = this._draft, size = this._size();
+        const common = this._range ? commonFields(parseRules(d.cellRules, size.rows, size.cols), this._range, ["bold", "italic", "underline", "align"]) : {};
+        const align = (v, label, title) => this._btn(label, title, () => this._applySelection("align", v), { on: common.align === v });
         return h`<div class="dge-bar">
             <div class="dge-grp"><span class="dge-t">Cells</span>
                 ${this._btn("Merge", "One box over the selected cells", () => this._merge())}
                 ${this._btn("Unmerge", "Take the merges in the selection apart", () => this._unmerge())}</div>
+            <div class="dge-grp"><span class="dge-t">Text</span>
+                ${this._btn(h`<b>B</b>`, "Bold", () => this._toggle("bold"), { on: common.bold === true })}
+                ${this._btn(h`<i>I</i>`, "Italic", () => this._toggle("italic"), { on: common.italic === true })}
+                ${this._btn(h`<u>U</u>`, "Underline", () => this._toggle("underline"), { on: common.underline === true })}
+                ${align("left", "Left", "Align left")}${align("center", "Centre", "Align in the middle")}${align("right", "Right", "Align right")}</div>
             <div class="dge-grp"><span class="dge-t">Freeze</span>
                 ${this._btn("Rows to here", "Keep the rows down to the selection's last row in place", () => this._freezeTo("rows"))}
                 ${this._btn("Columns to here", "Keep the columns up to the selection's last column in place", () => this._freezeTo("cols"))}
-                <button type="button" class="nx-btn" ?disabled=${!(this._draft.freezeRows || this._draft.freezeCols)} @click=${() => this._freezeTo("none")}>Unfreeze</button></div>
+                <button type="button" class="nx-btn" ?disabled=${!(d.freezeRows || d.freezeCols)} @click=${() => this._freezeTo("none")}>Unfreeze</button></div>
             <div class="dge-grp"><span class="dge-t">Lock</span>
                 ${this._btn("Lock", "These cells cannot be edited (the page's editable mode)", () => this._lock(true))}
-                ${this._btn("Open", "These cells can be edited, also in a locked column or row", () => this._lock(false))}
-                ${this._btn("Reset", "Back to what the column and the row say", () => this._resetLock())}</div>
+                ${this._btn("Open", "These cells can be edited, also in a locked range", () => this._lock(false))}
+                ${this._btn("Reset", "Back to what no rule says", () => this._resetLock())}</div>
             <div class="dge-grp"><span class="dge-t">Borders</span>
                 <nx-select .options=${BORDER_STYLES} .value=${this._bstyle} @nx-change=${(e) => { this._bstyle = e.detail.value; }}></nx-select>
                 <nx-number min="1" max="6" step="1" .value=${this._bwidth} allow-empty="false" @nx-change=${(e) => { this._bwidth = e.detail.value; }}></nx-number>
@@ -249,72 +337,20 @@ defineInspectorWidget("nexa-data-grid-editor", ({ KitElement, html: h, nothing }
     }
 
     _status() {
-        const r = this._range;
+        const r = this._range, d = this._draft;
         const bits = [describeRange(r)];
         if (r) {
-            const touching = mergesTouching(this._draft.merges, r).length;
+            const touching = mergesTouching(mergesFromProps(d.merges), r).length;
             if (touching) bits.push(touching + " merged box" + (touching === 1 ? "" : "es") + " here");
-            const rules = normalizeLocks(this._draft.locks);
+            const rules = normalizeLocks(rangedFromProps(d.locks));
             const st = lockState(r, (row, col) => lockRuleAt(rules, row, col));
             if (st !== "default") bits.push("locks: " + st);
         }
         const f = this._freeze();
         if (f.rows || f.cols) bits.push("frozen: " + f.rows + " row" + (f.rows === 1 ? "" : "s") + ", " + f.cols + " column" + (f.cols === 1 ? "" : "s"));
+        const typed = parseCells(d.cells, 1000, 702).size;
+        if (typed) bits.push(typed + " typed");
         return h`<div class="dge-status"><span>${bits.join(" · ")}</span>${this._note ? h`<span class="dge-note">${this._note}</span>` : nothing}</div>`;
-    }
-
-    _field(i, key, def) {
-        const col = this._draft.columns[i];
-        const value = col[key] !== undefined ? col[key] : def.default;
-        const set = (v) => this._setColumnField(i, key, v);
-        const common = { label: def.label, help: def.help || "" };
-        switch (def.type) {
-            case "boolean": return h`<nx-checkbox label=${common.label} help=${common.help} .value=${value !== false && value !== "false"} @nx-change=${(e) => set(!!e.detail.value)}></nx-checkbox>`;
-            case "number": return h`<nx-number label=${common.label} help=${common.help} min=${def.min ?? nothing} max=${def.max ?? nothing} unit=${def.unit ?? nothing} .value=${value} @nx-change=${(e) => set(e.detail.value)}></nx-number>`;
-            case "enum": {
-                const options = (def.options || []).map((o) => (typeof o === "object" ? o : { value: o, label: o }));
-                return h`<nx-select label=${common.label} help=${common.help} .options=${options} .value=${value} @nx-change=${(e) => set(e.detail.value)}></nx-select>`;
-            }
-            default: return h`<nx-text label=${common.label} help=${common.help} .value=${value === undefined || value === null ? "" : String(value)} @nx-change=${(e) => set(e.detail.value)}></nx-text>`;
-        }
-    }
-
-    _columnsTab() {
-        const cols = this._draft.columns;
-        const sel = cols[this._ci] ? this._ci : -1;
-        return h`<div class="dge-pane">
-            ${cols.length === 0 ? h`<div class="dge-help">No columns designed: the grid takes them from the data (the keys of the first rows). Add one to design the columns yourself.</div>` : nothing}
-            <div class="dge-cols">${cols.map((c, i) => h`<div class="dge-col ${i === sel ? "on" : ""}" @click=${() => { this._ci = i; }}>
-                <span class="dge-n">${c.label || c.key}</span><span class="dge-ty">${c.type || "text"}</span>
-                <button type="button" class="nx-btn" title="Move up" ?disabled=${i === 0} @click=${(e) => { e.stopPropagation(); this._moveColumn(i, i - 1); }}>↑</button>
-                <button type="button" class="nx-btn" title="Move down" ?disabled=${i === cols.length - 1} @click=${(e) => { e.stopPropagation(); this._moveColumn(i, i + 1); }}>↓</button>
-                <button type="button" class="nx-btn" title="Remove" @click=${(e) => { e.stopPropagation(); this._removeColumn(i); }}>×</button></div>`)}</div>
-            <div><button type="button" class="nx-btn nx-primary" @click=${() => this._addColumn()}>Add column</button></div>
-            ${sel === -1 ? nothing : Object.keys(COLUMN_FIELDS).filter((k) => !COLUMN_FIELDS[k].visibleWhen || COLUMN_FIELDS[k].visibleWhen(Object.assign({ type: "text" }, cols[sel]))).map((k) => this._field(sel, k, COLUMN_FIELDS[k]))}
-        </div>`;
-    }
-
-    _settingsTab() {
-        const d = this._draft;
-        const num = (key, label, min, max, help) => h`<nx-number label=${label} help=${help || ""} min=${min} max=${max ?? nothing} .value=${d[key]} @nx-change=${(e) => this._setNumber(key, e.detail.value)}></nx-number>`;
-        return h`<div class="dge-pane">
-            ${num("freezeRows", "Frozen rows", 0, undefined, "The first rows stay in place while the rest scrolls. The Freeze buttons set it from the selection.")}
-            ${num("freezeCols", "Frozen columns", 0, undefined, "The first columns stay in place.")}
-            ${num("rowHeight", "Row height (px)", 20, 120)}
-            ${num("headerHeight", "Header height (px)", 20, 120)}
-            <nx-checkbox label="Show row numbers" .value=${!!d.showRowNumbers} @nx-change=${(e) => this._set({ showRowNumbers: !!e.detail.value })}></nx-checkbox>
-            <div class="dge-help">Rows and columns are counted in the order shown. A merge in the body switches sorting and filtering off on the page.</div>
-        </div>`;
-    }
-
-    _setNumber(key, value) {
-        const n = value === "" ? 0 : Number(value);
-        if (!isFinite(n)) return;
-        if (key === "freezeRows" || key === "freezeCols") {
-            const freeze = Object.assign(this._freeze(), key === "freezeRows" ? { rows: Math.max(0, n) } : { cols: Math.max(0, n) });
-            const fit = this._fitMerges(this._draft.merges, freeze);
-            this._set({ [key]: Math.max(0, n), merges: fit.merges }, fit.lost ? fit.lost + " merged cell" + (fit.lost === 1 ? " was" : "s were") + " taken apart: they crossed the frozen line." : "");
-        } else this._set({ [key]: n });
     }
 
     render() {
@@ -322,14 +358,7 @@ defineInspectorWidget("nexa-data-grid-editor", ({ KitElement, html: h, nothing }
         return h`<style>${STYLE}</style>
             <div class="dge">
                 <div class="dge-main">${this._toolbar()}<div class="dge-prev"></div>${this._status()}</div>
-                <div class="dge-side">
-                    <div class="dge-tabs">
-                        <button type="button" class="dge-tab ${this._tab === "columns" ? "on" : ""}" @click=${() => { this._tab = "columns"; }}>Columns</button>
-                        <button type="button" class="dge-tab ${this._tab === "settings" ? "on" : ""}" @click=${() => { this._tab = "settings"; }}>Settings</button>
-                    </div>
-                    ${this._tab === "columns" ? this._columnsTab() : this._settingsTab()}
-                </div>
+                <div class="dge-side"><div class="dge-form"></div></div>
             </div>`;
     }
 });
-
