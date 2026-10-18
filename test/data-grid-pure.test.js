@@ -10,7 +10,7 @@ const path = require('path');
 
 // The modules are plain ES modules. They are loaded without a bundler: each one in its own function scope, an `import { a } from "./x.js"`
 // becoming a destructuring of what x.js exported (so the order below is the order of the imports).
-const ORDER = ['address.js', 'sizes.js', 'cell-types.js', 'populate.js', 'sheet.js', 'clipboard.js', 'layout.js', 'window.js', 'stage.js', 'selection.js', 'design.js', 'fill.js'];
+const ORDER = ['address.js', 'sizes.js', 'cell-types.js', 'populate.js', 'sheet.js', 'clipboard.js', 'layout.js', 'window.js', 'stage.js', 'selection.js', 'design.js', 'fill.js', 'sort.js'];
 const M = {};
 ORDER.forEach((file) => {
     let src = fs.readFileSync(path.join(__dirname, '..', 'dist', 'data-grid', file), 'utf8');
@@ -555,7 +555,7 @@ ok('design: addLock overrides the rules inside the range; resetLocks forgets the
     assert.strictEqual(D.resetLocks(l, { r1: 0, c1: 0, r2: 9, c2: 9 }).length, 0);
 });
 
-const Cb = M['clipboard.js'], F = M['fill.js'];
+const Cb = M['clipboard.js'], F = M['fill.js'], So = M['sort.js'];
 
 ok('clipboard: formatTsv / parseTsv round-trip a matrix, with quotes as Excel writes them (a tab, a new line and a quote inside a cell)', () => {
     const m = [['a', 'b\tc', 'line1\nline2'], ['say "hi"', '', null], [1, 2.5, true]];
@@ -615,6 +615,41 @@ ok('fill: the cells a drag adds are in the direction it went furthest, kept in t
     assert.strictEqual(F.fillTarget(src, { r: 2, c: 2 }, lim), null);
     assert.strictEqual(F.fillTarget(src, { r: 50, c: 3 }, lim).target.r2, 19, 'kept in the sheet');
     assert.strictEqual(F.fillTarget(src, { r: 9, c: 6 }, lim).dir, 'down', 'the axis it went further along (7 rows against 3 columns)');
+});
+
+ok('sort: numbers by size before text, text in natural order, booleans after; empty values last in both directions; equal values keep their order', () => {
+    const col = [10, 'item10', 2, null, 'Item2', true, '', 'b', 1.5, 'A'];
+    const names = (dir) => So.sortPerm(col.length, (i) => col[i], dir).map((i) => col[i]);
+    assert.deepStrictEqual(names('asc'), [1.5, 2, 10, 'A', 'b', 'item10'.length ? 'Item2' : '', 'item10', true, null, ''].filter((x) => x !== undefined), 'ascending');
+    assert.deepStrictEqual(names('desc'), [true, 'item10', 'Item2', 'b', 'A', 10, 2, 1.5, null, ''], 'descending: the empty ones are still last');
+    // a sort twice is a sort once; equal values keep their order
+    const eq = [3, 1, 3, 1, 3];
+    assert.deepStrictEqual(So.sortPerm(5, (i) => eq[i], 'asc'), [1, 3, 0, 2, 4]);
+    assert.deepStrictEqual(So.sortPerm(5, (i) => eq[i], 'desc'), [0, 2, 4, 1, 3]);
+    assert.deepStrictEqual(So.sortPerm(0, () => 1, 'asc'), []);
+    assert.ok(So.compareValues('9', 10) < 0, 'a number written as text sorts as a number');
+});
+
+ok('sort: inversePerm; sortRangeCells moves the typed cells of the rows of a range by one column and leaves the rest alone', () => {
+    assert.deepStrictEqual(So.inversePerm([2, 0, 1]), [1, 2, 0]);
+    const cells = { A1: 'z', B1: 3, A2: 'x', B2: 1, A3: 'y', C1: 'out of the range', A9: 'far', B3: 2 };
+    const sorted = So.sortRangeCells(cells, { r1: 0, c1: 0, r2: 2, c2: 1 }, 1, 'asc', A.addressOf);
+    assert.deepStrictEqual(sorted, { A1: 'x', B1: 1, A2: 'y', B2: 2, A3: 'z', B3: 3, C1: 'out of the range', A9: 'far' });
+    const down = So.sortRangeCells(cells, { r1: 0, c1: 0, r2: 2, c2: 1 }, 0, 'desc', A.addressOf);
+    assert.deepStrictEqual([down.A1, down.A2, down.A3], ['z', 'y', 'x']);
+    assert.deepStrictEqual([down.B1, down.B2, down.B3], [3, 2, 1], 'a row moves as one');
+    const gaps = So.sortRangeCells({ A1: 'b', A3: 'a' }, { r1: 0, c1: 0, r2: 2, c2: 0 }, 0, 'asc', A.addressOf);
+    assert.deepStrictEqual(gaps, { A1: 'a', A2: 'b' }, 'an empty row goes last');
+    assert.deepStrictEqual(cells.A1, 'z', 'the input is untouched');
+});
+
+ok('find: the cells that hold a text, in reading order; case on request; next and previous go round', () => {
+    const items = [{ r: 2, c: 0, text: 'Pump 2' }, { r: 0, c: 3, text: 'pump' }, { r: 0, c: 1, text: 'Mixer' }, { r: 1, c: 0, text: 'PUMP B' }];
+    assert.deepStrictEqual(So.findMatches(items, 'pump', false), [{ r: 0, c: 3 }, { r: 1, c: 0 }, { r: 2, c: 0 }]);
+    assert.deepStrictEqual(So.findMatches(items, 'pump', true), [{ r: 0, c: 3 }]);
+    assert.deepStrictEqual(So.findMatches(items, '', false), []);
+    assert.deepStrictEqual(So.findMatches(items, 'zzz', false), []);
+    assert.deepStrictEqual([So.nextMatch(3, -1), So.nextMatch(3, 0), So.nextMatch(3, 2), So.nextMatch(3, 0, true), So.nextMatch(3, -1, true), So.nextMatch(0, 0)], [0, 1, 0, 2, 2, -1]);
 });
 
 ok('design: rulesFromCells: the styles of a block as short rules (neighbours and identical rows become one range); a plain cell over a styled one resets it', () => {

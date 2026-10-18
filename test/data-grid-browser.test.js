@@ -696,6 +696,100 @@ withHarness({
         assert.ok(rules.some((r) => r.range === 'A2:A4' && r.bold === true), 'one range for the filled column: ' + JSON.stringify(rules));
     });
 
+    // ---- sort (a view over an area) and find (Ctrl+F) ----------------------------------------------------------------------------------------------
+    const colA = (n, from, to) => js(`(function () { var root = ${root(n)}; var out = []; for (var r = ${from}; r <= ${to}; r++) { var e = root.querySelector('[data-r="' + r + '"][data-c="0"]'); out.push(e ? e.textContent.trim() : null); } return out; })()`);
+
+    await ok('sort on a page: a button on the letters of the area, ascending / descending / back; a view only: the heading stays, empty last, edits and events keep the cell\'s own address', async () => {
+        await mount('so', {
+            mode: 'editable', sortArea: 'A1:C6',
+            cells: { A1: 'Name', B1: 'Qty', C1: 'Note', A2: 'pear', B2: 3, A3: 'apple', B3: 10, A4: 'fig', B4: 2, A5: 'kiwi', A6: 'date', B6: 7 }
+        });
+        assert.deepStrictEqual(await js(qa('so', '[data-sortc]') + '.map(function (e) { return e.dataset.sortc; })'), ['0', '1', '2'], 'a button on the letters of the area only');
+        const names = () => colA('so', 0, 5);
+        await clickAt(q('so', '[data-sortc="1"]'));
+        assert.deepStrictEqual(await names(), ['Name', 'fig', 'pear', 'date', 'apple', 'kiwi'], 'by Qty, ascending; the heading stays; the empty one is last');
+        assert.deepStrictEqual((await events('so', 'sortChange'))[0], { column: 'B', direction: 'asc' });
+        await clickAt(q('so', '[data-sortc="1"]'));
+        assert.deepStrictEqual(await names(), ['Name', 'apple', 'date', 'pear', 'fig', 'kiwi'], 'descending: the empty one is still last');
+        // an edit on the sorted view goes to the cell's own row, and is told by its own address
+        await clickAt(cell('so', 1, 0), 2); await typeText('!'); await press('Enter');
+        assert.strictEqual((await events('so', 'cellChange')).pop().address, 'A3', 'apple is A3, wherever it is shown');
+        await clickAt(q('so', '[data-sortc="1"]'));
+        assert.deepStrictEqual(await names(), ['Name', 'pear', 'apple!', 'fig', 'kiwi', 'date'], 'the order of the sheet again, with the edit in apple\'s row');
+        // Logic can sort too; getData is the sheet's own order
+        await js('NexaTest.invoke("so", "sortColumn", { column: "A", direction: "asc" })'); await settle(); await wait(60);
+        assert.deepStrictEqual((await names()).slice(1, 3), ['apple!', 'date']);
+        assert.deepStrictEqual((await events('so', 'sortChange')).pop(), { column: 'A', direction: 'asc' });
+        await js('NexaTest.invoke("so", "getData")'); await settle();
+        assert.strictEqual((await events('so', 'data'))[0].cells.A3, 'apple!');
+        // off
+        await js('NexaTest.setProps("so", { sortable: false })'); await settle();
+        assert.strictEqual(await js(q('so', '[data-sortc]') + ' ? 1 : 0'), 0);
+        assert.deepStrictEqual((await names()).slice(1, 3), ['pear', 'apple!'], 'and the order is the sheet\'s');
+        await js(`NexaTest.mount("so2", "nexa-ui-${ID}", { sortArea: "A1:C6" }, { width: 400, height: 200, design: true })`); await settle(); await wait(60);
+        assert.strictEqual(await js(q('so2', '[data-sortc]') + ' ? 1 : 0'), 0, 'the design canvas has no sort button');
+    });
+
+    await ok('sort follows what a message fills: the new rows are sorted by the choice the user made', async () => {
+        await mount('so3', { sortArea: 'A1:B9', sortHeader: false, populate: [{ at: 'A1', value: bind('rows'), header: false }] });
+        await message('so3', { rows: [['c', 3], ['a', 1], ['b', 2]] });
+        await clickAt(q('so3', '[data-sortc="0"]'));
+        assert.deepStrictEqual(await colA('so3', 0, 2), ['a', 'b', 'c']);
+        await message('so3', { rows: [['z', 9], ['y', 8], ['x', 7], ['w', 6]] });
+        assert.deepStrictEqual(await colA('so3', 0, 3), ['w', 'x', 'y', 'z'], 'a new message, still sorted by A');
+    });
+
+    await ok('find: Ctrl+F opens a search box; the cells that hold the text are marked, Enter goes to the next (round), Shift+Enter back, a case box, Esc closes', async () => {
+        await mount('fd', { rows: 20, cells: { A1: 'Pump 1', B2: 'pump', C5: 'Mixer', A7: 'PUMP B' } }, { width: 700, height: 360 });
+        await clickAt(cell('fd', 4, 4));
+        await press2('f', 2);
+        assert.strictEqual(await js(q('fd', '.findbar') + ' ? 1 : 0'), 1, 'the search box is open');
+        await typeText('pump');
+        assert.strictEqual(await js(q('fd', '.findbar .fc') + '.textContent'), '1 / 3');
+        assert.ok((await js(cell('fd', 0, 0) + '.className')).includes('foundcur'), 'the first match is the current one');
+        assert.ok((await js(cell('fd', 1, 1) + '.className')).includes('found'));
+        assert.ok(!(await js(cell('fd', 2, 2) + '.className')).includes('found'), 'Mixer does not match');
+        assert.strictEqual((await events('fd', 'selectionChange')).pop().address, 'A1', 'the match is selected');
+        await press('Enter');
+        assert.ok((await js(cell('fd', 1, 1) + '.className')).includes('foundcur'), 'Enter: the next');
+        await press('Enter'); await press('Enter');
+        assert.ok((await js(cell('fd', 0, 0) + '.className')).includes('foundcur'), 'and round to the first');
+        await press('Enter', 8);
+        assert.strictEqual((await events('fd', 'selectionChange')).pop().address, 'A7', 'Shift+Enter: the one before the first is the last');
+        assert.strictEqual(await js(q('fd', '.findbar .fc') + '.textContent'), '3 / 3');
+        await clickAt(q('fd', '[data-findcase]'));
+        assert.strictEqual(await js(q('fd', '.findbar .fc') + '.textContent'), '1 / 1', 'match case: only the cell that holds exactly pump');
+        await press('Escape');
+        assert.strictEqual(await js(q('fd', '.findbar') + ' ? 1 : 0'), 0, 'Esc closes it');
+        assert.ok(!(await js(cell('fd', 0, 0) + '.className')).includes('found'), 'and the marks go');
+        await js('NexaTest.setProps("fd", { findable: false })'); await settle();
+        await clickAt(cell('fd', 4, 4)); await press2('f', 2);
+        assert.strictEqual(await js(q('fd', '.findbar') + ' ? 1 : 0'), 0, 'findable off: Ctrl+F does nothing');
+    });
+
+    await ok('the Edit grid dialog: Sort A→Z / Z→A moves the typed cells of the selected rows (physical)', async () => {
+        const dlg = (sel) => `document.querySelector("nexa-data-grid-editor ${sel}")`;
+        const prev = () => `${dlg('.dge-prev')}.firstElementChild.shadowRoot`;
+        await js(`window.__sets = []; NEXA.getComponent("nexa-ui-data-grid").nexa.props.editGrid.buttons[0].run({ cells: { A1: "b", B1: 2, A2: "a", B2: 1, A3: "c", B3: 3 } }, { set: function (k, v) { window.__sets.push([k, v]); } })`);
+        await settle(); await wait(300);
+        const pc = (r, c) => `${prev()}.querySelector('[data-r="${r}"][data-c="${c}"]')`;
+        const a = await js(`(function () { var b = ${pc(0, 0)}.getBoundingClientRect(); return { x: b.left + 12, y: b.top + 8 }; })()`);
+        const b = await js(`(function () { var b = ${pc(2, 1)}.getBoundingClientRect(); return { x: b.left + 12, y: b.top + 8 }; })()`);
+        await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: a.x, y: a.y });
+        await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: a.x, y: a.y, button: 'left', buttons: 1, clickCount: 1 });
+        await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: b.x, y: b.y, buttons: 1 });
+        await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: b.x, y: b.y, button: 'left', buttons: 0, clickCount: 1 });
+        await settle(); await wait(150);
+        await clickAt(`Array.from(document.querySelectorAll("nexa-data-grid-editor button")).filter(function (x) { return x.textContent.trim() === "A→Z"; })[0]`);
+        assert.deepStrictEqual([await js(`${pc(0, 0)}.textContent.trim()`), await js(`${pc(0, 1)}.textContent.trim()`), await js(`${pc(2, 0)}.textContent.trim()`)], ['a', '1', 'c'], 'a row moved as one');
+        await clickAt(`Array.from(document.querySelectorAll("nexa-data-grid-editor button")).filter(function (x) { return x.textContent.trim() === "Z→A"; })[0]`);
+        assert.strictEqual(await js(`${pc(0, 0)}.textContent.trim()`), 'c');
+        await clickAt(`Array.from(document.querySelectorAll(".nx-dialog-foot button")).filter(function (x) { return x.textContent.trim() === "Apply"; })[0]`);
+        await wait(120);
+        const s = Object.fromEntries(await js('window.__sets'));
+        assert.deepStrictEqual(s.cells, { A1: 'c', B1: 3, A2: 'b', B2: 2, A3: 'a', B3: 1 });
+    });
+
     await ok('the Edit grid row of the inspector says what the sheet has', async () => {
         const r = await js(`(function () { var p = NEXA.getComponent("nexa-ui-data-grid").nexa.props.editGrid; return [p.info({ rows: 50, cols: 10, cells: { A1: 1, B1: 2 }, cellRules: [{}], merges: ["A1:B2"], populate: [{}, {}], locks: [{}] }), p.info({})]; })()`);
         assert.strictEqual(r[0], '50 rows x 10 columns, 2 cells typed, 1 type / style rule, 2 populate rules, 1 merged, 1 lock rule');

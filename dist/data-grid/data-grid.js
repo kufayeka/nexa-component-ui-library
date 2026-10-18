@@ -8,7 +8,8 @@
 // (test/data-grid-pure.test.js). This file is the view: it reads the props, keeps what the user edited, draws the window and handles the user.
 import { html, css, nothing, theme } from "../../../nexa-sdk/nexa-component-sdk.js";
 import { BASE_CSS, UIElement, PREFIX, part, sizeProp, paletteProp, radiusProp, icon, defineUI } from "../core.js";
-import { colName, parseAddress, addressOf, rangeText, sizeOf } from "./address.js";
+import { colName, parseAddress, parseRange, clampRange, addressOf, rangeText, sizeOf } from "./address.js";
+import { sortPerm, inversePerm, findMatches, nextMatch } from "./sort.js";
 import { displayText, badgePalette, coerceEdit, dateInputValue } from "./cell-types.js";
 import { expandPopulate, parseFields } from "./populate.js";
 import { RULE_FIELDS, cellKey, parseCells, parseRules, fieldsAt, cellSpec, styleCss, populatedCells, valueAt, viewAreaOf, mergesFromProps, rangedFromProps } from "./sheet.js";
@@ -60,6 +61,19 @@ const DATA_GRID_CSS = css`
     .num { font-family: var(--mono); font-variant-numeric: tabular-nums; letter-spacing: 0; }
     .head { justify-content: center; padding: 0; background: var(--bg-muted); color: var(--fg-muted); font-size: var(--fs-label); letter-spacing: 0.32px; border-color: var(--bd-strong); }
     .head.act { background: var(--bg-emph); color: var(--fg); font-weight: 600; }
+    .srt { all: unset; position: absolute; left: 2px; top: 50%; transform: translateY(-50%); width: 18px; height: 18px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; border-radius: 3px; font-size: 12px; opacity: 0; z-index: 3; }
+    .head:hover .srt, .srt.on { opacity: 1; }
+    .srt:hover { background: var(--bg-emph); }
+    .srt.on { color: var(--cp-solid, #0f62fe); }
+    .srt .icon svg { width: 12px; height: 12px; }
+    .findbar { position: absolute; top: 6px; right: 16px; z-index: 6; display: flex; align-items: center; gap: 4px; background: var(--panel); border: 1px solid var(--bd-strong); border-radius: var(--r); padding: 4px 6px; box-shadow: 0 2px 6px rgba(0,0,0,0.2); font-size: 12px; }
+    .findbar input[type="text"] { width: 150px; height: 24px; box-sizing: border-box; border: none; border-bottom: 1px solid var(--bd-strong); background: var(--bg-subtle); color: var(--fg); font: inherit; padding: 0 6px; outline: none; }
+    .findbar button { all: unset; cursor: pointer; padding: 2px 7px; border-radius: 3px; border: 1px solid var(--bd); }
+    .findbar button:hover { background: var(--bg-emph); }
+    .findbar .fc { min-width: 46px; text-align: center; color: var(--fg-muted); }
+    .findbar label { display: inline-flex; align-items: center; gap: 2px; cursor: pointer; }
+    .cell.found { box-shadow: inset 0 0 0 2px #f1c21b; }
+    .cell.foundcur { box-shadow: inset 0 0 0 2px #ff832b; background-image: linear-gradient(rgba(255,131,43,0.18), rgba(255,131,43,0.18)); }
     .rz { position: absolute; z-index: 3; }
     .rz-c { top: 0; right: 0; width: 6px; height: 100%; cursor: col-resize; }
     .rz-r { left: 0; bottom: 0; height: 6px; width: 100%; cursor: row-resize; }
@@ -100,7 +114,7 @@ export const dataGrid = defineUI({
     help: "A sheet like Excel: columns A…ZZ, rows 1…1000, cells with addresses. Type in the cells, or let a message fill them (a populate rule lays a list down from a cell). Types and styles per range of cells, merged cells, frozen rows and columns, borders, locks; the live page can show one area and let the user edit or not. Only the cells in view are drawn.",
     version: 1,
     css: "",
-    groups: ["Sheet", "Columns", "Rows", "Populate", "Editing", "Display", "Style"],
+    groups: ["Sheet", "Columns", "Rows", "Populate", "Sort and find", "Editing", "Display", "Style"],
     properties: {
         editGrid: { type: "action", group: "Sheet", label: "Edit grid",
             info: (p) => summaryOf(p),
@@ -125,6 +139,10 @@ export const dataGrid = defineUI({
             help: "The page shows only this area of the sheet (the headers keep their letters and numbers). Empty: the whole sheet." },
         freezeRows: { type: "number", default: 0, min: 0, group: "Sheet", label: "Frozen rows", help: "The first rows of what is shown stay in place while the rest scrolls." },
         freezeCols: { type: "number", default: 0, min: 0, group: "Sheet", label: "Frozen columns", help: "The first columns stay in place." },
+        sortable: { type: "boolean", default: true, group: "Sort and find", label: "The user can sort (on the page)", help: "A small button on the letter of each column of the area to sort: ascending, descending, back to the order of the sheet. Only the view is sorted: the cells keep their addresses, and a message still fills the cell it was meant for." },
+        sortArea: { type: "string", default: "", group: "Sort and find", label: "Area to sort", placeholder: "A1:F200", help: "The columns and rows that are sorted together (a row moves as one). Empty: no sorting." },
+        sortHeader: { type: "boolean", default: true, group: "Sort and find", label: "The first row of the area is a heading", help: "A heading stays in place; the rows under it are sorted." },
+        findable: { type: "boolean", default: true, group: "Sort and find", label: "Ctrl+F finds in the sheet", help: "A search box over the grid: the cells that hold the text are marked, Enter goes to the next one." },
         populate: { type: "list", default: [], group: "Populate", label: "Populate from messages", noun: "rule", itemLabel: "at",
             help: "A rule takes a value from a message (or a variable, a tag) and puts it in the cells from one cell on: one value, a list down or to the right, a table.",
             item: { row: true, fields: POPULATE_SCHEMA, create: (items) => ({ at: "A1", direction: "down", enabled: true }) } },
@@ -152,6 +170,7 @@ export const dataGrid = defineUI({
         selectionChange: { label: "On Selection Change", payload: { range: "string", address: "string", values: "array" } },
         cellClick: { label: "On Cell Click", payload: { address: "string", value: "any" } },
         buttonClick: { label: "On Button Click", payload: { address: "string", action: "string", value: "any" } },
+        sortChange: { label: "On Sort Change (the user sorted a column)", payload: { column: "string", direction: "string" } },
         columnResize: { label: "On Column Resize (the user dragged a width)", payload: { columns: "array", width: "number" } },
         rowResize: { label: "On Row Resize (the user dragged a height)", payload: { rows: "array", height: "number" } },
         data: { label: "On Data (after Get data)", payload: { cells: "object", range: "string" } }
@@ -162,6 +181,7 @@ export const dataGrid = defineUI({
         clearRange: { label: "Empty cells", help: "Empties the cells of a range.", example: "\"B2:D9\"  or  { range: \"B2:D9\" }" },
         selectCell: { label: "Select a cell", help: "Selects a cell by its address.", example: "\"C5\"  or  { address: \"C5\" }" },
         scrollToCell: { label: "Scroll to a cell", help: "Brings a cell into view.", example: "\"C500\"  or  { address: \"C500\" }" },
+        sortColumn: { label: "Sort a column of the area to sort", help: "Sorts the view by a column; direction \"asc\", \"desc\", or \"\" for the order of the sheet.", example: "{ column: \"B\", direction: \"desc\" }" },
         save: { label: "Save the staged edits", help: "Staged mode: sends the changed cells (On Save) and makes the edits final." },
         discard: { label: "Discard the staged edits", help: "Staged mode: throws the waiting edits away." },
         getData: { label: "Send all the values out", help: "Fires On Data with every cell that has a value, by address." }
@@ -208,6 +228,16 @@ export const dataGrid = defineUI({
         _editFit = null;            // { r, h }: the row of the cell being typed in grows with the text
         _measure = null;
         _fill = null;               // { source, plan } while the fill handle is dragged
+        _sortArea = null;           // the rows under the heading and the columns of the area to sort: { r1, r2, c1, c2 }
+        _sortState = null;          // what the user chose: { c, dir }
+        _perm = null;               // the rows of the area in the order shown: the place i of the view shows the row perm[i] of the area
+        _inv = null;
+        _permSig = "";
+        _sortVersion = 0;           // grows when the props or a message change what is sorted (not when the user edits a cell: a row does not jump while it is typed in)
+        _find = { open: false, text: "", cs: false, at: -1, focus: false };
+        _matches = [];
+        _matchSet = new Set();
+        _matchSig = "";
 
         propsChanged() { this._prepare(); }
 
@@ -231,8 +261,30 @@ export const dataGrid = defineUI({
             this._colSz = colSizes(parseColRules(p.colRules, size.cols), size.cols, d.col);
             this._rowSz = rowSizes(parseRowRules(p.rowRules, size.rows), d.row);
             this._preparePopulate(p, size);
+            const g = clampRange(parseRange(p.sortArea), size.rows, size.cols);
+            const head = p.sortHeader !== false ? 1 : 0;
+            this._sortArea = g && g.r2 - g.r1 + 1 > head ? { r1: g.r1 + head, r2: g.r2, c1: g.c1, c2: g.c2 } : null;
+            if (!this._sortArea || p.sortable === false || (this._sortState && (this._sortState.c < this._sortArea.c1 || this._sortState.c > this._sortArea.c2))) this._sortState = null;
+            this._sortVersion++;
             this._dataVersion++;
         }
+
+        // the order of the rows of the area to sort, made again when the props, a message or the user's choice changed it
+        _ensurePerm() {
+            const a = this._sortArea, s = this._sortState;
+            const sig = a && s ? [a.r1, a.r2, a.c1, a.c2, s.c, s.dir, this._sortVersion].join() : "";
+            if (sig === this._permSig) return;
+            this._permSig = sig;
+            if (!sig) { this._perm = null; this._inv = null; return; }
+            this._perm = sortPerm(a.r2 - a.r1 + 1, (i) => valueAt(this._layers(), a.r1 + i, s.c), s.dir);
+            this._inv = inversePerm(this._perm);
+        }
+
+        // the row of the sheet a cell of the view shows (the same one when nothing is sorted) and, the other way, where the view shows a row of the sheet
+        _src(r, c) { const a = this._sortArea; return this._perm && r >= a.r1 && r <= a.r2 && c >= a.c1 && c <= a.c2 ? a.r1 + this._perm[r - a.r1] : r; }
+        _disp(r, c) { const a = this._sortArea; return this._inv && r >= a.r1 && r <= a.r2 && c >= a.c1 && c <= a.c2 ? a.r1 + this._inv[r - a.r1] : r; }
+        // the address Logic is told: the cell's own, whatever place the view shows it at
+        _addr(r, c) { return addressOf(this._src(r, c), c); }
 
         // what a column or a row has when no rule says otherwise: the grid's own settings
         _sizeDefaults(p) {
@@ -285,8 +337,8 @@ export const dataGrid = defineUI({
         _designing() { return this.isEditor && this.hasAttribute("data-interactive"); }
 
         _layers() { return { cells: this._cells, populated: this._populated.map, edits: this._edits }; }
-        _baseValue(r, c) { return valueAt(this._layers(), r, c); }
-        _value(r, c) { return stageValue(this._stage, cellKey(r, c), "v", this._baseValue(r, c)); }
+        _baseValue(r, c) { return valueAt(this._layers(), this._src(r, c), c); }
+        _value(r, c) { return stageValue(this._stage, cellKey(this._src(r, c), c), "v", this._baseValue(r, c)); }
         _fields(r, c) { return fieldsAt(this._rules, r, c); }
         _locked(r, c) { return !cellEditable(this._mode(), this._locks, r, c); }
         // the Edit grid dialog types into every cell (it designs the content); a page types where the mode and the locks allow, never into a button
@@ -394,14 +446,15 @@ export const dataGrid = defineUI({
             const style = `left:${box.left}px;top:${box.top}px;width:${box.width}px;height:${box.height}px;` + styleCss(fields, spec.type) + ";"
                 + Object.keys(b).map((k) => k.replace(/[A-Z]/g, (m) => "-" + m.toLowerCase()) + ":" + b[k]).join(";");
             const key = cellKey(r, c);
-            const dirty = stageHas(this._stage, key, "v");
+            const dirty = stageHas(this._stage, cellKey(this._src(r, c), c), "v");
+            const found = this._find.open && this._matchSet.has(key) ? (this._matches[this._find.at] && this._matches[this._find.at].r === r && this._matches[this._find.at].c === c ? "foundcur" : "found") : "";
             const hatch = this.isEditor && this._mode() === "editable" && this._locked(r, c);
             const anchor = this.isEditor && this._populateAt && this._populateAt.has(key);
             const lastR = merge ? merge.r2 : r, lastC = merge ? merge.c2 : c;
             const handle = !!range && lastR === range.r2 && lastC === range.c2 && this._canFill();
             const plan = this._fill && this._fill.plan ? this._fill.plan.target : null;
             const planned = !!plan && r >= plan.r1 && r <= plan.r2 && c >= plan.c1 && c <= plan.c2;
-            const cls = ["cell", inSel ? "sel" : "", planned ? "fillp" : "", focus ? "focus" : "", hatch ? "hatch" : "", dirty ? "dirty" : "", anchor ? "pop" : "", fields.wrap === true ? "wrap" : ""].filter(Boolean).join(" ");
+            const cls = ["cell", inSel ? "sel" : "", planned ? "fillp" : "", found, focus ? "focus" : "", hatch ? "hatch" : "", dirty ? "dirty" : "", anchor ? "pop" : "", fields.wrap === true ? "wrap" : ""].filter(Boolean).join(" ");
             return html`<div class=${cls} part="cell" data-r=${r} data-c=${c} style=${style} title=${anchor ? "Populated from a message: " + this._populateAt.get(key) : nothing}>${this._content(spec, value, r, c, editable, fields)}${handle ? html`<div class="fillh" data-fill title="Drag to fill down or across (Ctrl: copy as it is)"></div>` : nothing}</div>`;
         }
 
@@ -409,7 +462,92 @@ export const dataGrid = defineUI({
             const range = this._selRange;
             const act = !!range && c >= range.c1 && c <= range.c2;
             const w = g.colAxis.sizeOf(c - this._area.c1 + g.rn);
-            return html`<div class="head ${act ? "act" : ""}" part="header" data-hc=${c} style="left:${left}px;top:0;width:${w}px;height:${g.hh}px">${colName(c)}${this._canAdjust("c", c) ? html`<div class="rz rz-c" data-rz="c" data-i=${c} title="Drag to change the width; double-click to fit the content"></div>` : nothing}</div>`;
+            return html`<div class="head ${act ? "act" : ""}" part="header" data-hc=${c} style="left:${left}px;top:0;width:${w}px;height:${g.hh}px">${colName(c)}${this._sortButton(c)}${this._canAdjust("c", c) ? html`<div class="rz rz-c" data-rz="c" data-i=${c} title="Drag to change the width; double-click to fit the content"></div>` : nothing}</div>`;
+        }
+
+        // the button on the letter of a column of the area to sort: ascending, descending, back to the order of the sheet (on a page only; the dialog sorts the typed cells)
+        _sortButton(c) {
+            const a = this._sortArea, s = this._sortState;
+            if (!a || this.isEditor || this.p.sortable === false || c < a.c1 || c > a.c2) return nothing;
+            const on = !!s && s.c === c;
+            return html`<button type="button" class="srt ${on ? "on" : ""}" data-sortc=${c} title="Sort this column" tabindex="-1">${on ? icon(s.dir === "asc" ? "arrow-up" : "arrow-down") : html`<span aria-hidden="true">↕</span>`}</button>`;
+        }
+
+        // ---- find (Ctrl+F) ------------------------------------------------------------------------------------------------
+        _findBar() {
+            const f = this._find, n = this._matches.length;
+            return html`<div class="findbar" @keydown=${this._onFindKey}>
+                <input type="text" data-find .value=${f.text} placeholder="Find" aria-label="Find in the sheet" @input=${this._onFindInput}>
+                <span class="fc">${f.text ? (n ? f.at + 1 : 0) + " / " + n : ""}</span>
+                <button type="button" title="Previous (Shift+Enter)" data-findgo="-1">↑</button>
+                <button type="button" title="Next (Enter)" data-findgo="1">↓</button>
+                <label title="Match case"><input type="checkbox" data-findcase .checked=${f.cs}> Aa</label>
+                <button type="button" title="Close (Esc)" data-findclose>×</button>
+            </div>`;
+        }
+
+        // the cells that hold the text, as the view shows them: made again when the text, the values or the order changed
+        _ensureMatches() {
+            const f = this._find;
+            if (!f.open) return;
+            const sig = [f.text, f.cs, this._dataVersion, this._permSig].join("|");
+            if (sig === this._matchSig) return;
+            this._matchSig = sig;
+            const a = this._area, items = [];
+            const keys = new Set([...this._cells.keys(), ...this._populated.map.keys(), ...this._edits.keys()]);
+            if (f.text && keys.size <= 50000) keys.forEach((k) => {
+                const [sr, c] = k.split(",").map(Number);
+                const r = this._disp(sr, c);
+                if (r < a.r1 || r > a.r2 || c < a.c1 || c > a.c2) return;
+                const v = this._value(r, c);
+                if (v === null || v === undefined || v === "") return;
+                items.push({ r, c, text: displayText(cellSpec(this._fields(r, c)), v) });
+            });
+            this._matches = findMatches(items, f.text, f.cs);
+            this._matchSet = new Set(this._matches.map((m) => cellKey(m.r, m.c)));
+            if (f.at >= this._matches.length) f.at = this._matches.length ? 0 : -1;
+        }
+
+        _openFind() {
+            if (this.p.findable === false) return;
+            this._find.open = true;
+            this._find.focus = true;
+            this._matchSig = "";
+            this.requestUpdate();
+        }
+
+        _closeFind() { this._find.open = false; this._find.focus = false; this.requestUpdate(); this._focusGrid(); }
+
+        // to a match: it is selected and brought into view; the search box keeps the keyboard
+        _goFind(i) {
+            const m = this._matches[i];
+            if (!m) return;
+            this._find.at = i;
+            this._commitSelection(selectCell(m.r, m.c));
+            this.requestUpdate();
+        }
+
+        _onFindInput(e) {
+            this._find.text = e.target.value;
+            this._matchSig = "";
+            this._ensureMatches();
+            this._find.at = this._matches.length ? 0 : -1;
+            if (this._matches.length) this._goFind(0); else this.requestUpdate();
+        }
+
+        _onFindKey(e) {
+            if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); this._goFind(nextMatch(this._matches.length, this._find.at, e.shiftKey)); }
+            else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); this._closeFind(); }
+            else e.stopPropagation();
+        }
+
+        _toggleSort(c) {
+            const s = this._sortState;
+            this._sortState = !s || s.c !== c ? { c, dir: "asc" } : s.dir === "asc" ? { c, dir: "desc" } : null;
+            this._sortVersion++;
+            this.fire("sortChange", { column: colName(c), direction: this._sortState ? this._sortState.dir : "" });
+            this._dataVersion++;
+            this.requestUpdate();
         }
 
         _rowHead(g, r, top) {
@@ -450,6 +588,8 @@ export const dataGrid = defineUI({
 
         render() {
             this._prepare();
+            this._ensurePerm();
+            this._ensureMatches();
             const p = this.p || {};
             // where the populate rules start, for the marker the editor shows
             this._populateAt = new Map();
@@ -484,6 +624,7 @@ export const dataGrid = defineUI({
                 <div class="scroller" data-scroller style="left:${g.frozenW}px;top:${frozenTop}px;right:0;bottom:0" @scroll=${this._onScroll}>
                     <div class="sizer" style="width:${g.scrollW}px;height:${g.scrollH}px">${br}</div>
                 </div>
+                ${this._find.open ? this._findBar() : nothing}
                 ${staged ? html`<div class="staged"><span>${stageCount(this._stage)} unsaved</span><button type="button" data-staged="save">Save</button><button type="button" class="ghost" data-staged="discard">Discard</button></div>` : nothing}
             </div>`;
         }
@@ -493,6 +634,10 @@ export const dataGrid = defineUI({
             // the SDK turns pointer events off in editor mode so that the canvas takes the clicks; the Edit grid dialog hosts the grid to click on it
             if (this.hasAttribute("data-interactive")) this.style.pointerEvents = "auto";
             this._measureFit();
+            if (this._find.open && this._find.focus) {
+                const input = this.renderRoot.querySelector("[data-find]");
+                if (input) { this._find.focus = false; input.focus(); input.select(); }
+            }
             const s = this.renderRoot.querySelector("[data-scroller]");
             if (s) {
                 const sbw = s.offsetWidth - s.clientWidth, sbh = s.offsetHeight - s.clientHeight;
@@ -621,7 +766,8 @@ export const dataGrid = defineUI({
                 let w = 0;
                 const keys = new Set([...this._cells.keys(), ...this._populated.map.keys(), ...this._edits.keys()]);
                 keys.forEach((k) => {
-                    const [r, c] = k.split(",").map(Number);
+                    const [sr, c] = k.split(",").map(Number);
+                    const r = this._disp(sr, c);
                     if (c !== index || r < a.r1 || r > a.r2) return;
                     const fields = this._fields(r, c), spec = cellSpec(fields);
                     m.style.cssText = "position:absolute;left:-99999px;top:0;visibility:hidden;white-space:pre;padding:0 8px;" + styleCss(fields, spec.type).split(";").filter((x) => /^font-/.test(x)).join(";");
@@ -690,6 +836,7 @@ export const dataGrid = defineUI({
             if (e.button !== 0) return;
             const handle = e.target.closest && e.target.closest("[data-rz]");
             if (handle) { this._beginResize(e, handle); return; }
+            if (e.target.closest && (e.target.closest("[data-sortc]") || e.target.closest(".findbar"))) return;
             if (e.target.closest && e.target.closest("[data-fill]") && this._selRange) { this._fill = { source: Object.assign({}, this._selRange), plan: null }; e.preventDefault(); return; }
             const head = this._headAt(e);
             if (head) {
@@ -727,6 +874,12 @@ export const dataGrid = defineUI({
         }
 
         _onClick(e) {
+            const srt = e.target.closest && e.target.closest("[data-sortc]");
+            if (srt) { this._toggleSort(Number(srt.dataset.sortc)); return; }
+            const go = e.target.closest("[data-findgo]");
+            if (go) { this._goFind(nextMatch(this._matches.length, this._find.at, go.dataset.findgo === "-1")); return; }
+            if (e.target.closest("[data-findclose]")) { this._closeFind(); return; }
+            if (e.target.closest("[data-findcase]")) { this._find.cs = e.target.closest("[data-findcase]").checked; this._matchSig = ""; this.requestUpdate(); return; }
             const staged = e.target.closest("[data-staged]");
             if (staged) { if (staged.dataset.staged === "save") this.save(); else this.discard(); return; }
             const hit = this._at(e);
@@ -734,7 +887,7 @@ export const dataGrid = defineUI({
             const spec = cellSpec(this._fields(hit.r, hit.c));
             const act = e.target.closest("[data-act]");
             const value = this._value(hit.r, hit.c);
-            const address = addressOf(hit.r, hit.c);
+            const address = this._addr(hit.r, hit.c);
             if (act && act.dataset.act === "toggle" && this._editable(hit.r, hit.c)) this._applyEdit(hit.r, hit.c, !(value === true || value === "true" || value === 1));
             else if (act && act.dataset.act === "button") this.fire("buttonClick", { address, action: spec.action || address, value });
             this.fire("cellClick", { address, value });
@@ -805,7 +958,7 @@ export const dataGrid = defineUI({
         _applyEdit(r, c, input) {
             if (!this._editable(r, c)) return;
             const spec = cellSpec(this._fields(r, c));
-            const key = cellKey(r, c), address = addressOf(r, c);
+            const key = cellKey(this._src(r, c), c), address = this._addr(r, c);
             const old = this._value(r, c), value = coerceEdit(spec, input);
             if (JSON.stringify(old) === JSON.stringify(value)) return;
             if (this._designing()) {
@@ -853,6 +1006,7 @@ export const dataGrid = defineUI({
                 else if (e.key === "Escape") { e.preventDefault(); this._cancelEdit(); this._focusGrid(); }
                 return;
             }
+            if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && String(e.key).toLowerCase() === "f" && this.p.findable !== false) { e.preventDefault(); this._openFind(); return; }
             if (e.target.closest && e.target.closest("input, select")) return;
             if (this.p.selection === "none") return;
             const f = this._sel.focus || { r: a.r1, c: a.c1 };
@@ -968,11 +1122,11 @@ export const dataGrid = defineUI({
             if (this.isEditor) return;
             const changes = [];
             coerced.forEach((x) => {
-                const key = cellKey(x.r, x.c), old = this._value(x.r, x.c);
+                const key = cellKey(this._src(x.r, x.c), x.c), old = this._value(x.r, x.c);
                 if (JSON.stringify(old) === JSON.stringify(x.value)) return;
                 if (this._staged()) stageSet(this._stage, key, "v", x.value, this._baseValue(x.r, x.c));
                 else this._edits.set(key, x.value);
-                changes.push({ address: addressOf(x.r, x.c), old, new: x.value, staged: this._staged() });
+                changes.push({ address: this._addr(x.r, x.c), old, new: x.value, staged: this._staged() });
             });
             this._dataVersion++;
             this.requestUpdate();
@@ -1060,11 +1214,24 @@ export const dataGrid = defineUI({
             if (a && a.r < this._size.rows && a.c < this._size.cols) this._ensureVisible(a.r, a.c);
         }
 
+        sortColumn(params) {
+            const p = params && typeof params === "object" ? params : {};
+            const c = parseAddress(String(p.column || "") + "1");
+            const dir = p.direction === "asc" || p.direction === "desc" ? p.direction : "";
+            const a = this._sortArea;
+            if (!a || !c || c.c < a.c1 || c.c > a.c2) return;
+            this._sortState = dir ? { c: c.c, dir } : null;
+            this._sortVersion++;
+            this.fire("sortChange", { column: colName(c.c), direction: dir });
+            this._dataVersion++;
+            this.requestUpdate();
+        }
+
         save() {
             const cells = [];
             this._stage.edits.forEach((fields, key) => {
                 const [r, c] = key.split(",").map(Number);
-                cells.push({ address: addressOf(r, c), old: this._baseValue(r, c), new: fields.v });
+                cells.push({ address: addressOf(r, c), old: valueAt(this._layers(), r, c), new: fields.v });
                 this._edits.set(key, fields.v);
             });
             if (!cells.length) return;
@@ -1089,7 +1256,7 @@ export const dataGrid = defineUI({
             let r1 = Infinity, c1 = Infinity, r2 = -1, c2 = -1;
             keys.forEach((k) => {
                 const [r, c] = k.split(",").map(Number);
-                const v = this._baseValue(r, c);
+                const v = valueAt(this._layers(), r, c);
                 if (v === null || v === undefined || v === "") return;
                 cells[addressOf(r, c)] = v;
                 if (r < r1) r1 = r; if (r > r2) r2 = r; if (c < c1) c1 = c; if (c > c2) c2 = c;
