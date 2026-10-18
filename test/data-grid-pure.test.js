@@ -10,7 +10,7 @@ const path = require('path');
 
 // The modules are plain ES modules. They are loaded without a bundler: each one in its own function scope, an `import { a } from "./x.js"`
 // becoming a destructuring of what x.js exported (so the order below is the order of the imports).
-const ORDER = ['address.js', 'sizes.js', 'cell-types.js', 'populate.js', 'sheet.js', 'clipboard.js', 'layout.js', 'window.js', 'stage.js', 'selection.js', 'design.js', 'fill.js', 'sort.js', 'xlsx.js'];
+const ORDER = ['address.js', 'sizes.js', 'cell-types.js', 'populate.js', 'sheet.js', 'clipboard.js', 'layout.js', 'window.js', 'stage.js', 'selection.js', 'design.js', 'fill.js', 'sort.js', 'xlsx.js', 'xlvalue.js', 'xlfuncs.js', 'formula.js', 'calc.js'];
 const M = {};
 ORDER.forEach((file) => {
     let src = fs.readFileSync(path.join(__dirname, '..', 'dist', 'data-grid', file), 'utf8');
@@ -806,6 +806,260 @@ ok('design: commonFields: what the selected cells have in common, nothing for a 
     assert.deepStrictEqual(D.commonFields(rules, { r1: 5, c1: 5, r2: 6, c2: 6 }, ['bold']), {}, 'no rule: nothing');
     const big = S.parseRules([{ range: '1:1000', italic: true }], 1000, 26);
     assert.deepStrictEqual(D.commonFields(big, { r1: 0, c1: 0, r2: 999, c2: 25 }, ['italic']), { italic: true }, 'a whole sheet is sampled, fast');
+});
+
+// ---- formulas ---------------------------------------------------------------------------------------------
+
+const Fm = M['formula.js'], C = M['calc.js'], V = M['xlvalue.js'];
+// a sheet from { A1: 5, B1: "=A1*2" } -> a function that gives the value of an address
+function sheet(cells, extra) {
+    const calc = C.createCalc((r, c) => { const v = cells[A.addressOf(r, c)]; return v === undefined ? null : v; }, extra);
+    return (addr) => { const a = A.parseAddress(addr); const v = calc.value(a.r, a.c); return V.isError(v) ? v.code : v; };
+}
+const calcOf = (formula, cells) => sheet(Object.assign({ Z1: formula }, cells || {}))('Z1');
+function serialOf(y, m, d) { return Math.floor(V.dateToSerial(new Date(y, m - 1, d))); }
+
+ok('formulas: arithmetic with Excel precedence (^ left to right, minus before ^, % behind)', () => {
+    assert.strictEqual(calcOf('=1+2*3'), 7);
+    assert.strictEqual(calcOf('=(1+2)*3'), 9);
+    assert.strictEqual(calcOf('=2^3^2'), 64, 'left to right');
+    assert.strictEqual(calcOf('=-2^2'), 4, 'a minus in front binds tighter');
+    assert.strictEqual(calcOf('=50%'), 0.5);
+    assert.strictEqual(calcOf('=200*10%'), 20);
+    assert.strictEqual(calcOf('=0.1+0.2'), 0.3, '15 digits, like Excel');
+    assert.strictEqual(calcOf('=1/0'), '#DIV/0!');
+    assert.strictEqual(calcOf('="a"&"b"&1'), 'ab1');
+    assert.strictEqual(calcOf('="a"+1'), '#VALUE!');
+    assert.strictEqual(calcOf('="3"+1'), 4, 'a text that is a number counts');
+});
+
+ok('formulas: comparisons, booleans, errors as values', () => {
+    assert.strictEqual(calcOf('=2>1'), true);
+    assert.strictEqual(calcOf('="a"="A"'), true, 'case does not matter');
+    assert.strictEqual(calcOf('=1<>2'), true);
+    assert.strictEqual(calcOf('=TRUE'), true);
+    assert.strictEqual(calcOf('=#N/A'), '#N/A');
+    assert.strictEqual(calcOf('=NOSUCH(1)'), '#NAME?');
+    assert.strictEqual(calcOf('=1+'), '#NAME?', 'a formula that cannot be read');
+});
+
+ok('formulas: references, ranges, whole columns and rows, $ signs, ; as separator', () => {
+    const cells = { A1: 1, A2: 2, A3: 3, B1: 10, B2: 20 };
+    assert.strictEqual(calcOf('=SUM(A1:A3)', cells), 6);
+    assert.strictEqual(calcOf('=SUM(A:A)', cells), 6);
+    assert.strictEqual(calcOf('=SUM(2:2)', cells), 22, 'a whole row (the formula itself is in row 1, so not row 1)');
+    assert.strictEqual(calcOf('=SUM($A$1:$B$2)', cells), 33);
+    assert.strictEqual(calcOf('=SUM(A1;A2;5)', cells), 8);
+    assert.strictEqual(calcOf('=A1+B2', cells), 21);
+    assert.strictEqual(calcOf('=A5+1', cells), 1, 'an empty cell is 0');
+    assert.strictEqual(calcOf('=AVERAGE(A1:A3)', cells), 2);
+    assert.strictEqual(calcOf('=MAX(A1:B2)-MIN(A1:B2)', cells), 19);
+    assert.strictEqual(calcOf('=COUNT(A1:B3)', cells), 5);
+});
+
+ok('formulas: a cell that uses another formula; a cycle is #CYCLE!; a long chain does not overflow', () => {
+    assert.strictEqual(sheet({ A1: 2, A2: '=A1*2', A3: '=A2+A1' })('A3'), 6);
+    assert.strictEqual(sheet({ A1: 5, A2: '=A1*2', A3: '=A2+A1' })('A3'), 15, 'a new calculator reads the new values');
+    const loop = sheet({ A1: '=B1+1', B1: '=A1+1', C1: '=C1' });
+    assert.strictEqual(loop('A1'), '#CYCLE!');
+    assert.strictEqual(loop('B1'), '#CYCLE!');
+    assert.strictEqual(loop('C1'), '#CYCLE!');
+    assert.strictEqual(sheet({ A1: '=IFERROR(A1,7)' })('A1'), 7, 'IFERROR can catch it');
+    const chain = { A1: 1 };
+    for (let i = 2; i <= 900; i++) chain['A' + i] = '=A' + (i - 1) + '+1';
+    assert.strictEqual(sheet(chain)('A900'), 900);
+});
+
+ok('functions: logic is lazy (the branch not taken is never worked out), IFS, SWITCH, AND, OR, NOT', () => {
+    assert.strictEqual(calcOf('=IF(1>2,1/0,"ok")'), 'ok');
+    assert.strictEqual(calcOf('=IF(A1>10,"high","low")', { A1: 11 }), 'high');
+    assert.strictEqual(calcOf('=IF(FALSE,1)'), false);
+    assert.strictEqual(calcOf('=IFERROR(1/0,"none")'), 'none');
+    assert.strictEqual(calcOf('=IFERROR(4,"none")'), 4);
+    assert.strictEqual(calcOf('=IFS(A1<5,"a",A1<10,"b",TRUE,"c")', { A1: 7 }), 'b');
+    assert.strictEqual(calcOf('=IFS(FALSE,1)'), '#N/A');
+    assert.strictEqual(calcOf('=SWITCH(A1,1,"one",2,"two","many")', { A1: 2 }), 'two');
+    assert.strictEqual(calcOf('=SWITCH(A1,1,"one","many")', { A1: 9 }), 'many');
+    assert.strictEqual(calcOf('=AND(A1>1,A2>1)', { A1: 2, A2: 3 }), true);
+    assert.strictEqual(calcOf('=OR(FALSE,A1>1)', { A1: 0 }), false);
+    assert.strictEqual(calcOf('=NOT(TRUE)'), false);
+    assert.strictEqual(calcOf('=CHOOSE(2,"a","b","c")'), 'b');
+    assert.strictEqual(calcOf('=IF(A1="","empty","full")'), 'empty');
+});
+
+ok('functions: math (rounding as Excel, MOD with the sign of the divisor, CEILING, POWER ...)', () => {
+    assert.strictEqual(calcOf('=ROUND(2.5,0)'), 3);
+    assert.strictEqual(calcOf('=ROUND(-2.5,0)'), -3, 'away from zero');
+    assert.strictEqual(calcOf('=ROUND(1.2345,2)'), 1.23);
+    assert.strictEqual(calcOf('=ROUND(1234,-2)'), 1200);
+    assert.strictEqual(calcOf('=ROUNDUP(1.21,1)'), 1.3);
+    assert.strictEqual(calcOf('=ROUNDDOWN(-1.29,1)'), -1.2);
+    assert.strictEqual(calcOf('=INT(-1.5)'), -2);
+    assert.strictEqual(calcOf('=TRUNC(-1.5)'), -1);
+    assert.strictEqual(calcOf('=MOD(-3,2)'), 1);
+    assert.strictEqual(calcOf('=MOD(5,0)'), '#DIV/0!');
+    assert.strictEqual(calcOf('=ABS(-4)+SIGN(-9)'), 3);
+    assert.strictEqual(calcOf('=SQRT(16)'), 4);
+    assert.strictEqual(calcOf('=SQRT(-1)'), '#NUM!');
+    assert.strictEqual(calcOf('=POWER(2,10)'), 1024);
+    assert.strictEqual(calcOf('=CEILING(4.2,0.5)'), 4.5);
+    assert.strictEqual(calcOf('=FLOOR(4.7,0.5)'), 4.5);
+    assert.strictEqual(calcOf('=PRODUCT(2,3,4)'), 24);
+    assert.strictEqual(calcOf('=LOG(100,10)'), 2);
+    assert.strictEqual(calcOf('=LN(1)'), 0);
+    assert.strictEqual(calcOf('=PI()>3.14'), true);
+});
+
+ok('functions: SUM leaves text and booleans in a range alone but counts the ones written as arguments; errors travel', () => {
+    const cells = { A1: 1, A2: 'x', A3: true, A4: 4 };
+    assert.strictEqual(calcOf('=SUM(A1:A4)', cells), 5);
+    assert.strictEqual(calcOf('=SUM(A1,"3",TRUE)', cells), 5);
+    assert.strictEqual(calcOf('=SUM(A1,"x")', cells), '#VALUE!');
+    assert.strictEqual(calcOf('=SUM(A1,1/0)', cells), '#DIV/0!');
+    assert.strictEqual(calcOf('=AVERAGE(A2:A3)', cells), '#DIV/0!');
+    assert.strictEqual(calcOf('=COUNTA(A1:A5)', cells), 4);
+    assert.strictEqual(calcOf('=COUNTBLANK(A1:A5)', cells), 1);
+    assert.strictEqual(calcOf('=COUNT(A1:A4)', cells), 2);
+});
+
+ok('functions: text', () => {
+    assert.strictEqual(calcOf('=LEN("hello")'), 5);
+    assert.strictEqual(calcOf('=LEFT("hello",2)&RIGHT("hello",3)'), 'hello');
+    assert.strictEqual(calcOf('=MID("hello",2,3)'), 'ell');
+    assert.strictEqual(calcOf('=UPPER("ab")&LOWER("CD")'), 'ABcd');
+    assert.strictEqual(calcOf('=PROPER("hello world-x")'), 'Hello World-X');
+    assert.strictEqual(calcOf('=TRIM("  a   b ")'), 'a b');
+    assert.strictEqual(calcOf('=CONCAT("a",1,TRUE)'), 'a1TRUE');
+    assert.strictEqual(calcOf('=TEXTJOIN("-",TRUE,"a","","b")'), 'a-b');
+    assert.strictEqual(calcOf('=TEXTJOIN("-",FALSE,"a","","b")'), 'a--b');
+    assert.strictEqual(calcOf('=FIND("l","hello")'), 3);
+    assert.strictEqual(calcOf('=FIND("L","hello")'), '#VALUE!', 'FIND cares about case');
+    assert.strictEqual(calcOf('=SEARCH("L","hello")'), 3, 'SEARCH does not');
+    assert.strictEqual(calcOf('=SEARCH("l?o","hello")'), 3, 'and knows wildcards');
+    assert.strictEqual(calcOf('=SUBSTITUTE("a-b-c","-","+")'), 'a+b+c');
+    assert.strictEqual(calcOf('=SUBSTITUTE("a-b-c","-","+",2)'), 'a-b+c');
+    assert.strictEqual(calcOf('=REPLACE("hello",1,1,"J")'), 'Jello');
+    assert.strictEqual(calcOf('=REPT("ab",3)'), 'ababab');
+    assert.strictEqual(calcOf('=VALUE("12.5")+1'), 13.5);
+    assert.strictEqual(calcOf('=EXACT("a","A")'), false);
+    assert.strictEqual(calcOf('=TEXT(1234.5,"#,##0.00")'), '1,234.50');
+    assert.strictEqual(calcOf('=TEXT(0.256,"0%")'), '26%');
+    assert.strictEqual(calcOf('=TEXT(5,"000")'), '005');
+    assert.strictEqual(calcOf('=TEXT(DATE(2026,3,7),"yyyy-mm-dd")'), '2026-03-07');
+    assert.strictEqual(calcOf('=TEXT(DATE(2026,3,7),"dd mmm yyyy")'), '07 Mar 2026');
+    assert.strictEqual(calcOf('=TEXT(TIME(14,5,9),"hh:mm:ss")'), '14:05:09');
+});
+
+ok('functions: date and time work on serial numbers; NOW and TODAY are volatile', () => {
+    assert.strictEqual(calcOf('=DATE(2026,1,31)'), serialOf(2026, 1, 31));
+    assert.strictEqual(calcOf('=YEAR(DATE(2026,3,7))&"-"&MONTH(DATE(2026,3,7))&"-"&DAY(DATE(2026,3,7))'), '2026-3-7');
+    assert.strictEqual(calcOf('=DATE(2026,14,1)'), serialOf(2027, 2, 1), 'month 14 rolls over');
+    assert.strictEqual(calcOf('=DATE(2026,3,7)+30-DATE(2026,3,7)'), 30);
+    assert.strictEqual(calcOf('=WEEKDAY(DATE(2026,3,7))'), 7, 'a Saturday');
+    assert.strictEqual(calcOf('=WEEKDAY(DATE(2026,3,7),2)'), 6);
+    assert.strictEqual(calcOf('=EDATE(DATE(2026,1,31),1)'), serialOf(2026, 2, 28), 'the end of the month');
+    assert.strictEqual(calcOf('=DATEDIF(DATE(2026,1,15),DATE(2026,3,14),"M")'), 1);
+    assert.strictEqual(calcOf('=DATEDIF(DATE(2020,1,1),DATE(2026,3,14),"Y")'), 6);
+    assert.strictEqual(calcOf('=DATEDIF(DATE(2026,1,1),DATE(2026,1,31),"D")'), 30);
+    assert.strictEqual(calcOf('=HOUR(TIME(14,5,9))*100+MINUTE(TIME(14,5,9))'), 1405);
+    const noon = new Date(2026, 5, 1, 12, 0, 0);
+    assert.strictEqual(sheet({ A1: '=TODAY()' }, { now: noon })('A1'), serialOf(2026, 6, 1));
+    assert.strictEqual(sheet({ A1: '=NOW()-TODAY()' }, { now: noon })('A1'), 0.5);
+    const calc = C.createCalc((r, c) => (r === 0 && c === 0 ? '=NOW()' : 1));
+    assert.strictEqual(calc.volatile, false);
+    calc.value(0, 0);
+    assert.strictEqual(calc.volatile, true);
+    const plainCalc = C.createCalc(() => '=1+1');
+    plainCalc.value(0, 0);
+    assert.strictEqual(plainCalc.volatile, false, 'a plain formula is not volatile');
+});
+
+ok('functions: lookup (VLOOKUP exact and approximate, HLOOKUP, XLOOKUP, INDEX, MATCH, ROW, COLUMN)', () => {
+    const t = { A1: 'a', B1: 10, A2: 'b', B2: 20, A3: 'c', B3: 30 };
+    assert.strictEqual(calcOf('=VLOOKUP("b",A1:B3,2,FALSE)', t), 20);
+    assert.strictEqual(calcOf('=VLOOKUP("z",A1:B3,2,FALSE)', t), '#N/A');
+    assert.strictEqual(calcOf('=VLOOKUP("B",A1:B3,2,0)', t), 20, 'case does not matter');
+    assert.strictEqual(calcOf('=VLOOKUP("b",A1:B3,3,FALSE)', t), '#REF!');
+    const g = { A1: 0, B1: 'low', A2: 50, B2: 'mid', A3: 90, B3: 'high' };
+    assert.strictEqual(calcOf('=VLOOKUP(75,A1:B3,2)', g), 'mid', 'approximate: the largest not above');
+    assert.strictEqual(calcOf('=VLOOKUP(-1,A1:B3,2)', g), '#N/A');
+    assert.strictEqual(calcOf('=HLOOKUP("y",A1:C2,2,FALSE)', { A1: 'x', B1: 'y', C1: 'z', A2: 1, B2: 2, C2: 3 }), 2);
+    assert.strictEqual(calcOf('=XLOOKUP("c",A1:A3,B1:B3)', t), 30);
+    assert.strictEqual(calcOf('=XLOOKUP("q",A1:A3,B1:B3,"none")', t), 'none');
+    assert.strictEqual(calcOf('=XLOOKUP("q",A1:A3,B1:B3)', t), '#N/A');
+    assert.strictEqual(calcOf('=XLOOKUP(25,B1:B3,A1:A3,"x",-1)', t), 'b', 'the next smaller');
+    assert.strictEqual(calcOf('=INDEX(B1:B3,2)', t), 20);
+    assert.strictEqual(calcOf('=INDEX(A1:B3,3,2)', t), 30);
+    assert.strictEqual(calcOf('=INDEX(A1:B3,4,1)', t), '#REF!');
+    assert.strictEqual(calcOf('=MATCH("c",A1:A3,0)', t), 3);
+    assert.strictEqual(calcOf('=MATCH(25,B1:B3,1)', t), 2);
+    assert.strictEqual(calcOf('=MATCH("z",A1:A3,0)', t), '#N/A');
+    assert.strictEqual(calcOf('=INDEX(B1:B3,MATCH("b",A1:A3,0))', t), 20, 'composed');
+    assert.strictEqual(calcOf('=ROW()'), 1);
+    assert.strictEqual(calcOf('=COLUMN()'), 26);
+    assert.strictEqual(calcOf('=ROW(C5)*100+COLUMN(C5)'), 503);
+    assert.strictEqual(calcOf('=ROWS(A1:B3)*10+COLUMNS(A1:B3)'), 32);
+});
+
+ok('functions: SUMIF / COUNTIF / AVERAGEIF and the IFS ones: operators, wildcards, several conditions', () => {
+    const t = { A1: 'apple', B1: 10, C1: 'x', A2: 'banana', B2: 20, C2: 'y', A3: 'apricot', B3: 30, C3: 'x', A4: 'cherry', B4: 40, C4: 'x' };
+    assert.strictEqual(calcOf('=COUNTIF(A1:A4,"ap*")', t), 2);
+    assert.strictEqual(calcOf('=COUNTIF(B1:B4,">15")', t), 3);
+    assert.strictEqual(calcOf('=COUNTIF(B1:B4,20)', t), 1);
+    assert.strictEqual(calcOf('=COUNTIF(C1:C4,"<>x")', t), 1);
+    assert.strictEqual(calcOf('=SUMIF(C1:C4,"x",B1:B4)', t), 80);
+    assert.strictEqual(calcOf('=SUMIF(B1:B4,">=20")', t), 90, 'without a sum range, the range itself');
+    assert.strictEqual(calcOf('=AVERAGEIF(C1:C4,"x",B1:B4)', t), 26.6666666666667, '15 digits');
+    assert.strictEqual(calcOf('=SUMIFS(B1:B4,C1:C4,"x",B1:B4,">10")', t), 70);
+    assert.strictEqual(calcOf('=COUNTIFS(C1:C4,"x",A1:A4,"a*")', t), 2);
+    assert.strictEqual(calcOf('=MAXIFS(B1:B4,C1:C4,"x")', t), 40);
+    assert.strictEqual(calcOf('=MINIFS(B1:B4,C1:C4,"x")', t), 10);
+    assert.strictEqual(calcOf('=AVERAGEIFS(B1:B4,C1:C4,"nothing")', t), '#DIV/0!');
+    assert.strictEqual(calcOf('=COUNTIF(A1:A4,A2)', t), 1, 'a reference as the criterion');
+    assert.strictEqual(calcOf('=SUMIF(A1:A4,"b*",B1:B4)*2', t), 40, 'composed');
+});
+
+ok('functions: statistics (MEDIAN, STDEV, VAR, LARGE, SMALL, RANK) and information (ISNUMBER, ISBLANK, ISERROR ...)', () => {
+    const t = { A1: 2, A2: 4, A3: 4, A4: 4, A5: 5, A6: 5, A7: 7, A8: 9 };
+    assert.strictEqual(calcOf('=MEDIAN(A1:A8)', t), 4.5);
+    assert.strictEqual(calcOf('=STDEV.P(A1:A8)', t), 2);
+    assert.strictEqual(calcOf('=VAR.P(A1:A8)', t), 4);
+    assert.strictEqual(Math.round(calcOf('=STDEV(A1:A8)', t) * 1e4), 21381);
+    assert.strictEqual(calcOf('=LARGE(A1:A8,2)', t), 7);
+    assert.strictEqual(calcOf('=SMALL(A1:A8,1)', t), 2);
+    assert.strictEqual(calcOf('=LARGE(A1:A8,9)', t), '#NUM!');
+    assert.strictEqual(calcOf('=RANK(7,A1:A8)', t), 2);
+    assert.strictEqual(calcOf('=RANK(7,A1:A8,1)', t), 7);
+    assert.strictEqual(calcOf('=ISNUMBER(A1)&ISTEXT(A1)&ISBLANK(Q9)', t), 'TRUEFALSETRUE');
+    assert.strictEqual(calcOf('=ISERROR(1/0)'), true);
+    assert.strictEqual(calcOf('=ISNA(#N/A)'), true);
+    assert.strictEqual(calcOf('=ISERROR(5)'), false);
+});
+
+ok('shiftFormula: relative references move, $ ones stay, ranges and whole columns move, off the sheet is #REF!', () => {
+    assert.strictEqual(Fm.shiftFormula('=A1+$B$1', 1, 0), '=A2+$B$1');
+    assert.strictEqual(Fm.shiftFormula('=A1+B$2+$C3', 2, 1), '=B3+C$2+$C5');
+    assert.strictEqual(Fm.shiftFormula('=SUM(A1:B2)', 0, 1), '=SUM(B1:C2)');
+    assert.strictEqual(Fm.shiftFormula('=SUM(A:B)', 0, 2), '=SUM(C:D)');
+    assert.strictEqual(Fm.shiftFormula('=SUM(2:3)', 1, 0), '=SUM(3:4)');
+    assert.strictEqual(Fm.shiftFormula('=A1', -1, 0), '=#REF!');
+    assert.strictEqual(Fm.shiftFormula('="A1"&A1', 1, 0), '="A1"&A2', 'a text is left alone');
+    assert.strictEqual(Fm.shiftFormula('=IF(A1>1;"x";B1)', 1, 1), '=IF(B2>1;"x";C2)');
+    assert.strictEqual(Fm.shiftFormula('=LOG10(A1)', 1, 0), '=LOG10(A2)', 'LOG10 is a function, not a cell');
+    assert.strictEqual(Fm.shiftFormula('plain', 1, 1), 'plain');
+});
+
+ok('xlvalue: compare order, criteria, 15-digit numbers, dates round trip', () => {
+    assert.ok(V.compare(1, 'a') < 0 && V.compare('a', true) < 0, 'numbers < text < booleans');
+    assert.strictEqual(V.compare(null, 0), 0);
+    assert.strictEqual(V.compare(null, ''), 0);
+    assert.strictEqual(V.compare('ABC', 'abc'), 0);
+    assert.strictEqual(V.toNumber('50%'), 0.5);
+    assert.ok(V.isError(V.toNumber('abc')));
+    assert.strictEqual(V.toText(0.1 + 0.2), '0.3');
+    const d = new Date(2026, 2, 7, 13, 30, 0);
+    assert.strictEqual(V.serialToDate(V.dateToSerial(d)).getTime(), d.getTime());
+    assert.ok(V.criterion('>5')(6) && !V.criterion('>5')(5) && V.criterion('a*')('Apple') && V.criterion('<>a')('b'));
 });
 
 console.log('\n' + passed + ' passed');

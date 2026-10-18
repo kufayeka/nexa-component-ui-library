@@ -1041,6 +1041,165 @@ withHarness({
         require('fs').writeFileSync(path.join(require('os').tmpdir(), 'data-grid-light.png'), Buffer.from(shot2.result.data, 'base64'));
     });
 
+    // ---- formulas ----------------------------------------------------------------------------------------------------------------------------
+    const formulasOf = async (n) => { await js(`NexaTest.invoke(${JSON.stringify(n)}, "getData")`); await settle(); return (await events(n, 'data')).pop(); };
+    const typeInto = async (n, r, c, value) => {
+        await clickAt(cell(n, r, c), 2);
+        await js(`(function () { var i = ${q(n, '[data-edit]')}; i.value = ${JSON.stringify(value)}; i.dispatchEvent(new Event("input", { bubbles: true })); })()`);
+        await press('Enter');
+    };
+
+    await ok('formulas: a cell that starts with = shows its result; a change in a cell it reads changes it at once; an error shows as its code', async () => {
+        await mount('fx', { mode: 'editable', cells: { A1: 5, A2: 7, A3: '=SUM(A1:A2)', B1: '=A1*2', B2: '=A1/0', B3: '=IF(A1>3,"big","small")', C1: '=A3&" units"', C2: '=A1>3', D1: '=A1+B1+C9' } });
+        assert.deepStrictEqual([await text('fx', 2, 0), await text('fx', 0, 1), await text('fx', 1, 1), await text('fx', 2, 1)], ['12', '10', '#DIV/0!', 'big']);
+        assert.strictEqual(await text('fx', 0, 2), '12 units', 'a formula over a formula');
+        assert.strictEqual(await text('fx', 1, 2), 'TRUE', 'a boolean is the word, as in Excel');
+        assert.strictEqual(await text('fx', 0, 3), '15', 'an empty cell is 0');
+        assert.strictEqual(await js(q('fx', '[data-r="1"][data-c="1"] .err') + ' ? 1 : 0'), 1, 'an error is marked');
+        // changing a cell it reads: every formula over it follows, no Enter on the formula
+        await typeInto('fx', 0, 0, '10');
+        assert.deepStrictEqual([await text('fx', 2, 0), await text('fx', 0, 1), await text('fx', 2, 1), await text('fx', 0, 2), await text('fx', 0, 3)], ['17', '20', 'big', '17 units', '30'], 'all follow at once');
+        await typeInto('fx', 0, 0, '1');
+        assert.strictEqual(await text('fx', 2, 1), 'small', 'the other branch');
+    });
+
+    await ok('formulas: typing = in any cell starts one; the edit box has the formula text; Enter keeps it; the event has the formula; Escape leaves it', async () => {
+        await mount('fe', { mode: 'editable', cells: { A1: 4, A2: 6 } });
+        await clickAt(cell('fe', 2, 0));
+        await typeText('=A1*A2');
+        assert.strictEqual(await js(q('fe', '[data-edit]') + '.value'), '=A1*A2', 'the typed text, an input: the formula is not worked out in the box');
+        await press('Enter');
+        assert.strictEqual(await text('fe', 2, 0), '24');
+        const ch = (await events('fe', 'cellChange')).pop();
+        assert.deepStrictEqual([ch.address, ch.new], ['A3', '=A1*A2'], 'what is kept is the formula');
+        await clickAt(cell('fe', 2, 0), 2);
+        assert.strictEqual(await js(q('fe', '[data-edit]') + '.value'), '=A1*A2', 'editing it again shows the formula, not 24');
+        await typeText('+1'); await press('Escape');
+        assert.strictEqual(await text('fe', 2, 0), '24', 'Escape leaves it as it was');
+        const d = await formulasOf('fe');
+        assert.strictEqual(d.cells.A3, 24, 'getData: the result');
+        assert.strictEqual(d.formulas.A3, '=A1*A2', 'and the formula next to it');
+        assert.ok(!('A1' in d.formulas), 'plain cells have no formula');
+    });
+
+    await ok('formulas: the result is drawn as the cell\'s type: a bar for progress, decimals for a number, a date for a date, a badge for a choice, a checkbox', async () => {
+        await mount('ft', {
+            cells: { A1: 40, A2: '=A1+10', B1: '=1/3', C1: '=DATE(2026,3,7)', D1: '=IF(A1>30,"hot","ok")', E1: '=A1>30', F1: '=A1*2' },
+            cellRules: [{ range: 'A2', type: 'progress', max: 100 }, { range: 'B1', type: 'number', decimals: 2, suffix: ' x' }, { range: 'C1', type: 'date', dateFormat: 'date' },
+                { range: 'D1', type: 'badge', options: 'hot:Hot,ok:Fine' }, { range: 'E1', type: 'boolean' }, { range: 'F1', type: 'progress', max: 50 }]
+        });
+        assert.strictEqual(await js(q('ft', '[data-r="1"][data-c="0"] .bar i') + '.style.width'), '50%', '=A1+10 is 50 and the bar is half');
+        assert.strictEqual(await text('ft', 1, 0), '50%');
+        assert.strictEqual(await text('ft', 0, 1), '0.33 x', 'decimals and suffix on the result');
+        assert.strictEqual(await text('ft', 0, 2), '2026-03-07', 'a serial number in a date cell is a date');
+        assert.strictEqual(await text('ft', 0, 3), 'Hot', 'a badge of the result');
+        assert.strictEqual(await js(q('ft', '[data-r="0"][data-c="4"] .cb.on') + ' ? 1 : 0'), 1, 'TRUE is a ticked box');
+        assert.strictEqual(await js(q('ft', '[data-r="0"][data-c="5"] .bar i') + '.style.width'), '100%', 'the bar is cut at its largest');
+    });
+
+    await ok('formulas: a date cell is a serial number to a formula; a message never makes a formula; an action does; a cycle is #CYCLE!', async () => {
+        await mount('fd', { cells: { A1: '2026-03-01', B1: '=A1+30', C1: '=B1-A1', D1: '=YEAR(A1)&"/"&MONTH(A1)', E1: '=E1+1', F1: '=G1', G1: '=F1' }, cellRules: [{ range: 'A1:B1', type: 'date', dateFormat: 'date' }] });
+        assert.strictEqual(await text('fd', 0, 1), '2026-03-31', 'a date plus 30 days');
+        assert.strictEqual(await text('fd', 0, 2), '30');
+        assert.strictEqual(await text('fd', 0, 3), '2026/3');
+        assert.deepStrictEqual([await text('fd', 0, 4), await text('fd', 0, 5), await text('fd', 0, 6)], ['#CYCLE!', '#CYCLE!', '#CYCLE!']);
+        await js(`NexaTest.setProps("fd", { populate: [{ at: "A5", value: ${JSON.stringify(bind('v'))} }] })`); await settle();
+        await message('fd', { v: '=1+1' });
+        assert.strictEqual(await text('fd', 4, 0), '=1+1', 'what a message brings is a text, whatever it starts with');
+        await js('NexaTest.invoke("fd", "setCell", { address: "A6", value: "=2*21" })'); await settle(); await wait(60);
+        assert.strictEqual(await text('fd', 5, 0), '42', 'an action may put in a formula');
+    });
+
+    await ok('formulas: copy and paste move the references (a cut does not); the fill handle moves them too; $ stays; a reference off the sheet is #REF!', async () => {
+        await mount('fm', { mode: 'editable', rows: 30, cols: 8, cells: { A1: 1, A2: 2, A3: 3, B1: 10, B2: 20, B3: 30, D1: '=A1+$B$1', E1: '=A1' }, cellRules: [] }, { width: 700, height: 600 });
+        await clickAt(cell('fm', 0, 3));
+        const one = await clip('fm', 'copy');
+        await clickAt(cell('fm', 1, 3));
+        await clip('fm', 'paste', { 'text/plain': one.text, 'application/x-nexa-grid': one.grid });
+        assert.strictEqual(await text('fm', 1, 3), '12', 'D2 is =A2+$B$1: 2 + 10');
+        const d1 = await formulasOf('fm');
+        assert.strictEqual(d1.formulas.D2, '=A2+$B$1', 'one row down: the relative part moved, the $ part did not');
+        // a cut keeps pointing where it did
+        await clickAt(cell('fm', 0, 4));
+        const cut = await clip('fm', 'cut');
+        await clickAt(cell('fm', 4, 4));
+        await clip('fm', 'paste', { 'text/plain': cut.text, 'application/x-nexa-grid': cut.grid });
+        const d2 = await formulasOf('fm');
+        assert.strictEqual(d2.formulas.E5, '=A1', 'a cut formula is not moved');
+        assert.ok(!('E1' in d2.formulas), 'and the cut cell is empty');
+        // the fill handle: =A1+$B$1 down three rows
+        await clickAt(cell('fm', 0, 3));
+        await dragCells('fm', q('fm', '[data-r="0"][data-c="3"] [data-fill]'), cell('fm', 2, 3));
+        const d3 = await formulasOf('fm');
+        assert.deepStrictEqual([d3.formulas.D2, d3.formulas.D3], ['=A2+$B$1', '=A3+$B$1'], 'filled: each one reads its own row');
+        assert.deepStrictEqual([await text('fm', 1, 3), await text('fm', 2, 3)], ['12', '13']);
+        // pasted four rows up from E5 (=A1): the reference falls off the sheet
+        await clickAt(cell('fm', 4, 4));
+        const low = await clip('fm', 'copy');
+        await clickAt(cell('fm', 0, 5));
+        await clip('fm', 'paste', { 'text/plain': low.text, 'application/x-nexa-grid': low.grid });
+        const d4 = await formulasOf('fm');
+        assert.strictEqual(d4.formulas.F1, '=#REF!', 'A1 four rows up is above the sheet');
+        assert.strictEqual(await text('fm', 0, 5), '#REF!');
+    });
+
+    await ok('formulas: a sort works on what the formulas give; a formula keeps reading the cells of the sheet, not of the view', async () => {
+        await mount('fs', { rows: 20, cols: 6, sortArea: 'A1:B4', sortable: true, cells: { A1: 'Name', B1: 'Total', A2: 'x', B2: '=C2*2', A3: 'y', B3: '=C3*2', A4: 'z', B4: '=C4*2', C2: 5, C3: 1, C4: 3, E1: '=B2' } });
+        await js('NexaTest.invoke("fs", "sortColumn", { column: "B", direction: "asc" })'); await settle(); await wait(60);
+        assert.deepStrictEqual([await text('fs', 1, 0), await text('fs', 2, 0), await text('fs', 3, 0)], ['y', 'z', 'x'], 'ordered by the results 2, 6, 10');
+        assert.deepStrictEqual([await text('fs', 1, 1), await text('fs', 2, 1), await text('fs', 3, 1)], ['2', '6', '10']);
+        assert.strictEqual(await text('fs', 0, 4), '10', 'E1 reads B2 of the sheet (x: 10), not the second row of the view');
+    });
+
+    await ok('formulas: NOW() keeps ticking while it is on show; TODAY() is a whole day', async () => {
+        await mount('fn', { cells: { A1: '=NOW()', A2: '=TODAY()', A3: '=A1-A2' } });
+        const a = await text('fn', 0, 0);
+        assert.ok(/^\d{5}\.\d+/.test(a), 'a serial number with the time: ' + a);
+        assert.ok(/^\d{5}$/.test(await text('fn', 1, 0)), 'TODAY has no fraction');
+        await wait(2300);
+        const b = await text('fn', 0, 0);
+        assert.notStrictEqual(a, b, 'the clock moved on without anyone touching the grid');
+        assert.ok(Number(await text('fn', 2, 0)) < 1, 'and the formula over it follows');
+    });
+
+    await ok('formula bar: shows the address and the formula of the selected cell; typing in it edits the cell; a read-only grid shows it but cannot be typed in; the sheet keeps its place under it', async () => {
+        await mount('fbr', { mode: 'editable', showFormulaBar: true, cells: { A1: 3, A2: 4, A3: '=A1+A2', B1: 'text' } });
+        assert.strictEqual(await js(q('fbr', '[data-bar]') + ' ? 1 : 0'), 1, 'the bar is there');
+        const barBottom = await js(`(function () { var b = ${q('fbr', '.fbar')}.getBoundingClientRect(), c = ${cell('fbr', 0, 0)}.getBoundingClientRect(); return { bar: Math.round(b.bottom), cell: Math.round(c.top) }; })()`);
+        assert.ok(barBottom.cell >= barBottom.bar, 'the sheet starts under the bar: ' + JSON.stringify(barBottom));
+        await clickAt(cell('fbr', 2, 0));
+        assert.strictEqual(await js(q('fbr', '.fa') + '.textContent'), 'A3');
+        assert.strictEqual(await js(q('fbr', '[data-bar]') + '.value'), '=A1+A2', 'the formula as written, while the cell shows 7');
+        assert.strictEqual(await text('fbr', 2, 0), '7');
+        await clickAt(cell('fbr', 0, 1));
+        assert.strictEqual(await js(q('fbr', '[data-bar]') + '.value'), 'text');
+        // typing in the bar
+        await clickAt(cell('fbr', 2, 0));
+        await js(`(function () { var i = ${q('fbr', '[data-bar]')}; i.focus(); i.value = "=A1*A2"; })()`);
+        await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'Enter', windowsVirtualKeyCode: 13 });
+        await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', windowsVirtualKeyCode: 13 });
+        await settle(); await wait(60);
+        assert.strictEqual(await text('fbr', 2, 0), '12', 'the cell took what was typed in the bar');
+        assert.strictEqual((await events('fbr', 'cellChange')).pop().new, '=A1*A2');
+        await mount('fbr2', { showFormulaBar: true, cells: { A1: '=1+1' } });
+        await clickAt(cell('fbr2', 0, 0));
+        assert.strictEqual(await js(q('fbr2', '[data-bar]') + '.value'), '=1+1', 'read-only: it shows the formula');
+        assert.strictEqual(await js(q('fbr2', '[data-bar]') + '.readOnly'), true, 'and cannot be typed in');
+        await mount('fbr3', { cells: { A1: 1 } });
+        assert.strictEqual(await js(q('fbr3', '[data-bar]') + ' ? 1 : 0'), 0, 'no bar unless asked for');
+    });
+
+    await ok('formulas: export to Excel keeps the formulas with their results; an error is an error cell', async () => {
+        await mount('fz', { cells: { A1: 5, A2: 7, A3: '=SUM(A1:A2)', B1: '=1/0', B2: '=A1&"x"', B3: '=A1>1' }, exportable: true });
+        await hookDownload();
+        await js('NexaTest.invoke("fz", "exportXlsx")');
+        const sheet = readZip((await download()).data)['xl/worksheets/sheet1.xml'];
+        assert.ok(/<c r="A3" s="\d+"><f>SUM\(A1:A2\)<\/f><v>12<\/v><\/c>/.test(sheet), 'the formula and its result: ' + sheet.slice(sheet.indexOf('r="A3"') - 3, sheet.indexOf('r="A3"') + 80));
+        assert.ok(/<c r="B1" s="\d+" t="e"><f>1\/0<\/f><v>#DIV\/0!<\/v><\/c>/.test(sheet), 'an error cell');
+        assert.ok(/<c r="B2" s="\d+" t="str"><f>A1&amp;&quot;x&quot;<\/f><v>5x<\/v><\/c>/.test(sheet) || /<c r="B2" s="\d+" t="str"><f>A1&amp;"x"<\/f><v>5x<\/v><\/c>/.test(sheet), 'a text result');
+        assert.ok(/<c r="B3" s="\d+" t="b"><f>A1&gt;1<\/f><v>1<\/v><\/c>/.test(sheet), 'a boolean result');
+    });
+
     await ok('no JavaScript errors in the page', async () => {
         const errs = logs.filter((l) => /error|exception|uncaught/i.test(l) && !/favicon|net::ERR/i.test(l));
         assert.deepStrictEqual(errs.slice(0, 5), []);

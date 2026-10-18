@@ -118,8 +118,12 @@ export function buildXlsxFiles(model) {
             if (cell.c > maxC) maxC = cell.c;
             const ref = colName(cell.c) + (cell.r + 1), s = xfOf(cell);
             const style = s ? ' s="' + s + '"' : "";
-            if (cell.kind === "n" && typeof cell.v === "number" && isFinite(cell.v)) return '<c r="' + ref + '"' + style + "><v>" + cell.v + "</v></c>";
-            if (cell.kind === "b") return '<c r="' + ref + '"' + style + ' t="b"><v>' + (cell.v ? 1 : 0) + "</v></c>";
+            // a formula goes as the formula with its result next to it (Excel works it out again when the file opens)
+            const f = typeof cell.formula === "string" && cell.formula.length > 1 ? "<f>" + xmlEsc(cell.formula.slice(1)) + "</f>" : "";
+            if (cell.kind === "e") return '<c r="' + ref + '"' + style + ' t="e">' + f + "<v>" + xmlEsc(String(cell.v)) + "</v></c>";
+            if (cell.kind === "n" && typeof cell.v === "number" && isFinite(cell.v)) return '<c r="' + ref + '"' + style + ">" + f + "<v>" + cell.v + "</v></c>";
+            if (cell.kind === "b") return '<c r="' + ref + '"' + style + ' t="b">' + f + "<v>" + (cell.v ? 1 : 0) + "</v></c>";
+            if (f && cell.kind === "s") return '<c r="' + ref + '"' + style + ' t="str">' + f + "<v>" + xmlEsc(clean(cell.v)) + "</v></c>";
             if (cell.kind === "s") return '<c r="' + ref + '"' + style + ' t="inlineStr"><is><t xml:space="preserve">' + xmlEsc(clean(cell.v)) + "</t></is></c>";
             return '<c r="' + ref + '"' + style + "/>";
         }).join("");

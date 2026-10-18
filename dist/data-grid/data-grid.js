@@ -23,12 +23,16 @@ import { RULE_SCHEMA, POPULATE_SCHEMA, BORDER_SCHEMA, LOCK_SCHEMA, COL_RULE_SCHE
 import { parseColRules, parseRowRules, colSizes, rowSizes, rowSizeAt, clampSize } from "./sizes.js";
 import { openGridEditor, summaryOf } from "./editor.js";
 import { GRID_MIME, packCells, unpackCells, parseTsv, pasteTargets } from "./clipboard.js";
+import { createCalc } from "./calc.js";
+import { isFormula, shiftFormula } from "./formula.js";
+import { isError, dateToSerial, serialToDate } from "./xlvalue.js";
 import { seriesValues, fillTarget } from "./fill.js";
 import { rulesFromCells } from "./design.js";
 
 export const CATEGORY_DATA = "UI · Data";
 
 const HEAD_H = 26;                 // the row of column letters
+const BAR_H = 28;                  // the formula bar above the sheet (when it is shown)
 const MAX_VALUES_IN_EVENT = 400;   // a selection of more cells sends its range only, not its values
 
 const safeUrl = (v) => { const t = String(v === undefined || v === null ? "" : v).trim(); return /^(https?:|mailto:|tel:|\/|\.\/|#|data:image\/)/i.test(t) ? t : ""; };
@@ -61,6 +65,7 @@ const DATA_GRID_CSS = css`
     .cell.popbox { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--cp-solid, #0f62fe) 45%, transparent); }
     .t { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
     .num { font-family: var(--mono); font-variant-numeric: tabular-nums; letter-spacing: 0; }
+    .err { color: var(--nexa-colors-red-fg, #da1e28); }
     .head { justify-content: center; padding: 0; background: var(--bg-muted); color: var(--fg-muted); font-size: var(--fs-label); letter-spacing: 0.32px; border-color: var(--bd-strong); }
     .head.act { background: var(--bg-emph); color: var(--fg); font-weight: 600; }
     .srt { all: unset; position: absolute; left: 2px; top: 50%; transform: translateY(-50%); width: 18px; height: 18px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; border-radius: 3px; font-size: 12px; opacity: 0; z-index: 3; }
@@ -68,6 +73,13 @@ const DATA_GRID_CSS = css`
     .srt:hover { background: var(--bg-emph); }
     .srt.on { color: var(--cp-solid, #0f62fe); }
     .srt .icon svg { width: 12px; height: 12px; }
+    .body { position: absolute; left: 0; right: 0; bottom: 0; }
+    .fbar { position: absolute; left: 0; right: 0; top: 0; height: 28px; box-sizing: border-box; display: flex; align-items: center; gap: 6px; padding: 0 6px; border-bottom: 1px solid var(--bd); background: var(--bg-subtle); z-index: 5; }
+    .fbar .fa { min-width: 44px; text-align: center; color: var(--fg-muted); font: 12px var(--mono); }
+    .fbar .fx { color: var(--fg-muted); font: italic 12px serif; padding: 0 4px; border-left: 1px solid var(--bd); }
+    .fbar .fx.on { color: var(--cp-solid); }
+    .fbar input { flex: 1 1 auto; min-width: 0; height: 22px; box-sizing: border-box; border: 1px solid var(--bd); border-radius: 3px; background: var(--bg); color: var(--fg); font: 12px var(--mono); padding: 0 6px; outline: none; }
+    .fbar input:focus { border-color: var(--ring); }
     .findbar { position: absolute; top: 6px; right: 16px; z-index: 6; display: flex; align-items: center; gap: 4px; background: var(--panel); border: 1px solid var(--bd-strong); border-radius: var(--r); padding: 4px 6px; box-shadow: 0 2px 6px rgba(0,0,0,0.2); font-size: 12px; }
     .findbar input[type="text"] { width: 150px; height: 24px; box-sizing: border-box; border: none; border-bottom: 1px solid var(--bd-strong); background: var(--bg-subtle); color: var(--fg); font: inherit; padding: 0 6px; outline: none; }
     .findbar button { all: unset; cursor: pointer; padding: 2px 7px; border-radius: 3px; border: 1px solid var(--bd); }
@@ -161,6 +173,7 @@ export const dataGrid = defineUI({
             help: "What the user types is told to Logic with On Cell Change in every mode. On Save is the one that means \"keep this\": at once, after each cell (a paste or a fill: once, with all its cells); with the box, when the user presses Save; with a message, when the action Save arrives (the action Discard throws the waiting changes away). In the last two the changed cells wait, marked in the corner, and what the user types stays in the page until it is reloaded." },
         showHeaders: { type: "boolean", default: true, group: "Display", label: "Show the column letters and row numbers" },
         showGridLines: { type: "boolean", default: true, group: "Display", label: "Show the grid lines" },
+        showFormulaBar: { type: "boolean", default: false, group: "Display", label: "Show the formula bar", help: "A line above the sheet with the address of the selected cell and what is in it: the formula as it was written, or the value. Typing in it edits the cell (Enter keeps it)." },
         selection: { type: "enum", default: "range", group: "Display", label: "Selection", style: "segmented", options: [{ value: "none", label: "None" }, { value: "cell", label: "Cell" }, { value: "range", label: "Range" }] },
         // what the Edit grid dialog edits: no row of the inspector each, they are in the dialog
         cells: { type: "json", default: {}, group: "Sheet", label: "Cells", hidden: true, noReset: true, bindable: false },
@@ -235,6 +248,10 @@ export const dataGrid = defineUI({
         _fit = new Map();           // row -> the height its wrapped text needs
         _fitSig = "";
         _dataVersion = 0;           // grows when the values or the sizes change: the heights that fit the text are measured again
+        _calcCache = null;          // the calculator of the formulas, made again when the data changed or the clock ticked (NOW, TODAY)
+        _calcKey = "";
+        _tick = 0;
+        _tickOn = false;
         _editFit = null;            // { r, h }: the row of the cell being typed in grows with the text
         _measure = null;
         _fill = null;               // { source, plan } while the fill handle is dragged
@@ -287,7 +304,7 @@ export const dataGrid = defineUI({
             if (sig === this._permSig) return;
             this._permSig = sig;
             if (!sig) { this._perm = null; this._inv = null; return; }
-            this._perm = sortPerm(a.r2 - a.r1 + 1, (i) => valueAt(this._layers(), a.r1 + i, s.c), s.dir);
+            this._perm = sortPerm(a.r2 - a.r1 + 1, (i) => this._atSource(a.r1 + i, s.c), s.dir);
             this._inv = inversePerm(this._perm);
         }
 
@@ -350,7 +367,70 @@ export const dataGrid = defineUI({
 
         _layers() { return { cells: this._cells, populated: this._populated.map, edits: this._edits }; }
         _baseValue(r, c) { return valueAt(this._layers(), this._src(r, c), c); }
-        _value(r, c) { return stageValue(this._stage, cellKey(this._src(r, c), c), "v", this._baseValue(r, c)); }
+        // What is stored in a cell of the sheet (r, c count in the sheet, not in the sorted view): a number, a text, a boolean, nothing. A formula is stored as its text ("=A1+2").
+        _rawAt(r, c) { return stageValue(this._stage, cellKey(r, c), "v", valueAt(this._layers(), r, c)); }
+        _raw(r, c) { return this._rawAt(this._src(r, c), c); }
+        // The formula a cell holds, or null. What a message populated is data and never a formula, even when it starts with "="; what was typed, set by an action or designed is.
+        _formulaAt(r, c) {
+            const raw = this._rawAt(r, c);
+            if (!isFormula(raw)) return null;
+            const k = cellKey(r, c);
+            if (!stageHas(this._stage, k, "v") && !this._edits.has(k) && this._populated.map.has(k)) return null;
+            return raw;
+        }
+        _formula(r, c) { return this._formulaAt(this._src(r, c), c); }
+        // The calculator of this state of the data. Each cell is worked out once and only when it is asked for.
+        _calc() {
+            const key = this._dataVersion + "|" + this._tick;
+            if (this._calcCache && this._calcKey === key) return this._calcCache;
+            this._calcKey = key;
+            const size = this._size;
+            return (this._calcCache = createCalc((r, c) => this._rawAt(r, c), {
+                now: new Date(), rows: size.rows, cols: size.cols,
+                formulaAt: (r, c) => this._formulaAt(r, c) !== null,
+                coerce: (r, c, raw) => this._forFormula(r, c, raw)
+            }));
+        }
+        // What a formula sees in a plain cell: a date-typed cell is a serial number (as in Excel), a boolean-typed one a boolean
+        _forFormula(r, c, raw) {
+            if (raw === null || raw === undefined || raw === "") return raw;
+            const k = cellKey(r, c);
+            const type = Object.assign({}, fieldsAt(this._rules, r, c), this._populated.styles.get(k), this._actionStyles.get(k)).type;
+            if (type === "date") { const d = toDate(raw); return d ? dateToSerial(d) : raw; }
+            if (type === "boolean") return raw === true || raw === "true" || raw === 1;
+            return raw;
+        }
+        // The value of a cell of the sheet: a formula worked out (an error stays an error value), anything else as stored
+        _atSource(r, c) { return this._formulaAt(r, c) !== null ? this._calc().value(r, c) : this._rawAt(r, c); }
+        // The value of a cell of the view, as Logic is told it (an error as its text, "#DIV/0!")
+        _value(r, c) { const v = this._atSource(this._src(r, c), c); return isError(v) ? v.code : v; }
+        // The value of a cell of the view as it is drawn: the result of a formula fits the cell's type (a serial number in a date cell is a date; TRUE in a general cell is the word)
+        _shown(r, c, spec) {
+            if (this._formula(r, c) === null) return this._raw(r, c);
+            const v = this._atSource(this._src(r, c), c);
+            if (isError(v)) return v;
+            if (typeof v === "number" && spec.type === "date") return serialToDate(v);
+            if (typeof v === "boolean" && (spec.type === "general" || spec.type === "text")) return v ? "TRUE" : "FALSE";
+            return v;
+        }
+        _errorTip(err) {
+            return { "#DIV/0!": "Division by zero", "#VALUE!": "A value of the wrong kind", "#REF!": "A cell that does not exist", "#NAME?": "A function or a word the grid does not know, or a formula that cannot be read",
+                "#N/A": "Nothing found", "#NUM!": "A number that cannot be", "#CYCLE!": "The formula depends on itself" }[err.code] || err.code;
+        }
+        // NOW() and TODAY() change with time: while a cell on show holds one, the formulas are worked out again every second
+        _keepTime() {
+            if (this._tickOn || !this._calcCache || !this._calcCache.volatile) return;
+            this._tickOn = true;
+            this.after(1000, () => {
+                this._tickOn = false;
+                if (this._calcCache && this._calcCache.volatile) { this._tick++; this.requestUpdate(); }
+            });
+        }
+        // The text a cell shows (what is copied, searched and measured)
+        _text(r, c) {
+            const spec = cellSpec(this._fields(r, c)), v = this._shown(r, c, spec);
+            return isError(v) ? v.code : displayText(spec, v);
+        }
         // the type and the style of a cell, from the lowest layer to the highest: the rules of its ranges; what a populate rule gives the cells it fills, and over it
         // what a cell object of the message says; what the action Fill cells set. The last two belong to the data, so they follow it when the view is sorted.
         _fields(r, c) {
@@ -386,7 +466,8 @@ export const dataGrid = defineUI({
             const F = this._freeze.rows, FC = this._freeze.cols + rn;
             const frozenW = colAxis.offsetOf(FC), frozenRowsH = rowAxis.offsetOf(F);
             const W = Math.max(this.size.w || this.clientWidth || 0, 0), H = Math.max(this.size.h || this.clientHeight || 0, 0);
-            const inW = Math.max(0, W - 2), inH = Math.max(0, H - 2);                       // inside the border
+            const bar = p.showFormulaBar === true ? BAR_H : 0;
+            const inW = Math.max(0, W - 2), inH = Math.max(0, H - 2 - bar);                 // inside the border, under the formula bar
             const topH = hh + frozenRowsH;
             const viewW = Math.max(0, inW - frozenW - this._sbw), viewH = Math.max(0, inH - topH - this._sbh);
             const rows = visibleRange(rowAxis, this._scroll.top, viewH, 4, F);
@@ -408,14 +489,16 @@ export const dataGrid = defineUI({
         _content(spec, value, r, c, editable, fields) {
             const ed = this._edit && this._edit.r === r && this._edit.c === c;
             if (ed) {
-                const date = spec.type === "date";
-                if (spec.type === "select" && spec.options.length) {
+                const date = spec.type === "date" && !this._edit.formula;
+                if (spec.type === "select" && spec.options.length && !this._edit.formula) {
                     return html`<select class="ed" data-edit @change=${this._onEditChange}>${spec.options.map((o) => html`<option value=${o.value} ?selected=${String(value) === o.value}>${o.label}</option>`)}</select>`;
                 }
                 // a wrapped cell is typed in a text area: Enter is a new line, and the row grows with the text
                 if (fields && fields.wrap === true && !date) return html`<textarea class="ed" data-edit .value=${this._edit.text} @input=${this._onEditInput}></textarea>`;
                 return html`<input class="ed" data-edit type=${date ? (spec.format === "date" ? "date" : "datetime-local") : "text"} .value=${date ? dateInputValue(spec, value) : this._edit.text} @input=${this._onEditInput}>`;
             }
+            // a formula that went wrong shows its error, whatever the type of the cell
+            if (isError(value)) return html`<span class="t err" title=${this._errorTip(value)}>${value.code}</span>`;
             switch (spec.type) {
                 case "boolean": {
                     const on = value === true || value === "true" || value === 1;
@@ -453,7 +536,7 @@ export const dataGrid = defineUI({
         _cell(g, r, c, box, merge, blockIds) {
             const fields = this._fields(r, c);
             const spec = cellSpec(fields);
-            const value = this._value(r, c);
+            const value = this._shown(r, c, spec);
             const editable = this._editable(r, c);
             const range = this._selRange;
             const inSel = !!range && r >= range.r1 && r <= range.r2 && c >= range.c1 && c <= range.c2;
@@ -493,6 +576,34 @@ export const dataGrid = defineUI({
         }
 
         // ---- find (Ctrl+F) ------------------------------------------------------------------------------------------------
+        // The formula bar: the address of the cell in focus, and what is stored in it (a formula as it was written). Enter in it keeps what was typed.
+        _formulaBar() {
+            const f = this._sel.focus;
+            const text = f ? this._rawText(f.r, f.c) : "";
+            const editable = !!f && this._editable(f.r, f.c);
+            const isF = !!f && this._formula(f.r, f.c) !== null;
+            return html`<div class="fbar" @keydown=${this._onBarKey}>
+                <span class="fa">${f ? this._addr(f.r, f.c) : ""}</span>
+                <span class="fx ${isF ? "on" : ""}">fx</span>
+                <input type="text" data-bar .value=${text} ?readonly=${!editable} placeholder=${f ? "" : "Select a cell"} aria-label="Formula bar" @change=${this._onBarChange}>
+            </div>`;
+        }
+        _onBarKey(e) {
+            e.stopPropagation();
+            const f = this._sel.focus;
+            if (e.key === "Enter" && f) { e.preventDefault(); this._onBarChange(e); this._focusGrid(); }
+            else if (e.key === "Escape") { e.target.value = f ? this._rawText(f.r, f.c) : ""; this._focusGrid(); }
+        }
+        _onBarChange(e) {
+            const f = this._sel.focus;
+            if (f && this._editable(f.r, f.c)) this._applyEdit(f.r, f.c, e.target.value);
+        }
+        // what is stored in a cell as text: a formula as it was written
+        _rawText(r, c) {
+            const v = this._raw(r, c);
+            return v === null || v === undefined ? "" : typeof v === "object" ? JSON.stringify(v) : String(v);
+        }
+
         _findBar() {
             const f = this._find, n = this._matches.length;
             return html`<div class="findbar" @keydown=${this._onFindKey}>
@@ -518,9 +629,9 @@ export const dataGrid = defineUI({
                 const [sr, c] = k.split(",").map(Number);
                 const r = this._disp(sr, c);
                 if (r < a.r1 || r > a.r2 || c < a.c1 || c > a.c2) return;
-                const v = this._value(r, c);
-                if (v === null || v === undefined || v === "") return;
-                items.push({ r, c, text: displayText(cellSpec(this._fields(r, c)), v) });
+                const text = this._text(r, c);
+                if (text === "") return;
+                items.push({ r, c, text });
             });
             this._matches = findMatches(items, f.text, f.cs);
             this._matchSet = new Set(this._matches.map((m) => cellKey(m.r, m.c)));
@@ -635,13 +746,17 @@ export const dataGrid = defineUI({
             const br = this._pane(g, g.rows.from, g.rows.to, Math.max(g.cols.from, g.FC), g.cols.to, false, false);
             const frozenTop = g.hh + g.frozenRowsH;
             const staged = (this.p || {}).saveMode === "bar" && stageCount(this._stage) > 0;
+            const bar = p.showFormulaBar === true;
             return html`<div class="grid ${p.showGridLines === false ? "nolines" : ""}" part="root" tabindex="0" role="grid" aria-rowcount=${g.nR} aria-colcount=${g.nC}
                 @mousedown=${this._onMouseDown} @mouseover=${this._onMouseOver} @click=${this._onClick} @dblclick=${this._onDblClick} @keydown=${this._onKey} @copy=${this._onCopy} @cut=${this._onCut} @paste=${this._onPaste} @change=${this._onChange} @focusout=${this._onFocusOut}>
+                ${bar ? this._formulaBar() : nothing}
+                <div class="body" style="top:${bar ? BAR_H : 0}px">
                 <div class="pane" style="left:0;top:0;width:${g.frozenW}px;height:${frozenTop}px"><div class="inner">${headTL}${tl}</div></div>
                 <div class="pane" style="left:${g.frozenW}px;top:0;width:${g.viewW}px;height:${frozenTop}px"><div class="inner" data-pane="tr" style="transform:translateX(${-sl}px)">${headTR}${tr}</div></div>
                 <div class="pane" style="left:0;top:${frozenTop}px;width:${g.frozenW}px;height:${g.viewH}px"><div class="inner" data-pane="bl" style="transform:translateY(${-st}px)">${bl}</div></div>
                 <div class="scroller" data-scroller style="left:${g.frozenW}px;top:${frozenTop}px;right:0;bottom:0" @scroll=${this._onScroll}>
                     <div class="sizer" style="width:${g.scrollW}px;height:${g.scrollH}px">${br}</div>
+                </div>
                 </div>
                 ${this._find.open ? this._findBar() : nothing}
                 ${staged ? html`<div class="staged"><span>${stageCount(this._stage)} unsaved</span><button type="button" data-staged="save">Save</button><button type="button" class="ghost" data-staged="discard">Discard</button></div>` : nothing}
@@ -653,6 +768,7 @@ export const dataGrid = defineUI({
             // the SDK turns pointer events off in editor mode so that the canvas takes the clicks; the Edit grid dialog hosts the grid to click on it
             if (this.hasAttribute("data-interactive")) this.style.pointerEvents = "auto";
             this._measureFit();
+            this._keepTime();
             if (this._find.open && this._find.focus) {
                 const input = this.renderRoot.querySelector("[data-find]");
                 if (input) { this._find.focus = false; input.focus(); input.select(); }
@@ -707,7 +823,7 @@ export const dataGrid = defineUI({
                     if (fields.wrap !== true) return;
                     const s = rowSizeAt(this._rowSz, r, dd.row);
                     if (!(s.fit && s.adjustable)) return;
-                    const spec = cellSpec(fields), text = displayText(spec, this._value(r, c));
+                    const spec = cellSpec(fields), text = this._text(r, c);
                     if (text === "") return;
                     const h = this._needHeight(fields, spec, text, this._widthOf(c));
                     if (h > (next.get(r) || 0)) next.set(r, h);
@@ -790,7 +906,7 @@ export const dataGrid = defineUI({
                     if (c !== index || r < a.r1 || r > a.r2) return;
                     const fields = this._fields(r, c), spec = cellSpec(fields);
                     m.style.cssText = "position:absolute;left:-99999px;top:0;visibility:hidden;white-space:pre;padding:0 8px;" + styleCss(fields, spec.type).split(";").filter((x) => /^font-/.test(x)).join(";");
-                    m.textContent = displayText(spec, this._value(r, c));
+                    m.textContent = this._text(r, c);
                     w = Math.max(w, Math.ceil(m.scrollWidth) + 6);
                 });
                 size = clampSize(w || dd.col.width, this._colSz[index].min, this._colSz[index].max);
@@ -855,7 +971,7 @@ export const dataGrid = defineUI({
             if (e.button !== 0) return;
             const handle = e.target.closest && e.target.closest("[data-rz]");
             if (handle) { this._beginResize(e, handle); return; }
-            if (e.target.closest && (e.target.closest("[data-sortc]") || e.target.closest("[data-xlsx]") || e.target.closest(".findbar"))) return;
+            if (e.target.closest && (e.target.closest("[data-sortc]") || e.target.closest("[data-xlsx]") || e.target.closest(".findbar") || e.target.closest(".fbar"))) return;
             if (e.target.closest && e.target.closest("[data-fill]") && this._selRange) { this._fill = { source: Object.assign({}, this._selRange), plan: null }; e.preventDefault(); return; }
             const head = this._headAt(e);
             if (head) {
@@ -908,7 +1024,7 @@ export const dataGrid = defineUI({
             const act = e.target.closest("[data-act]");
             const value = this._value(hit.r, hit.c);
             const address = this._addr(hit.r, hit.c);
-            if (act && act.dataset.act === "toggle" && this._editable(hit.r, hit.c)) this._applyEdit(hit.r, hit.c, !(value === true || value === "true" || value === 1));
+            if (act && act.dataset.act === "toggle" && this._editable(hit.r, hit.c) && this._formula(hit.r, hit.c) === null) this._applyEdit(hit.r, hit.c, !(value === true || value === "true" || value === 1));
             else if (act && act.dataset.act === "button") this.fire("buttonClick", { address, action: spec.action || address, value });
             this.fire("cellClick", { address, value });
         }
@@ -930,9 +1046,11 @@ export const dataGrid = defineUI({
 
         _startEdit(r, c, firstChar) {
             if (!this._editable(r, c)) return false;
-            const spec = cellSpec(this._fields(r, c)), value = this._value(r, c);
-            if (spec.type === "boolean") { this._applyEdit(r, c, !(value === true || value === "true" || value === 1)); return true; }
-            this._edit = { r, c, text: firstChar !== null ? firstChar : (value === null || value === undefined ? "" : typeof value === "object" ? JSON.stringify(value) : String(value)) };
+            const spec = cellSpec(this._fields(r, c)), value = this._raw(r, c);
+            // a formula is edited as its text; typing "=" starts one in any cell
+            const formula = firstChar === "=" || this._formula(r, c) !== null;
+            if (spec.type === "boolean" && !formula) { this._applyEdit(r, c, !(value === true || value === "true" || value === 1)); return true; }
+            this._edit = { r, c, formula, text: firstChar !== null ? firstChar : (value === null || value === undefined ? "" : typeof value === "object" ? JSON.stringify(value) : String(value)) };
             this._focusEdit = true;
             this.requestUpdate();
             return true;
@@ -979,7 +1097,9 @@ export const dataGrid = defineUI({
             if (!this._editable(r, c)) return;
             const spec = cellSpec(this._fields(r, c));
             const key = cellKey(this._src(r, c), c), address = this._addr(r, c);
-            const old = this._value(r, c), value = coerceEdit(spec, input);
+            // "=" and something after it is a formula: kept as typed, whatever the cell's type
+            const typed = typeof input === "string" ? input.trim() : input;
+            const old = this._raw(r, c), value = isFormula(typed) ? typed : coerceEdit(spec, input);
             if (JSON.stringify(old) === JSON.stringify(value)) return;
             if (this._designing()) {
                 this.dispatchEvent(new CustomEvent("nexa-cell-edit", { detail: { address, value }, bubbles: true, composed: true }));
@@ -1090,12 +1210,17 @@ export const dataGrid = defineUI({
         }
 
         // Copy: the text of the cells as shown (tab-separated, for Excel and any text field), and a JSON of their values and styles (for this grid and others)
-        _onCopy(e) {
+        // A copy carries the formulas as they are written and where they came from (so that a paste can move their references); a cut does not (what it moves keeps pointing where it did)
+        _onCopy(e, cut) {
             const range = this._selRange;
             if (!range || !e.clipboardData || (e.target.closest && e.target.closest("input, select, textarea"))) return;
-            e.clipboardData.setData("text/plain", rangeToTsv(range, (r, c) => displayText(cellSpec(this._fields(r, c)), this._value(r, c))));
+            e.clipboardData.setData("text/plain", rangeToTsv(range, (r, c) => this._text(r, c)));
             const rows = [];
-            for (let r = range.r1; r <= range.r2; r++) { const line = []; for (let c = range.c1; c <= range.c2; c++) line.push({ v: this._value(r, c), f: this._styleOf(r, c) }); rows.push(line); }
+            for (let r = range.r1; r <= range.r2; r++) {
+                const line = [];
+                for (let c = range.c1; c <= range.c2; c++) line.push({ v: this._raw(r, c), f: this._styleOf(r, c), o: cut || this._formula(r, c) === null ? undefined : { r: this._src(r, c), c } });
+                rows.push(line);
+            }
             e.clipboardData.setData(GRID_MIME, packCells(rows));
             e.preventDefault();
         }
@@ -1103,7 +1228,7 @@ export const dataGrid = defineUI({
         // Cut: a copy, then the editable cells of the selection are emptied
         _onCut(e) {
             if (!this._selRange || (e.target.closest && e.target.closest("input, select, textarea"))) return;
-            this._onCopy(e);
+            this._onCopy(e, true);
             this._clearSelection();
         }
 
@@ -1120,7 +1245,9 @@ export const dataGrid = defineUI({
             const h = block.length, w = Math.max(...block.map((row) => row.length));
             const items = pasteTargets({ r: range.r1, c: range.c1 }, h, w, range, this._size).map((t) => {
                 const src = block[t.i] && block[t.i][t.j];
-                return src === undefined ? null : { r: t.r, c: t.c, v: src.v, f: packed ? src.f || {} : undefined, text: !packed };
+                if (src === undefined) return null;
+                const v = packed && src.o && isFormula(src.v) ? shiftFormula(src.v, this._src(t.r, t.c) - src.o.r, t.c - src.o.c) : src.v;
+                return { r: t.r, c: t.c, v, f: packed ? src.f || {} : undefined, text: !packed };
             }).filter(Boolean);
             this._applyBlock(items);
         }
@@ -1130,7 +1257,7 @@ export const dataGrid = defineUI({
         _applyBlock(items) {
             const todo = items.filter((x) => this._editable(x.r, x.c) && x.v !== undefined);
             if (!todo.length) return;
-            const coerced = todo.map((x) => Object.assign({}, x, { value: coerceEdit(cellSpec(this._fields(x.r, x.c)), x.v === null ? "" : x.v) }));
+            const coerced = todo.map((x) => Object.assign({}, x, { value: typeof x.v === "string" && isFormula(x.v.trim()) ? x.v.trim() : coerceEdit(cellSpec(this._fields(x.r, x.c)), x.v === null ? "" : x.v) }));
             if (this._designing()) {
                 const r0 = Math.min(...coerced.map((x) => x.r)), r1 = Math.max(...coerced.map((x) => x.r)), c0 = Math.min(...coerced.map((x) => x.c)), c1 = Math.max(...coerced.map((x) => x.c));
                 const grid = [];
@@ -1143,7 +1270,7 @@ export const dataGrid = defineUI({
             if (this.isEditor) return;
             const changes = [];
             coerced.forEach((x) => {
-                const key = cellKey(this._src(x.r, x.c), x.c), old = this._value(x.r, x.c);
+                const key = cellKey(this._src(x.r, x.c), x.c), old = this._raw(x.r, x.c);
                 if (JSON.stringify(old) === JSON.stringify(x.value)) return;
                 if (this._staged()) stageSet(this._stage, key, "v", x.value, this._baseValue(x.r, x.c));
                 else this._edits.set(key, x.value);
@@ -1170,7 +1297,7 @@ export const dataGrid = defineUI({
             for (let line = 0; line < lines; line++) {
                 const cell = (k) => (vertical ? { r: S.r1 + k, c: S.c1 + line } : { r: S.r1 + line, c: S.c1 + k });
                 const src = [];
-                for (let k = 0; k < length; k++) { const a = cell(k); src.push(this._value(a.r, a.c)); }
+                for (let k = 0; k < length; k++) { const a = cell(k); src.push(this._raw(a.r, a.c)); }
                 const vals = seriesValues(src, count, { copy: !!(e && (e.ctrlKey || e.metaKey)), backward });
                 for (let k = 0; k < count; k++) {
                     // the k-th cell added: going away from the selection; its style is the one of the selection's cell it repeats
@@ -1178,7 +1305,9 @@ export const dataGrid = defineUI({
                         : dir === "right" ? { r: S.r1 + line, c: S.c2 + 1 + k } : { r: S.r1 + line, c: S.c1 - 1 - k };
                     const from = backward ? (length - 1 - (k % length)) : (k % length);
                     const a = cell(from);
-                    items.push({ r: at.r, c: at.c, v: vals[k], f: this._styleOf(a.r, a.c) });
+                    // a formula is repeated with its references moved by how far the cell is (also with Ctrl, as in Excel)
+                    const v = this._formula(a.r, a.c) !== null ? shiftFormula(this._raw(a.r, a.c), this._src(at.r, at.c) - this._src(a.r, a.c), at.c - a.c) : vals[k];
+                    items.push({ r: at.r, c: at.c, v, f: this._styleOf(a.r, a.c) });
                 }
             }
             this._applyBlock(items);
@@ -1263,7 +1392,11 @@ export const dataGrid = defineUI({
             for (let r = r0; r <= r1 && model.cells.length < 200000; r++) {
                 for (let c = c0; c <= c1; c++) {
                     if (isCovered(this._merges, r, c)) continue;
-                    const value = this._value(r, c), f = this._fields(r, c), spec = cellSpec(f);
+                    const f = this._fields(r, c), spec = cellSpec(f);
+                    // a formula is exported as a formula (with its result kept next to it) when the sheet is as the file will have it: not sorted, and the area starts at A1
+                    const formula = this._formula(r, c), live = formula !== null && !this._perm && a.r1 === 0 && a.c1 === 0;
+                    const result = formula !== null ? this._atSource(this._src(r, c), c) : null;
+                    const value = formula !== null ? (isError(result) ? result.code : result) : this._value(r, c);
                     const border = { t: edge(this._edges.h, r + ":" + c), l: edge(this._edges.v, r + ":" + c), b: edge(this._edges.h, (r + 1) + ":" + c), r: edge(this._edges.v, r + ":" + (c + 1)) };
                     const hasBorder = !!(border.t || border.l || border.b || border.r);
                     const fill = cssToArgb(f.fill);
@@ -1271,7 +1404,9 @@ export const dataGrid = defineUI({
                     if (empty && !fill && !hasBorder) continue;
                     let kind = null, v = value, fmt = "";
                     if (!empty) {
-                        if (spec.type === "boolean") { kind = "b"; v = value === true || value === "true" || value === 1; }
+                        if (formula !== null && spec.type === "date" && typeof value === "number") { kind = "n"; v = value; fmt = spec.format === "date" ? "yyyy-mm-dd" : spec.format === "time" ? "hh:mm:ss" : "yyyy-mm-dd hh:mm:ss"; }
+                        else if (formula !== null && typeof value === "boolean") { kind = "b"; v = value; }
+                        else if (spec.type === "boolean") { kind = "b"; v = value === true || value === "true" || value === 1; }
                         else if (spec.type === "date" && toDate(value)) { kind = "n"; v = excelSerial(toDate(value)); fmt = spec.format === "date" ? "yyyy-mm-dd" : spec.format === "time" ? "hh:mm:ss" : "yyyy-mm-dd hh:mm:ss"; }
                         else if ((spec.type === "number" || spec.type === "progress" || spec.type === "general") && typeof value === "number" && isFinite(value)) { kind = "n"; fmt = spec.type === "number" ? numberFormat(spec.decimals, spec.suffix) : ""; }
                         else { kind = "s"; v = displayText(spec, value); }
@@ -1280,7 +1415,9 @@ export const dataGrid = defineUI({
                     const size = Number(f.fontSize);
                     const font = { b: f.bold === true, i: f.italic === true, u: f.underline === true, s: f.strike === true, sz: isFinite(size) && size >= 6 ? Math.round(size * 0.75 * 2) / 2 : 0, color: cssToArgb(f.color), name: family || "" };
                     const h = f.align === "left" || f.align === "center" || f.align === "right" ? f.align : (kind === "n" ? "right" : defaultAlign(spec.type) === "left" ? "" : defaultAlign(spec.type));
-                    model.cells.push({ r: r - r0, c: c - c0, kind, v, fmt, font, fill, border, align: { h, v: f.valign === "top" ? "top" : f.valign === "bottom" ? "bottom" : "center", wrap: f.wrap === true } });
+                    const errored = formula !== null && isError(result);
+                    if (errored) kind = "e";
+                    model.cells.push({ r: r - r0, c: c - c0, kind, v, fmt, formula: live ? shiftFormula(formula, -r0, -c0) : undefined, font, fill, border, align: { h, v: f.valign === "top" ? "top" : f.valign === "bottom" ? "bottom" : "center", wrap: f.wrap === true } });
                 }
             }
             for (let c = c0; c <= c1; c++) { const w = this._widthOf(c); if (w !== dd.col.width) model.cols[c - c0] = w; }
@@ -1343,16 +1480,20 @@ export const dataGrid = defineUI({
 
         getData() {
             const keys = new Set([...this._cells.keys(), ...this._populated.map.keys(), ...this._edits.keys()]);
-            const cells = {};
+            const cells = {}, formulas = {};
             let r1 = Infinity, c1 = Infinity, r2 = -1, c2 = -1;
             keys.forEach((k) => {
                 const [r, c] = k.split(",").map(Number);
-                const v = valueAt(this._layers(), r, c);
+                // a formula gives its result in cells and its text in formulas
+                const f = this._formulaAt(r, c);
+                const raw = valueAt(this._layers(), r, c);
+                const v = f !== null ? this._atSource(r, c) : raw;
                 if (v === null || v === undefined || v === "") return;
-                cells[addressOf(r, c)] = v;
+                cells[addressOf(r, c)] = isError(v) ? v.code : v;
+                if (f !== null) formulas[addressOf(r, c)] = f;
                 if (r < r1) r1 = r; if (r > r2) r2 = r; if (c < c1) c1 = c; if (c > c2) c2 = c;
             });
-            this.fire("data", { cells, range: r2 < 0 ? "" : rangeText({ r1, c1, r2, c2 }) });
+            this.fire("data", { cells, formulas, range: r2 < 0 ? "" : rangeText({ r1, c1, r2, c2 }) });
         }
     }
 });
