@@ -13,7 +13,7 @@ function load(file) {
     const names = [...src.matchAll(/^export (?:var|let|const|function|class) (\w+)/gm)].map((m) => m[1]);
     return new Function(src.replace(/^export /gm, '') + '\nreturn {' + names.join(',') + '};')();
 }
-const Col = load('columns.js'), Rows = load('rows.js'), L = load('layout.js'), W = load('window.js'), St = load('stage.js'), Sel = load('selection.js');
+const Col = load('columns.js'), Rows = load('rows.js'), L = load('layout.js'), W = load('window.js'), St = load('stage.js'), Sel = load('selection.js'), D = load('design.js');
 
 let passed = 0;
 function ok(label, fn) { fn(); passed++; console.log('✔ ' + label); }
@@ -339,6 +339,89 @@ ok('rangeToTsv: tab between cells, new line between rows, tabs / new lines insid
     const v = (r, c) => (r === 0 && c === 1 ? 'a\tb\nc' : r + ',' + c);
     assert.strictEqual(Sel.rangeToTsv({ r1: 0, c1: 0, r2: 1, c2: 1 }, v), '0,0\ta b c\n1,0\t1,1');
     assert.strictEqual(Sel.rangeToTsv(null, v), '');
+});
+
+// ---- the Edit grid dialog's operations ------------------------------------------------------------------------
+
+ok('sampleRows: a value of each column type, deterministic, matching the options of a select / badge', () => {
+    const cols = Col.columnsOf([{ key: 'a' }, { key: 'n', type: 'number' }, { key: 'b', type: 'boolean' }, { key: 's', type: 'badge', options: 'x:X:green, y:Y' }, { key: 'd', type: 'date' }, { key: 'p', type: 'progress' }, { key: 'l', type: 'link' }], []);
+    const rows = Col.sampleRows(cols, 5);
+    assert.strictEqual(rows.length, 5);
+    assert.ok(typeof rows[0].n === 'number' && typeof rows[0].b === 'boolean' && /^https:/.test(rows[0].l) && rows[0].p >= 0 && rows[0].p < 100);
+    assert.ok(rows.every((r) => ['x', 'y'].indexOf(r.s) !== -1), 'the badge values are among its options');
+    assert.ok(!isNaN(new Date(rows[0].d).getTime()));
+    assert.deepStrictEqual(Col.sampleRows(cols, 5), rows, 'the same every time');
+    assert.strictEqual(Col.sampleRows(cols).length, 8);
+});
+
+ok('a border rule of style "none" paints over the lines of the earlier rules', () => {
+    const e = L.buildEdges(L.normalizeBorders([{ r1: 0, c1: 0, r2: 3, c2: 3, sides: 'all' }, { r1: 1, c1: 1, r2: 2, c2: 2, sides: 'all', style: 'none' }]));
+    assert.ok(e.h.has('0:0') && e.v.has('0:0'), 'the outside stays');
+    assert.ok(!e.h.has('1:1') && !e.h.has('2:1') && !e.h.has('3:1') && !e.v.has('1:1') && !e.v.has('1:3'), 'inside the cleared range: none');
+    assert.ok(e.h.has('1:0') && e.h.has('1:3'), 'a line outside the cleared columns stays');
+});
+
+ok('design: merge replaces the merges it overlaps, a single cell merges nothing, unmerge takes the touched ones; nothing given is changed', () => {
+    const m0 = [{ r1: 0, c1: 0, r2: 1, c2: 1 }, { r1: 5, c1: 5, r2: 6, c2: 6 }];
+    const frozen = JSON.stringify(m0);
+    const m1 = D.mergeRange(m0, { r1: 1, c1: 1, r2: 2, c2: 2 });
+    assert.deepStrictEqual(m1, [{ r1: 5, c1: 5, r2: 6, c2: 6 }, { r1: 1, c1: 1, r2: 2, c2: 2 }]);
+    assert.strictEqual(JSON.stringify(m0), frozen, 'the input is untouched');
+    assert.deepStrictEqual(D.mergeRange(m0, { r1: 3, c1: 3, r2: 3, c2: 3 }), m0, 'one cell: nothing');
+    assert.deepStrictEqual(D.unmergeRange(m1, { r1: 2, c1: 2, r2: 2, c2: 2 }), [{ r1: 5, c1: 5, r2: 6, c2: 6 }]);
+    assert.strictEqual(D.mergesTouching(m1, { r1: 0, c1: 0, r2: 9, c2: 9 }).length, 2);
+});
+
+ok('design: crossesFreeze, freezeAt, describeRange, sameRange', () => {
+    assert.strictEqual(D.crossesFreeze({ r1: 0, c1: 0, r2: 2, c2: 0 }, { rows: 1, cols: 0 }), true);
+    assert.strictEqual(D.crossesFreeze({ r1: 1, c1: 0, r2: 2, c2: 3 }, { rows: 1, cols: 0 }), false);
+    assert.strictEqual(D.crossesFreeze({ r1: 0, c1: 0, r2: 0, c2: 5 }, { rows: 0, cols: 2 }), true);
+    assert.deepStrictEqual(D.freezeAt({ r1: 1, c1: 2, r2: 3, c2: 4 }, 'rows'), { rows: 4, cols: undefined });
+    assert.deepStrictEqual(D.freezeAt({ r1: 1, c1: 2, r2: 3, c2: 4 }, 'cols'), { rows: undefined, cols: 5 });
+    assert.strictEqual(D.describeRange({ r1: 1, c1: 0, r2: 3, c2: 2 }), 'Rows 2-4, columns 1-3 (9 cells)');
+    assert.strictEqual(D.describeRange({ r1: 0, c1: 0, r2: 0, c2: 0 }), 'Row 1, column 1 (1 cell)');
+    assert.ok(/Nothing selected/.test(D.describeRange(null)));
+    assert.ok(D.sameRange({ r1: 1, c1: 1, r2: 2, c2: 2 }, { r1: 1, c1: 1, r2: 2, c2: 2 }) && !D.sameRange(null, null));
+});
+
+ok('design: addBorder keeps the list as short as what the user did (an "all" over a range drops the rules inside it); clearBorders paints none', () => {
+    const spec = { style: 'solid', width: 1, color: 'bd' };
+    let b = D.addBorder([], { r1: 1, c1: 1, r2: 1, c2: 1 }, 'top', spec);
+    b = D.addBorder(b, { r1: 2, c1: 2, r2: 2, c2: 2 }, ['left', 'right'], spec);
+    assert.strictEqual(b.length, 2);
+    b = D.addBorder(b, { r1: 0, c1: 0, r2: 5, c2: 5 }, 'all', spec);
+    assert.strictEqual(b.length, 1, 'the two earlier rules were painted over');
+    b = D.clearBorders(b, { r1: 1, c1: 1, r2: 2, c2: 2 });
+    assert.strictEqual(b.length, 2);
+    assert.strictEqual(b[1].style, 'none');
+    const e = L.buildEdges(L.normalizeBorders(b));
+    assert.ok(e.h.has('0:0') && !e.h.has('1:1'), 'drawn, then cleared inside');
+});
+
+ok('design: addLock overrides the rules inside the range; resetLocks forgets them; lockState says locked / open / mixed / default', () => {
+    let l = D.addLock([], { r1: 0, c1: 0, r2: 0, c2: 0 }, true);
+    l = D.addLock(l, { r1: 0, c1: 0, r2: 4, c2: 0 }, false);
+    assert.strictEqual(l.length, 1, 'the cell rule was inside the new range');
+    assert.strictEqual(l[0].locked, false);
+    l = D.addLock(l, { r1: 2, c1: 0, r2: 2, c2: 0 }, true);
+    const ruleAt = (r, c) => L.lockRuleAt(L.normalizeLocks(l), r, c);
+    assert.strictEqual(D.lockState({ r1: 2, c1: 0, r2: 2, c2: 0 }, ruleAt), 'locked');
+    assert.strictEqual(D.lockState({ r1: 3, c1: 0, r2: 3, c2: 0 }, ruleAt), 'open');
+    assert.strictEqual(D.lockState({ r1: 1, c1: 0, r2: 3, c2: 0 }, ruleAt), 'mixed');
+    assert.strictEqual(D.lockState({ r1: 7, c1: 7, r2: 8, c2: 8 }, ruleAt), 'default');
+    assert.strictEqual(D.resetLocks(l, { r1: 0, c1: 0, r2: 9, c2: 9 }).length, 0);
+});
+
+ok('design: dropColumn takes the rules of that column, narrows the ones that span it, moves the later ones left; moveColumn maps the rules to where the columns went', () => {
+    const draft = { merges: [{ r1: 0, c1: 1, r2: 1, c2: 2 }, { r1: 0, c1: 3, r2: 1, c2: 3 }], borders: [{ r1: 0, c1: 2, r2: 0, c2: 2, sides: 'all', style: 'solid', width: 1, color: '' }], locks: [{ r1: 0, c1: 0, r2: 0, c2: 4, locked: true }] };
+    const d = D.dropColumn(draft, 2);
+    assert.deepStrictEqual(d.merges, [{ r1: 0, c1: 1, r2: 1, c2: 1 }, { r1: 0, c1: 2, r2: 1, c2: 2 }]);
+    assert.deepStrictEqual(d.borders, [], 'a rule only on that column goes');
+    assert.strictEqual(d.locks[0].c2, 3);
+    const m = D.moveColumn({ merges: [], borders: [], locks: [{ r1: 0, c1: 1, r2: 0, c2: 1, locked: true }] }, 1, 3);
+    assert.strictEqual(m.locks[0].c1, 3, 'the locked cell is in the column that moved');
+    const m2 = D.moveColumn({ merges: [], borders: [], locks: [{ r1: 0, c1: 2, r2: 0, c2: 2, locked: true }] }, 1, 3);
+    assert.strictEqual(m2.locks[0].c1, 1, 'a column between them shifts one place');
 });
 
 console.log('\n' + passed + ' passed');

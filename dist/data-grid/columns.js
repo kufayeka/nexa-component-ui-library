@@ -157,3 +157,33 @@ export function dateInputValue(col, value) {
     const day = d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
     return col.format === "date" ? day : day + "T" + pad(d.getHours()) + ":" + pad(d.getMinutes());
 }
+
+/**
+ * Sample rows that fit the columns the user designed, for the editor (the design canvas and the Edit grid dialog): a value of each column's type.
+ * Decoration only: the component never treats it as data.
+ */
+export function sampleRows(cols, count) {
+    const n = count || 8;
+    const rows = [];
+    const words = ["Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot", "Golf", "Hotel", "India", "Juliet"];
+    for (let i = 0; i < n; i++) {
+        const row = {};
+        cols.forEach((col, j) => {
+            let v;
+            switch (col.type) {
+                case "number": v = Math.round(((i * 37 + j * 11 + 13) % 1000)) / 10; break;
+                case "progress": v = ((i * 23 + j * 7 + 10) % 100); break;
+                case "boolean": v = (i + j) % 3 !== 0; break;
+                case "select": case "badge": v = col.options.length ? col.options[(i + j) % col.options.length].value : "option" + ((i + j) % 3 + 1); break;
+                case "date": v = new Date(2026, 0, 1 + i * 9 + j, 8 + (i % 10), (i * 7) % 60).toISOString(); break;
+                case "link": v = "https://example.com/" + (i + 1); break;
+                case "image": v = ""; break;
+                case "button": v = ""; break;
+                default: v = words[(i + j) % words.length] + " " + (i + 1);
+            }
+            row[col.key] = v;
+        });
+        rows.push(row);
+    }
+    return rows;
+}

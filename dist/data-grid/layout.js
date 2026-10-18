@@ -54,7 +54,7 @@ export function isCovered(merges, r, c) {
 
 // ---- borders -------------------------------------------------------------------------------------------
 
-const STYLES = ["solid", "dashed", "dotted", "double"];
+const STYLES = ["solid", "dashed", "dotted", "double", "none"];   // "none" paints over: it takes the lines off
 const SHORT_COLORS = { bd: "var(--bd)", "bd-strong": "var(--bd-strong)", fg: "var(--fg)", "fg-muted": "var(--fg-muted)", primary: "var(--cp-solid)", error: "var(--err)" };
 
 /** A border colour: a short name of the theme ("bd", "bd-strong", "fg", "primary", "error") or any CSS colour. */
@@ -67,7 +67,7 @@ export function resolveColor(c) {
 /**
  * The border rules, cleaned. A rule is { r1, c1, r2, c2, sides, style, width, color }; `sides` is a list of any of
  * "top" "right" "bottom" "left" (the outside of the range) and "inner-h" "inner-v" (the lines between its cells), or "all" / "outer" / "inner".
- * A rule that is not usable is dropped.
+ * A rule that is not usable is dropped. A rule of style "none" takes the lines of the earlier rules off (rules are painted in order).
  */
 export function normalizeBorders(list) {
     const out = [];
@@ -102,15 +102,16 @@ export function buildEdges(rules) {
     rules.forEach((b) => {
         const spec = { style: b.style, width: b.width, color: b.color };
         const has = (s) => b.sides.indexOf(s) !== -1;
+        const put = (map, key) => { if (spec.style === "none") map.delete(key); else map.set(key, spec); };
         for (let c = b.c1; c <= b.c2; c++) {
-            if (has("top")) h.set(b.r1 + ":" + c, spec);
-            if (has("bottom")) h.set((b.r2 + 1) + ":" + c, spec);
-            if (has("inner-h")) for (let r = b.r1 + 1; r <= b.r2; r++) h.set(r + ":" + c, spec);
+            if (has("top")) put(h, b.r1 + ":" + c);
+            if (has("bottom")) put(h, (b.r2 + 1) + ":" + c);
+            if (has("inner-h")) for (let r = b.r1 + 1; r <= b.r2; r++) put(h, r + ":" + c);
         }
         for (let r = b.r1; r <= b.r2; r++) {
-            if (has("left")) v.set(r + ":" + b.c1, spec);
-            if (has("right")) v.set(r + ":" + (b.c2 + 1), spec);
-            if (has("inner-v")) for (let c = b.c1 + 1; c <= b.c2; c++) v.set(r + ":" + c, spec);
+            if (has("left")) put(v, r + ":" + b.c1);
+            if (has("right")) put(v, r + ":" + (b.c2 + 1));
+            if (has("inner-v")) for (let c = b.c1 + 1; c <= b.c2; c++) put(v, r + ":" + c);
         }
     });
     return { h, v };

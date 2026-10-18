@@ -7,7 +7,9 @@
 // (test/data-grid-pure.test.js). This file is the view: it reads the props, keeps the rows, draws the window and handles the user.
 import { html, css, nothing, theme } from "../../../nexa-sdk/nexa-component-sdk.js";
 import { BASE_CSS, UIElement, PREFIX, part, sizeProp, paletteProp, radiusProp, icon, defineUI } from "../core.js";
-import { COLUMN_TYPES, columnsOf, displayText, badgePalette, coerceEdit, dateInputValue, EDITABLE_TYPES } from "./columns.js";
+import { columnsOf, displayText, badgePalette, coerceEdit, dateInputValue, sampleRows, EDITABLE_TYPES } from "./columns.js";
+import { COLUMN_FIELDS } from "./column-fields.js";
+import { openGridEditor, summaryOf } from "./editor.js";
 import { normalizeData, createStore, storeSet, storePatch, storeUpsert, storeAppend, storeRemove, positionOf, viewIndex, compileFilter, nextSort } from "./rows.js";
 import { normalizeFreeze, normalizeMerges, normalizeBorders, buildEdges, boxBorders, normalizeLocks, cellEditable, mergeOf, isCovered } from "./layout.js";
 import { uniformAxis, sizesAxis, visibleRange, scrollToShow } from "./window.js";
@@ -32,6 +34,8 @@ const SAMPLE_ROWS = [
     { id: "P-108", name: "Packer", status: "running", temp: 36.0, enabled: true, load: 59 }
 ];
 
+const SAMPLE_MARK = {};      // stands for "the sample rows are loaded" in _lastData
+
 const safeUrl = (v) => { const t = String(v === undefined || v === null ? "" : v).trim(); return /^(https?:|mailto:|tel:|\/|\.\/|#|data:image\/)/i.test(t) ? t : ""; };
 const safeName = (n) => String(n || "").replace(/[^A-Za-z0-9_-]/g, "");
 const copyRow = (row) => Object.assign({}, row);
@@ -54,6 +58,7 @@ const DATA_GRID_CSS = css`
     .cell, .head { position: absolute; box-sizing: border-box; overflow: hidden; display: flex; align-items: center; padding: 0 12px; gap: 6px;
         border-right: 1px solid var(--bd); border-bottom: 1px solid var(--bd); background: var(--bg); white-space: nowrap; }
     .cell.alt { background: var(--bg-subtle); }
+    .cell.hatch { background-image: repeating-linear-gradient(135deg, transparent 0 5px, var(--bd) 5px 6px); }
     .cell:hover { background: var(--bg-muted); }
     .cell.sel { background: var(--cp-subtle, #d0e2ff); }
     .cell.focus { outline: 2px solid var(--ring); outline-offset: -2px; z-index: 1; }
@@ -103,27 +108,6 @@ const DATA_GRID_CSS = css`
 
 const textProp = (label, d, group, extra) => Object.assign({ type: "string", default: d, label, group: group || "Data" }, extra || {});
 
-const COLUMN_FIELDS = {
-    key: { type: "string", label: "Field (key)", default: "", bindable: false, help: "The field of each row this column shows." },
-    label: { type: "string", label: "Title", default: "" },
-    type: { type: "enum", label: "Cell type", default: "text", options: COLUMN_TYPES.map((t) => ({ value: t, label: t })), style: "select", bindable: false },
-    width: { type: "number", label: "Width", default: 140, min: 30, unit: "px", section: "Layout" },
-    align: { type: "enum", label: "Align", default: "left", options: ["left", "center", "right"], style: "segmented", section: "Layout" },
-    editable: { type: "boolean", label: "Can be edited (when the grid is editable)", default: true, section: "Behaviour" },
-    sortable: { type: "boolean", label: "Can be sorted", default: true, section: "Behaviour" },
-    filterable: { type: "boolean", label: "Can be filtered", default: true, section: "Behaviour" },
-    hidden: { type: "boolean", label: "Hidden", default: false, section: "Behaviour" },
-    decimals: { type: "number", label: "Decimals", default: "", min: 0, max: 10, section: "Format", visibleWhen: (c) => c.type === "number" },
-    suffix: { type: "string", label: "Unit / suffix", default: "", section: "Format", visibleWhen: (c) => c.type === "number" },
-    format: { type: "enum", label: "Date format", default: "datetime", options: ["datetime", "date", "time"], section: "Format", visibleWhen: (c) => c.type === "date" },
-    options: { type: "string", label: "Options", default: "", section: "Format", visibleWhen: (c) => c.type === "select" || c.type === "badge",
-        help: "Comma separated: value, or value:Label, or (badge) value:Label:palette. Example: on:Running:green, off:Stopped:gray" },
-    max: { type: "number", label: "Full bar at", default: 100, min: 1, section: "Format", visibleWhen: (c) => c.type === "progress" },
-    buttonLabel: { type: "string", label: "Button text", default: "", section: "Format", visibleWhen: (c) => c.type === "button" },
-    action: { type: "string", label: "Action name", default: "", section: "Format", visibleWhen: (c) => c.type === "button",
-        help: "Sent with On Button Click; empty = the field name." }
-};
-
 export const dataGrid = defineUI({
     id: PREFIX + "data-grid",
     label: "Data Grid",
@@ -134,8 +118,12 @@ export const dataGrid = defineUI({
     help: "A grid for data that comes in as messages: typed cells (text, number, checkbox, choice, date, badge, progress, link, image, button, input), merged cells, frozen rows and columns, borders, sorting, filtering, selection. Only the cells in view are drawn, so very large data stays smooth. Editable or read-only on the live page, with locks per column, row or cell.",
     version: 1,
     css: "",
-    groups: ["Data", "Columns", "Editing", "Layout", "Display", "Style"],
+    groups: ["Columns", "Data", "Editing", "Layout", "Display", "Style"],
     properties: {
+        editGrid: { type: "action", group: "Columns", label: "Edit grid",
+            info: (p) => summaryOf(p),
+            help: "Opens the grid with a toolbar: select cells and merge them, freeze rows and columns, draw borders, lock or open cells; design the columns beside it. Nothing changes until Apply.",
+            buttons: [{ label: "Edit grid…", icon: "fa fa-table", title: "Merge, freeze, borders, locks and columns, on the real grid", run: (p, api) => openGridEditor(p, api) }] },
         columns: { type: "list", default: [], group: "Columns", label: "Columns", noun: "column", itemLabel: "label",
             help: "Empty: the columns come from the data (the keys of the first rows).", item: { row: true, fields: COLUMN_FIELDS, create: (items) => ({ key: "field" + (items.length + 1), label: "Column " + (items.length + 1) }) } },
         rowKey: textProp("Row key (field)", "", "Data", { help: "The field that identifies a row (an id). With it a message can change one row without sending all of them. Empty = the position." }),
@@ -228,6 +216,7 @@ export const dataGrid = defineUI({
         _sample = false;
         _focusEdit = false;
         _colSig = null;
+        _sampleSig = "";
         _positional = false;      // a merge in the body pins the rows: no sorting or filtering
         _filterRow = false;
         _selRange = null;
@@ -252,9 +241,15 @@ export const dataGrid = defineUI({
                 this._lastData = incoming;
             } else if (this.isEditor) {
                 // the design canvas: sample rows, decoration only (they are never in the data, the events or an export)
+                // with columns designed, the sample has a value for each of them (so a column of buttons or badges shows what it will look like)
                 this._sample = true;
-                if (this._lastData !== SAMPLE_ROWS || rowKey !== this._lastRowKey) this._load(SAMPLE_ROWS, rowKey);
-                this._lastData = SAMPLE_ROWS;
+                const designed = Array.isArray(p.columns) && p.columns.length > 0;
+                const sig = designed ? JSON.stringify(p.columns) : "";
+                if (this._lastData !== SAMPLE_MARK || sig !== this._sampleSig || rowKey !== this._lastRowKey) {
+                    this._sampleSig = sig;
+                    this._load(designed ? sampleRows(columnsOf(p.columns, []), 8) : SAMPLE_ROWS, rowKey);
+                }
+                this._lastData = SAMPLE_MARK;
             } else if (rowKey !== this._lastRowKey) {
                 this._load(this._store.rows, rowKey);
             }
@@ -414,7 +409,8 @@ export const dataGrid = defineUI({
             const b = boxBorders(this._edges, r, c, r2, c2, this._rowCount, this._cols.length);
             const style = `left:${box.left}px;top:${box.top}px;width:${box.width}px;height:${box.height}px;` + Object.keys(b).map((k) => k.replace(/[A-Z]/g, (m) => "-" + m.toLowerCase()) + ":" + b[k]).join(";");
             const dirty = stageHas(this._stage, this._key(r), col.key);
-            const cls = ["cell", col.align, inSel ? "sel" : "", focus ? "focus" : "", editable ? "" : "locked", dirty ? "dirty" : "", r % 2 && !inSel ? "alt" : ""].filter(Boolean).join(" ");
+            const hatch = this.isEditor && this._mode() === "editable" && !editable && EDITABLE_TYPES.indexOf(col.type) !== -1;
+            const cls = ["cell", col.align, inSel ? "sel" : "", focus ? "focus" : "", editable ? "" : "locked", hatch ? "hatch" : "", dirty ? "dirty" : "", r % 2 && !inSel ? "alt" : ""].filter(Boolean).join(" ");
             return html`<div class=${cls} part="cell" data-r=${r} data-c=${c} style=${style}>${this._content(col, value, r, c, editable)}</div>`;
         }
 
@@ -493,6 +489,8 @@ export const dataGrid = defineUI({
 
         updated(changed) {
             super.updated(changed);
+            // the SDK turns pointer events off in editor mode so that the canvas takes the clicks; the Edit grid dialog hosts the grid to click on it
+            if (this.hasAttribute("data-interactive")) this.style.pointerEvents = "auto";
             const s = this.renderRoot.querySelector("[data-scroller]");
             if (s) {
                 const sbw = s.offsetWidth - s.clientWidth, sbh = s.offsetHeight - s.clientHeight;
@@ -535,6 +533,7 @@ export const dataGrid = defineUI({
             const sig = range ? [range.r1, range.c1, range.r2, range.c2].join(",") : "";
             if (sig === this._selSig) return;
             this._selSig = sig;
+            this.dispatchEvent(new CustomEvent("nexa-selection", { detail: { range }, bubbles: true, composed: true }));
             if (!range || !this._rowCount) { this.fire("selectionChange", { cell: null, range: null, rowKeys: [], rows: [] }); return; }
             const rowKeys = [], rows = [];
             for (let r = range.r1; r <= range.r2 && r < this._rowCount; r++) { rowKeys.push(this._key(r)); if (rows.length < MAX_ROWS_IN_EVENT) rows.push(this._rowObject(r)); }
@@ -610,7 +609,7 @@ export const dataGrid = defineUI({
         }
 
         _startEdit(r, c, firstChar) {
-            if (!this._editable(r, c)) return false;
+            if (this.isEditor || !this._editable(r, c)) return false;
             const col = this._cols[c], value = this._value(r, c);
             if (col.type === "boolean") { this._applyEdit(r, c, !(value === true || value === "true" || value === 1)); return true; }
             this._edit = { r, c, text: firstChar !== null ? firstChar : (value === null || value === undefined ? "" : String(value)) };

@@ -124,7 +124,8 @@ A grid for data that arrives as messages, the replacement of a plain table. Cate
 - **Actions:** `setData`, `upsertRows`, `patchRow` (`{ key, fields }` or a row with the Row key), `removeRow`, `appendRow`, `clear`, `setCell`, `selectCell`, `scrollToRow`, `save`, `discard`, `getData` (fires `On Data` with every row).
 - In the editor the grid shows sample rows with a **Sample data** chip: decoration for the design, never data. A page with no data is empty.
 - The model is plain functions in `dist/data-grid/` (columns, rows, layout, window, stage, selection), tested in Node: `node test/data-grid-pure.test.js`; the view is tested in Chrome: `node test/data-grid-browser.test.js`.
-- Not yet: the editor dialog (**Edit grid…**), grouped header cells, resizing columns by dragging, Excel import / export, validation, cells that render a template.
+- **Edit grid…** (the first row of the inspector) opens the real grid in a dialog with a toolbar: select cells (click, drag, Shift) and **Merge / Unmerge**, **Freeze** rows / columns down to the selection, **Lock / Open / Reset** cells (locked cells are hatched), **Borders** (all / outer / inner / one side / clear; style, width, colour); on the right the **Columns** (add, remove, move, every field of a column) and **Settings** (frozen rows and columns, row and header height, row numbers). The preview has sample rows that fit the columns. It edits a draft: **Apply** sets only the props that changed (`columns`, `merges`, `borders`, `locks`, `freezeRows`, `freezeCols`, `rowHeight`, `headerHeight`, `showRowNumbers`), **Cancel** sets nothing. A freeze line that would cut a merge takes it apart, and says so.
+- Not yet: grouped header cells, resizing columns by dragging, Excel import / export, validation, cells that render a template.
 
 ### Password Input (`nexa-ui-password-input`)
 

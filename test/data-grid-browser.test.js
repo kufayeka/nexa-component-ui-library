@@ -32,7 +32,8 @@ const COLS = [
 
 withHarness({
     mounts: { '/nexa-component-ui-library/vendor': path.join(__dirname, '..', 'dist') },
-    modules: ['/nexa-component-ui-library/vendor/ui-library.js']
+    modules: ['/nexa-component-ui-library/vendor/ui-library.js'],
+    width: 1400, height: 900          // the Edit grid dialog is wide (a real editor window is too)
 }, async ({ js, send, logs }) => {
     const settle = () => js('NexaTest.settle()');
     const wait = (ms) => js(`new Promise(function (r) { setTimeout(r, ${ms}); })`);
@@ -358,6 +359,86 @@ withHarness({
         })()`);
         for (const l of ['Columns', 'Row key (field)', 'Mode', 'Edits', 'Locked-row field', 'Frozen rows', 'Frozen columns', 'Row height', 'Show row numbers', 'Selection', 'Filtering (a box under each title)', 'Text when there is no data']) assert.ok(r.labels.includes(l), 'inspector: ' + l + ' in ' + r.labels.join(' | '));
         assert.ok(r.ids.some((id) => /^columns#2/.test(id)), 'a column is a row of the list');
+    });
+
+    await ok('the Edit grid dialog: select cells on the real grid, merge, freeze, lock, border, columns; Apply sets the changed props, Cancel sets nothing', async () => {
+        const dlg = (sel) => `document.querySelector("nexa-data-grid-editor ${sel}")`;
+        const prev = () => `${dlg('.dge-prev')}.firstElementChild.shadowRoot`;
+        const pcell = (r, c) => `${prev()}.querySelector('[data-r="${r}"][data-c="${c}"]')`;
+        const btn = (title) => `Array.from(document.querySelectorAll("nexa-data-grid-editor button")).filter(function (b) { return b.title === ${JSON.stringify(title)}; })[0]`;
+        const open = async (props) => {
+            await js(`window.__sets = []; NEXA.getComponent("nexa-ui-data-grid").nexa.props.editGrid.buttons[0].run(${JSON.stringify(props)}, { set: function (k, v) { window.__sets.push([k, v]); } })`);
+            await settle(); await wait(250);
+        };
+        const sets = () => js('window.__sets');
+        const press2 = async (label) => { await clickAt(`Array.from(document.querySelectorAll(".nx-dialog-foot button")).filter(function (b) { return b.textContent.trim() === ${JSON.stringify(label)}; })[0]`); await wait(100); };
+        const drag = async (from, to) => {
+            const a = await js(`(function () { var b = ${from}.getBoundingClientRect(); return { x: b.left + 20, y: b.top + b.height / 2 }; })()`);
+            const b = await js(`(function () { var b = ${to}.getBoundingClientRect(); return { x: b.left + 20, y: b.top + b.height / 2 }; })()`);
+            await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: a.x, y: a.y });
+            await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: a.x, y: a.y, button: 'left', buttons: 1, clickCount: 1 });
+            await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: b.x, y: b.y, buttons: 1 });
+            await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: b.x, y: b.y, button: 'left', buttons: 0, clickCount: 1 });
+            await settle(); await wait(120);
+        };
+        const cols = [{ key: 'name', label: 'Name', type: 'text' }, { key: 'qty', label: 'Qty', type: 'number' }, { key: 'st', label: 'State', type: 'badge', options: 'ok:OK:green, bad:Bad:red' }];
+
+        await open({ columns: cols });
+        assert.strictEqual(await js(dlg('.dge-prev') + ' ? 1 : 0'), 1, 'the dialog is open');
+        assert.ok((await js(`${prev()}.querySelectorAll("[data-r][data-c]").length`)) >= 24, 'the real grid with sample rows that fit the columns');
+        assert.strictEqual(await js(`${pcell(0, 2)}.querySelector(".badge") ? 1 : 0`), 1, 'a badge column shows badges in the sample');
+        assert.ok((await js(dlg('.dge-status') + '.textContent')).includes('Nothing selected'));
+        assert.ok(await js(btn('One box over the selected cells') + '.disabled'), 'no selection: Merge is off');
+
+        // select two rows x two columns, merge them
+        await drag(pcell(1, 0), pcell(2, 1));
+        assert.ok((await js(dlg('.dge-status') + '.textContent')).includes('Rows 2-3, columns 1-2 (4 cells)'), await js(dlg('.dge-status') + '.textContent'));
+        await clickAt(btn('One box over the selected cells'));
+        const box = await js(`(function () { var e = ${pcell(1, 0)}; return { w: e.offsetWidth, h: e.offsetHeight }; })()`);
+        assert.deepStrictEqual(box, { w: 280, h: 72 }, 'the preview draws the merge');
+        assert.ok((await js(dlg('.dge-status') + '.textContent')).includes('1 merged box here'));
+        // freeze down to row 2 (a cell beside the merge): the line would run through the merge, which is taken apart, and the user is told
+        await drag(pcell(1, 2), pcell(1, 2));
+        await clickAt(btn("Keep the rows down to the selection's last row in place"));
+        assert.ok((await js(dlg('.dge-note') + ' ? ' + dlg('.dge-note') + '.textContent : ""')).includes('taken apart'), 'freezing through a merge takes it apart, and says so');
+        assert.strictEqual(await js(`${pcell(1, 0)}.offsetWidth`), 140, 'the merge is gone');
+        // merge across the frozen line is refused
+        await drag(pcell(1, 0), pcell(2, 1));
+        await clickAt(btn('One box over the selected cells'));
+        assert.ok((await js(dlg('.dge-note') + '.textContent')).includes('cannot cross the frozen line'));
+        // unfreeze, lock a cell, border it
+        await clickAt(dlg('.dge-bar .dge-grp:nth-child(2) button:last-of-type'));
+        await drag(pcell(3, 1), pcell(3, 1));
+        await clickAt(btn('These cells cannot be edited (the page\'s editable mode)'));
+        assert.strictEqual(await js(`${pcell(3, 1)}.classList.contains("hatch")`), true, 'a locked cell is hatched in the preview');
+        assert.ok((await js(dlg('.dge-status') + '.textContent')).includes('locks: locked'));
+        await clickAt(btn('Only the box around the selection'));
+        assert.strictEqual(await js(`getComputedStyle(${pcell(3, 1)}).borderTopStyle`), 'solid');
+        // columns: add one, change its title
+        await clickAt(`Array.from(${dlg('.dge-pane')}.querySelectorAll("button")).filter(function (b) { return b.textContent.trim() === "Add column"; })[0]`);
+        assert.ok((await js(`${dlg('.dge-cols')}.children.length`)) === 4, 'a fourth column');
+        await press2('Apply');
+        const s = await sets();
+        const keys = s.map((x) => x[0]).sort();
+        assert.deepStrictEqual(keys, ['borders', 'columns', 'locks'], 'only what changed is set: ' + keys.join(','));
+        const byKey = Object.fromEntries(s);
+        assert.strictEqual(byKey.columns.length, 4);
+        assert.deepStrictEqual(byKey.locks, [{ r1: 3, c1: 1, r2: 3, c2: 1, locked: true }]);
+        assert.deepStrictEqual(byKey.borders.map((b) => [b.r1, b.c1, b.sides, b.style]), [[3, 1, 'outer', 'solid']]);
+
+        // Cancel sets nothing
+        await open({ columns: cols });
+        await drag(pcell(1, 0), pcell(2, 1));
+        await clickAt(btn('One box over the selected cells'));
+        await press2('Cancel');
+        assert.deepStrictEqual(await sets(), [], 'Cancel changes nothing');
+        assert.strictEqual(await js(dlg('.dge-prev') + ' ? 1 : 0'), 0, 'the dialog is closed');
+    });
+
+    await ok('the Edit grid row of the inspector says what the grid has', async () => {
+        const r = await js(`(function () { var p = NEXA.getComponent("nexa-ui-data-grid").nexa.props.editGrid; return [p.info({ columns: [{ key: "a" }, { key: "b" }], merges: [{}], freezeRows: 1, locks: [{}, {}] }), p.info({})]; })()`);
+        assert.strictEqual(r[0], '2 columns, 1 merged, frozen, 2 lock rules');
+        assert.strictEqual(r[1], 'columns from the data');
     });
 
     await ok('light and dark: the grid reads the theme (no fixed colours), and a screenshot of it', async () => {
