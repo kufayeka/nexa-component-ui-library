@@ -215,7 +215,7 @@ withHarness({
     });
 
     await ok('staged edits: a change waits (marked), Save sends only the changed cells and makes it final, Discard throws it away', async () => {
-        await mount('stg', { mode: 'editable', editMode: 'staged', cells: { A1: 'one', A2: 'two' } });
+        await mount('stg', { mode: 'editable', saveMode: 'bar', cells: { A1: 'one', A2: 'two' } });
         await clickAt(cell('stg', 0, 0), 2); await typeText('!'); await press('Enter');
         await clickAt(cell('stg', 2, 0), 2); await typeText('?'); await press('Enter');
         assert.strictEqual(await text('stg', 0, 0), 'one!');
@@ -790,6 +790,37 @@ withHarness({
         assert.deepStrictEqual(s.cells, { A1: 'c', B1: 3, A2: 'b', B2: 2, A3: 'a', B3: 1 });
     });
 
+    await ok('saving: at once, On Save after each cell (a paste: once); with a message, the changes wait without a box until the action Save, and Discard throws them away', async () => {
+        await mount('sv', { mode: 'editable', rows: 20, cells: { A1: 'one' } });
+        await clickAt(cell('sv', 0, 0), 2); await typeText('!'); await press('Enter');
+        let s = await events('sv', 'save');
+        assert.deepStrictEqual(s.map((x) => x.cells.map((c) => [c.address, c.old, c.new])), [[['A1', 'one', 'one!']]], 'at once: one On Save for the cell');
+        await clickAt(cell('sv', 2, 2));
+        await clip('sv', 'paste', { 'text/plain': 'a\tb\nc\td' });
+        s = await events('sv', 'save');
+        assert.strictEqual(s.length, 2, 'a paste is one more On Save');
+        assert.strictEqual(s[1].cells.length, 4, 'with all its cells');
+        // by message
+        await mount('sv2', { mode: 'editable', saveMode: 'message', cells: { A1: 'one' } });
+        await clickAt(cell('sv2', 0, 0), 2); await typeText('?'); await press('Enter');
+        assert.deepStrictEqual(await events('sv2', 'save'), [], 'nothing is saved yet');
+        assert.strictEqual((await events('sv2', 'cellChange')).length, 1, 'but the change is told');
+        assert.ok((await js(cell('sv2', 0, 0) + '.className')).includes('dirty'), 'and marked');
+        assert.strictEqual(await js(q('sv2', '.staged') + ' ? 1 : 0'), 0, 'no box');
+        await js('NexaTest.invoke("sv2", "save")'); await settle();
+        assert.deepStrictEqual((await events('sv2', 'save'))[0].cells.map((c) => [c.address, c.old, c.new]), [['A1', 'one', 'one?']]);
+        assert.ok(!(await js(cell('sv2', 0, 0) + '.className')).includes('dirty'));
+        await clickAt(cell('sv2', 0, 0), 2); await typeText('#'); await press('Enter');
+        await js('NexaTest.invoke("sv2", "discard")'); await settle();
+        assert.strictEqual(await text('sv2', 0, 0), 'one?', 'discarded: what was saved is shown');
+        assert.strictEqual((await events('sv2', 'discard'))[0].count, 1);
+        // the small box: On Save only on the button
+        await mount('sv3', { mode: 'editable', saveMode: 'bar', cells: { A1: 'one' } });
+        await clickAt(cell('sv3', 0, 0), 2); await typeText('x'); await press('Enter');
+        assert.deepStrictEqual(await events('sv3', 'save'), []);
+        assert.strictEqual(await js(q('sv3', '.staged') + ' ? 1 : 0'), 1, 'the box');
+    });
+
     await ok('the Edit grid row of the inspector says what the sheet has', async () => {
         const r = await js(`(function () { var p = NEXA.getComponent("nexa-ui-data-grid").nexa.props.editGrid; return [p.info({ rows: 50, cols: 10, cells: { A1: 1, B1: 2 }, cellRules: [{}], merges: ["A1:B2"], populate: [{}, {}], locks: [{}] }), p.info({})]; })()`);
         assert.strictEqual(r[0], '50 rows x 10 columns, 2 cells typed, 1 type / style rule, 2 populate rules, 1 merged, 1 lock rule');
@@ -804,7 +835,7 @@ withHarness({
             t.destroy();
             return labels;
         })()`);
-        for (const l of ['Rows', 'Columns', 'Column width', 'Row height', 'Area shown', 'Frozen rows', 'Frozen columns', 'Populate from messages', 'Mode', 'Edits', 'Show the column letters and row numbers', 'Show the grid lines', 'Selection']) assert.ok(r.includes(l), 'inspector: ' + l + ' in ' + r.join(' | '));
+        for (const l of ['Rows', 'Columns', 'Column width', 'Row height', 'Area shown', 'Frozen rows', 'Frozen columns', 'Populate from messages', 'Mode', 'Saving', 'Show the column letters and row numbers', 'Show the grid lines', 'Selection']) assert.ok(r.includes(l), 'inspector: ' + l + ' in ' + r.join(' | '));
     });
 
     await ok('light and dark: the grid reads the theme (no fixed colours), and a screenshot of it', async () => {

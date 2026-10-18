@@ -148,8 +148,9 @@ export const dataGrid = defineUI({
             item: { row: true, fields: POPULATE_SCHEMA, create: (items) => ({ at: "A1", direction: "down", enabled: true }) } },
         mode: { type: "enum", default: "readonly", group: "Editing", label: "Mode", style: "segmented", options: [{ value: "readonly", label: "Read only" }, { value: "editable", label: "Editable" }],
             help: "Read only: nothing can be edited, whatever is unlocked. Editable: every cell can be, except the ones a lock rule locks. Bind it to change it while the page runs." },
-        editMode: { type: "enum", default: "instant", group: "Editing", label: "Edits", style: "segmented", options: [{ value: "instant", label: "Instant" }, { value: "staged", label: "Staged (Save / Discard)" }],
-            help: "Instant: every change goes out at once. Staged: changes wait, marked in the cell, until Save (the changed cells go out) or Discard. What the user types is kept in the page until it is reloaded." },
+        saveMode: { type: "enum", default: "instant", group: "Editing", label: "Saving", style: "select",
+            options: [{ value: "instant", label: "At once: Enter saves the cell" }, { value: "bar", label: "A small box with Save and Discard" }, { value: "message", label: "When a message says (the action Save)" }],
+            help: "What the user types is told to Logic with On Cell Change in every mode. On Save is the one that means \"keep this\": at once, after each cell (a paste or a fill: once, with all its cells); with the box, when the user presses Save; with a message, when the action Save arrives (the action Discard throws the waiting changes away). In the last two the changed cells wait, marked in the corner, and what the user types stays in the page until it is reloaded." },
         showHeaders: { type: "boolean", default: true, group: "Display", label: "Show the column letters and row numbers" },
         showGridLines: { type: "boolean", default: true, group: "Display", label: "Show the grid lines" },
         selection: { type: "enum", default: "range", group: "Display", label: "Selection", style: "segmented", options: [{ value: "none", label: "None" }, { value: "cell", label: "Cell" }, { value: "range", label: "Range" }] },
@@ -165,8 +166,8 @@ export const dataGrid = defineUI({
     },
     events: {
         cellChange: { label: "On Cell Change (the user edited a cell)", payload: { address: "string", old: "any", new: "any", staged: "boolean" } },
-        save: { label: "On Save (staged mode)", payload: { cells: "array" } },
-        discard: { label: "On Discard (staged mode)", payload: { count: "number" } },
+        save: { label: "On Save (the cells to keep: at once, with the box's Save, or the action Save)", payload: { cells: "array" } },
+        discard: { label: "On Discard (the waiting changes were thrown away)", payload: { count: "number" } },
         selectionChange: { label: "On Selection Change", payload: { range: "string", address: "string", values: "array" } },
         cellClick: { label: "On Cell Click", payload: { address: "string", value: "any" } },
         buttonClick: { label: "On Button Click", payload: { address: "string", action: "string", value: "any" } },
@@ -182,8 +183,8 @@ export const dataGrid = defineUI({
         selectCell: { label: "Select a cell", help: "Selects a cell by its address.", example: "\"C5\"  or  { address: \"C5\" }" },
         scrollToCell: { label: "Scroll to a cell", help: "Brings a cell into view.", example: "\"C500\"  or  { address: \"C500\" }" },
         sortColumn: { label: "Sort a column of the area to sort", help: "Sorts the view by a column; direction \"asc\", \"desc\", or \"\" for the order of the sheet.", example: "{ column: \"B\", direction: \"desc\" }" },
-        save: { label: "Save the staged edits", help: "Staged mode: sends the changed cells (On Save) and makes the edits final." },
-        discard: { label: "Discard the staged edits", help: "Staged mode: throws the waiting edits away." },
+        save: { label: "Save the staged edits", help: "With the box or by message: sends the changed cells (On Save) and makes the changes final." },
+        discard: { label: "Discard the staged edits", help: "With the box or by message: throws the waiting changes away." },
         getData: { label: "Send all the values out", help: "Fires On Data with every cell that has a value, by address." }
     },
     parts: {
@@ -333,7 +334,8 @@ export const dataGrid = defineUI({
         }
 
         _mode() { return (this.p || {}).mode === "editable" ? "editable" : "readonly"; }
-        _staged() { return (this.p || {}).editMode === "staged"; }
+        // changes wait (marked, not yet saved) with the small box and with the message; at once, they do not
+        _staged() { const m = (this.p || {}).saveMode; return m === "bar" || m === "message"; }
         _designing() { return this.isEditor && this.hasAttribute("data-interactive"); }
 
         _layers() { return { cells: this._cells, populated: this._populated.map, edits: this._edits }; }
@@ -615,7 +617,7 @@ export const dataGrid = defineUI({
             const bl = g.FC ? this._pane(g, g.rows.from, g.rows.to, 0, g.FC, false, true) : [];
             const br = this._pane(g, g.rows.from, g.rows.to, Math.max(g.cols.from, g.FC), g.cols.to, false, false);
             const frozenTop = g.hh + g.frozenRowsH;
-            const staged = this._staged() && stageCount(this._stage) > 0;
+            const staged = (this.p || {}).saveMode === "bar" && stageCount(this._stage) > 0;
             return html`<div class="grid ${p.showGridLines === false ? "nolines" : ""}" part="root" tabindex="0" role="grid" aria-rowcount=${g.nR} aria-colcount=${g.nC}
                 @mousedown=${this._onMouseDown} @mouseover=${this._onMouseOver} @click=${this._onClick} @dblclick=${this._onDblClick} @keydown=${this._onKey} @copy=${this._onCopy} @cut=${this._onCut} @paste=${this._onPaste} @change=${this._onChange} @focusout=${this._onFocusOut}>
                 <div class="pane" style="left:0;top:0;width:${g.frozenW}px;height:${frozenTop}px"><div class="inner">${headTL}${tl}</div></div>
@@ -971,6 +973,7 @@ export const dataGrid = defineUI({
             this._dataVersion++;
             this.requestUpdate();
             this.fire("cellChange", { address, old, new: value, staged: this._staged() });
+            if (!this._staged()) this.fire("save", { cells: [{ address, old, new: value }] });
         }
 
         _focusGrid() { const g = this.renderRoot.querySelector(".grid"); if (g) g.focus({ preventScroll: true }); }
@@ -1131,6 +1134,7 @@ export const dataGrid = defineUI({
             this._dataVersion++;
             this.requestUpdate();
             changes.forEach((c) => this.fire("cellChange", c));
+            if (!this._staged() && changes.length) this.fire("save", { cells: changes.map((c) => ({ address: c.address, old: c.old, new: c.new })) });
         }
 
         // The fill handle was let go: the cells it passed get the values of the selection as a series (or copied, with Ctrl) and its styles repeated

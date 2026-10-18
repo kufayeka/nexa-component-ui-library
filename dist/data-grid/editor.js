@@ -147,7 +147,7 @@ defineInspectorWidget("nexa-data-grid-editor", ({ KitElement, html: h, nothing }
         // what the dialog needs the grid to do while designing: show the whole sheet, select ranges, show the locks; a populate rule has no value here
         // (its value is a binding, which only a page can resolve), so only its marker shows
         return Object.assign({}, this._draft, {
-            selection: "range", mode: "editable", editMode: "instant", viewArea: "", sortable: false,
+            selection: "range", mode: "editable", saveMode: "instant", viewArea: "", sortable: false,
             populate: (this._draft.populate || []).map((i) => Object.assign({}, i, { value: undefined }))
         });
     }
