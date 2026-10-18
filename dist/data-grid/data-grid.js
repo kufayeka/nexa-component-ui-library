@@ -178,7 +178,7 @@ export const dataGrid = defineUI({
     },
     actions: {
         setCell: { label: "Set one cell", help: "Puts a value in a cell, as if the user had typed it, but without an event. It lasts until the page is reloaded.", example: "{ address: \"B2\", value: 42 }" },
-        setRange: { label: "Fill cells from a cell on", help: "Lays a value down from a cell, like a populate rule: a list down or to the right, a list of lists as a block, a list of objects as a table.", example: "{ at: \"B2\", values: [[1, 2], [3, 4]], direction: \"down\" }" },
+        setRange: { label: "Fill cells from a cell on", help: "Lays a value down from a cell, like a populate rule: a list down or to the right, a list of lists as a block, a list of objects as a table. An element can be a cell object { value, fill, type, ... } that carries its own type and style.", example: "{ at: \"B2\", values: [[1, { value: 2, fill: \"red\" }], [3, 4]], direction: \"down\" }" },
         clearRange: { label: "Empty cells", help: "Empties the cells of a range.", example: "\"B2:D9\"  or  { range: \"B2:D9\" }" },
         selectCell: { label: "Select a cell", help: "Selects a cell by its address.", example: "\"C5\"  or  { address: \"C5\" }" },
         scrollToCell: { label: "Scroll to a cell", help: "Brings a cell into view.", example: "\"C500\"  or  { address: \"C500\" }" },
@@ -198,7 +198,7 @@ export const dataGrid = defineUI({
         _stage = createStage();
         _edits = new Map();         // what the user typed on the page: "r,c" -> value (kept until the page is reloaded, or a message fills the cell)
         _cells = new Map();         // what was typed in the design
-        _populated = { map: new Map(), blocks: [] };
+        _populated = { map: new Map(), styles: new Map(), blocks: [] };
         _popConfig = "";
         _popValues = [];
         _rules = [];
@@ -229,6 +229,7 @@ export const dataGrid = defineUI({
         _editFit = null;            // { r, h }: the row of the cell being typed in grows with the text
         _measure = null;
         _fill = null;               // { source, plan } while the fill handle is dragged
+        _actionStyles = new Map();  // "r,c" -> the type / style fields a cell object of the action Fill cells set
         _sortArea = null;           // the rows under the heading and the columns of the area to sort: { r1, r2, c1, c2 }
         _sortState = null;          // what the user chose: { c, dir }
         _perm = null;               // the rows of the area in the order shown: the place i of the view shows the row perm[i] of the area
@@ -324,13 +325,13 @@ export const dataGrid = defineUI({
         // The populate rules put values in the sheet. A new message gives new values: they cover what the user typed on the page in the cells they fill.
         _preparePopulate(p, size) {
             const items = Array.isArray(p.populate) ? p.populate : [];
-            const config = JSON.stringify(items.map((i) => [i.at, i.enabled, i.direction, i.header, i.fields, i.limit])) + "|" + size.rows + "," + size.cols;
+            const config = JSON.stringify(items.map((i) => Object.keys(i).filter((k) => k !== "value").sort().map((k) => [k, i[k]]))) + "|" + size.rows + "," + size.cols;
             const same = config === this._popConfig && items.length === this._popValues.length && items.every((i, k) => i.value === this._popValues[k]);
             if (same) return;
             this._popConfig = config;
             this._popValues = items.map((i) => i.value);
             this._populated = populatedCells(items, size.rows, size.cols);
-            this._populated.map.forEach((v, k) => { this._edits.delete(k); stageDrop(this._stage, k); });
+            this._populated.map.forEach((v, k) => { this._edits.delete(k); this._actionStyles.delete(k); stageDrop(this._stage, k); });
         }
 
         _mode() { return (this.p || {}).mode === "editable" ? "editable" : "readonly"; }
@@ -341,7 +342,14 @@ export const dataGrid = defineUI({
         _layers() { return { cells: this._cells, populated: this._populated.map, edits: this._edits }; }
         _baseValue(r, c) { return valueAt(this._layers(), this._src(r, c), c); }
         _value(r, c) { return stageValue(this._stage, cellKey(this._src(r, c), c), "v", this._baseValue(r, c)); }
-        _fields(r, c) { return fieldsAt(this._rules, r, c); }
+        // the type and the style of a cell, from the lowest layer to the highest: the rules of its ranges; what a populate rule gives the cells it fills, and over it
+        // what a cell object of the message says; what the action Fill cells set. The last two belong to the data, so they follow it when the view is sorted.
+        _fields(r, c) {
+            const base = fieldsAt(this._rules, r, c);
+            const k = cellKey(this._src(r, c), c);
+            const populated = this._populated.styles.get(k), set = this._actionStyles.get(k);
+            return populated || set ? Object.assign({}, base, populated, set) : base;
+        }
         _locked(r, c) { return !cellEditable(this._mode(), this._locks, r, c); }
         // the Edit grid dialog types into every cell (it designs the content); a page types where the mode and the locks allow, never into a button
         _editable(r, c) {
@@ -1187,8 +1195,13 @@ export const dataGrid = defineUI({
             const p = params && typeof params === "object" ? params : {};
             const at = parseAddress(p.at);
             if (!at) return;
-            const done = expandPopulate(p.values, { at, direction: p.direction === "right" ? "right" : "down", header: p.header === true, fields: parseFields(p.fields), limit: p.limit }, this._size);
-            done.cells.forEach((x) => { this._edits.set(cellKey(x.r, x.c), x.v); stageDrop(this._stage, cellKey(x.r, x.c)); });
+            const done = expandPopulate(p.values, { at, direction: p.direction === "right" ? "right" : "down", header: p.header === true, fields: parseFields(p.fields), limit: p.limit, shape: p.shape, cellKeys: RULE_FIELDS }, this._size);
+            done.cells.forEach((x) => {
+                const key = cellKey(x.r, x.c);
+                if (x.v !== undefined) this._edits.set(key, x.v);
+                if (x.f && Object.keys(x.f).length) this._actionStyles.set(key, x.f); else this._actionStyles.delete(key);
+                stageDrop(this._stage, key);
+            });
             this._dataVersion++;
             this.requestUpdate();
         }

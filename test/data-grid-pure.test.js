@@ -241,6 +241,52 @@ ok('populate: a nested value becomes JSON text; what falls outside the sheet is 
     assert.deepStrictEqual(P.expandPopulate([1], {}, LIM), { cells: [], range: null }, 'no cell to start from: nothing');
 });
 
+const KEYS = ['type', 'fill', 'bold', 'color'];
+const withStyles = (done) => done.cells.map((x) => [A.addressOf(x.r, x.c), x.v, x.f]);
+
+ok('cell objects: a value with the fields it overrides, in a list, a block, or a field of a table row; a plain object with a "value" among other data is data', () => {
+    assert.ok(P.isCellObject({ value: 1, fill: 'red' }, KEYS));
+    assert.ok(P.isCellObject({ value: null }, KEYS));
+    assert.ok(!P.isCellObject({ value: 1, id: 7 }, KEYS), 'a field the rules do not know: data');
+    assert.ok(!P.isCellObject({ fill: 'red' }, KEYS), 'no value');
+    assert.ok(!P.isCellObject([1], KEYS) && !P.isCellObject('x', KEYS) && !P.isCellObject(null, KEYS));
+    const spec = { at: at('A1'), cellKeys: KEYS };
+    assert.deepStrictEqual(withStyles(P.expandPopulate([{ value: 12, fill: 'red' }, { value: 'x' }, 7], spec, LIM)),
+        [['A1', 12, { fill: 'red' }], ['A2', 'x', {}], ['A3', 7, undefined]], 'a list of cell objects (and a plain value among them)');
+    assert.deepStrictEqual(withStyles(P.expandPopulate([[{ value: 1, bold: true }, 2], [3, { value: 4, type: 'number' }]], spec, LIM)).map((x) => [x[0], x[1], x[2]]),
+        [['A1', 1, { bold: true }], ['B1', 2, undefined], ['A2', 3, undefined], ['B2', 4, { type: 'number' }]], 'in a block');
+    const table = withStyles(P.expandPopulate([{ id: 'a', temp: { value: 71, fill: 'orange' } }, { id: 'b', temp: 20 }], Object.assign({ fields: ['id', 'temp'] }, spec), LIM));
+    assert.deepStrictEqual(table.map((x) => [x[0], x[1]]), [['A1', 'a'], ['B1', 71], ['A2', 'b'], ['B2', 20]], 'a field of a table row');
+    assert.deepStrictEqual(table[1][2], { fill: 'orange' });
+    assert.deepStrictEqual(withStyles(P.expandPopulate({ value: 5, fill: 'blue' }, spec, LIM)), [['A1', 5, { fill: 'blue' }]], 'one cell object');
+    assert.deepStrictEqual(withStyles(P.expandPopulate([{ value: undefined, fill: 'red' }], spec, LIM)), [['A1', undefined, { fill: 'red' }]], 'a style without a value');
+});
+
+ok('shape: a list of objects is a table unless they are all cells; the rule can force it', () => {
+    const rows = [{ value: 1, fill: 'red' }, { value: 2 }];
+    const spec = (shape) => ({ at: at('A1'), cellKeys: KEYS, shape });
+    assert.deepStrictEqual(withStyles(P.expandPopulate(rows, spec('auto'), LIM)).map((x) => x[1]), [1, 2], 'auto: all cells');
+    assert.deepStrictEqual(withStyles(P.expandPopulate(rows, spec('table'), LIM)).map((x) => [x[0], x[1]]), [['A1', 1], ['B1', 'red'], ['A2', 2]].filter((x) => x[1] !== undefined).concat([]), 'table: a row per object, a column per field');
+    const mixed = [{ value: 1, name: 'x' }, { value: 2, name: 'y' }];
+    assert.deepStrictEqual(withStyles(P.expandPopulate(mixed, spec('auto'), LIM)).map((x) => [x[0], x[1]]), [['A1', 1], ['B1', 'x'], ['A2', 2], ['B2', 'y']], 'auto: objects with other fields are a table');
+    assert.deepStrictEqual(withStyles(P.expandPopulate(mixed, spec('list'), LIM)).map((x) => x[1]), ['{"value":1,"name":"x"}', '{"value":2,"name":"y"}'], 'list: each element is one cell, an object shows as JSON');
+    assert.deepStrictEqual(withStyles(P.expandPopulate(rows, spec('cells'), LIM)).map((x) => x[1]), [1, 2]);
+});
+
+ok('populatedCells: the rule\'s type and style for the cells it fills; a cell object over it; a later rule covers an earlier one\'s style too', () => {
+    const r = S.populatedCells([
+        { at: 'A1', value: [{ value: 1, bold: false, fill: 'red' }, 2], bold: true, type: 'number', fill: 'blue' },
+        { at: 'B1', value: [5, 6] },
+        { at: 'A2', value: ['x'], direction: 'down' }
+    ], 100, 26);
+    assert.deepStrictEqual(r.styles.get(S.cellKey(0, 0)), { bold: false, type: 'number', fill: 'red' }, 'the cell object over the rule\'s defaults');
+    assert.deepStrictEqual(r.styles.get(S.cellKey(1, 0)) || null, null, 'A2: the third rule covers the first one\'s value and its style (it has none)');
+    assert.strictEqual(r.map.get(S.cellKey(1, 0)), 'x');
+    assert.strictEqual(r.styles.has(S.cellKey(0, 1)), false, 'a rule with no type or style gives none');
+    const plain = S.populatedCells([{ at: 'A1', value: [1], fill: '' }], 10, 10);
+    assert.deepStrictEqual(plain.styles.get(S.cellKey(0, 0)), { fill: '' }, '"back to the default" is a value');
+});
+
 ok('populate: 100 000 values are laid down fast', () => {
     const big = [];
     for (let i = 0; i < 1000; i++) { const row = []; for (let j = 0; j < 100; j++) row.push(i * j); big.push(row); }

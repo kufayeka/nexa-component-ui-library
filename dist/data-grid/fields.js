@@ -32,16 +32,24 @@ export const RULE_SCHEMA = {
     wrap: { type: "boolean", label: "Wrap text", default: false, section: "Cell" }
 };
 
+function withoutRange(schema) {
+    const out = {};
+    Object.keys(schema).forEach((k) => { if (k !== "range") out[k] = Object.assign({}, schema[k], { help: schema[k].help || "For the cells this rule fills; a cell object in the value overrides it." }); });
+    return out;
+}
+
 /** A populate rule: where it starts, where its value comes from, and how a list is laid down. */
-export const POPULATE_SCHEMA = {
-    at: { type: "string", label: "Starts at", default: "A1", bindable: false, placeholder: "B2", help: "The first cell it fills." },
-    value: { type: "tag", access: "read", label: "Value", help: "Where the value comes from: a message (msg.payload), a variable, a tag. A list fills the cells after the first." },
-    enabled: { type: "boolean", label: "Populate", default: true, help: "Off: the rule stays, but fills nothing." },
-    direction: { type: "enum", label: "Fill", default: "down", options: [{ value: "down", label: "down" }, { value: "right", label: "to the right" }], style: "segmented", help: "Down: a list goes down the column; a list of rows is a table. To the right: the other way round." },
-    header: { type: "boolean", label: "Field names first", default: false, help: "A list of objects: a first row with their field names." },
-    fields: { type: "string", label: "Fields", default: "", placeholder: "id, temp, state", help: "A list of objects: which fields, in which order. Empty: all of them, as they appear." },
-    limit: { type: "number", label: "At most (cells)", default: "", min: 1, help: "Empty: no limit." }
-};
+export const POPULATE_SCHEMA = Object.assign({
+    at: { type: "string", label: "Starts at", default: "A1", bindable: false, placeholder: "B2", section: "Where", help: "The first cell it fills." },
+    direction: { type: "enum", label: "Fill", default: "down", options: [{ value: "down", label: "down" }, { value: "right", label: "to the right" }], style: "segmented", section: "Where", help: "Down: a list goes down the column; a list of rows is a table. To the right: the other way round." },
+    limit: { type: "number", label: "At most (cells)", default: "", min: 1, section: "Where", help: "Empty: no limit." },
+    enabled: { type: "boolean", label: "Populate", default: true, section: "Where", help: "Off: the rule stays, but fills nothing." },
+    value: { type: "tag", access: "read", label: "Value", section: "Data", help: "Where the value comes from: a message (msg.payload), a variable, a tag. A list fills the cells after the first." },
+    shape: { type: "enum", label: "Shape of the value", default: "auto", options: [{ value: "auto", label: "automatic" }, { value: "list", label: "a list of values" }, { value: "table", label: "a table (objects are rows)" }, { value: "cells", label: "a list of cell objects" }], style: "select", section: "Data",
+        help: "Automatic: a list of objects that all have a value (and nothing but fields of a type or a style) is a list of cells; other objects are the rows of a table; a list of lists is a block. A cell object { value: 12, fill: \"red\" } can stand anywhere and carries its own type and style." },
+    header: { type: "boolean", label: "Field names first", default: false, section: "Data", help: "A table: a first row with the field names." },
+    fields: { type: "string", label: "Fields", default: "", placeholder: "id, temp, state", section: "Data", help: "A table: which fields, in which order. Empty: all of them, as they appear." }
+}, withoutRange(RULE_SCHEMA));
 
 /** A border rule. */
 export const BORDER_SCHEMA = {

@@ -821,6 +821,67 @@ withHarness({
         assert.strictEqual(await js(q('sv3', '.staged') + ' ? 1 : 0'), 1, 'the box');
     });
 
+    await ok('populate with its own look: the rule gives the cells it fills a type and a style; a cell object in the message overrides them (in a list, a block, a field of a table row); wrapped text grows the row', async () => {
+        const css = (n, r, c) => js(`(function () { var s = getComputedStyle(${cell(n, r, c)}); return { w: s.fontWeight, bg: s.backgroundColor, color: s.color, jc: s.justifyContent }; })()`);
+        await mount('po', {
+            rows: 40,
+            populate: [
+                { at: 'A1', value: bind('list'), type: 'number', decimals: 1, fill: '#ffe0b2', bold: true },
+                { at: 'C1', value: bind('block') },
+                { at: 'E1', value: bind('table'), fields: 'name, temp' },
+                { at: 'G1', value: bind('note'), wrap: true }
+            ]
+        });
+        await message('po', {
+            list: [1.234, { value: 2.5, fill: '#ff0000', bold: false }, { value: 'text', type: 'text' }],
+            block: [[{ value: 1, color: '#00ff00' }, 2], [3, { value: 4, fill: '#0000ff' }]],
+            table: [{ name: 'Pump', temp: { value: 93, fill: '#ff0000' } }, { name: 'Mixer', temp: 20 }],
+            note: 'word '.repeat(40)
+        });
+        assert.strictEqual(await text('po', 0, 0), '1.2', 'the rule\'s type: a number with one decimal');
+        assert.deepStrictEqual(await css('po', 0, 0), { w: '700', bg: 'rgb(255, 224, 178)', color: await js(`getComputedStyle(${cell('po', 1, 2)}).color`), jc: 'flex-end' }, 'the rule\'s bold and fill, and a number on the right');
+        const o = await css('po', 1, 0);
+        assert.deepStrictEqual([await text('po', 1, 0), o.w, o.bg], ['2.5', '400', 'rgb(255, 0, 0)'], 'a cell object over the rule\'s defaults: its fill, not bold');
+        assert.strictEqual(await text('po', 2, 0), 'text', 'and its own type');
+        assert.strictEqual((await css('po', 0, 2)).color, 'rgb(0, 255, 0)', 'in a block');
+        assert.strictEqual((await css('po', 1, 3)).bg, 'rgb(0, 0, 255)');
+        assert.deepStrictEqual([await text('po', 0, 4), await text('po', 0, 5), await text('po', 1, 5)], ['Pump', '93', '20'], 'a table: its field that is a cell object');
+        assert.strictEqual((await css('po', 0, 5)).bg, 'rgb(255, 0, 0)');
+        assert.strictEqual((await css('po', 1, 5)).bg, 'rgb(255, 255, 255)', 'the other row has nothing');
+        const h = (await size('po', 0, 6)).h;
+        assert.ok(h > 100, 'the rule wrap made the row grow to fit: ' + h);
+        // a new message replaces the values and the styles that came with them
+        await message('po', { list: [9], block: [], table: [], note: 'short' });
+        assert.deepStrictEqual([await text('po', 0, 0), await text('po', 1, 0)], ['9.0', ''], 'the new value');
+        assert.strictEqual((await css('po', 1, 0)).bg, 'rgb(255, 255, 255)', 'and the fill of the old cell object is gone');
+    });
+
+    await ok('the shape of a value: a list of cell objects, a table of rows with a field value, the rule can force it; the action Fill cells takes cell objects too', async () => {
+        await mount('sh', {
+            rows: 20,
+            populate: [{ at: 'A1', value: bind('a') }, { at: 'C1', value: bind('b'), shape: 'list' }, { at: 'E1', value: bind('b'), shape: 'table' }]
+        });
+        await message('sh', { a: [{ value: 'x', fill: '#ff0000' }, { value: 'y' }], b: [{ value: 1, id: 'p' }, { value: 2, id: 'q' }] });
+        assert.deepStrictEqual([await text('sh', 0, 0), await text('sh', 1, 0)], ['x', 'y'], 'objects that are all cells: a list of cells');
+        assert.deepStrictEqual([await text('sh', 0, 2), await text('sh', 0, 3)], ['{"value":1,"id":"p"}', ''], 'a list: each object is one cell, shown as JSON');
+        assert.deepStrictEqual([await text('sh', 0, 4), await text('sh', 0, 5), await text('sh', 1, 5)], ['1', 'p', 'q'], 'a table: a column per field');
+        await js(`NexaTest.invoke("sh", "setRange", { at: "A10", values: [{ value: 5, fill: "#00ff00" }, 6], direction: "right" })`); await settle(); await wait(60);
+        assert.deepStrictEqual([await text('sh', 9, 0), await text('sh', 9, 1)], ['5', '6']);
+        assert.strictEqual(await js(`getComputedStyle(${cell('sh', 9, 0)}).backgroundColor`), 'rgb(0, 255, 0)', 'the action sets the style too');
+    });
+
+    await ok('a populate rule has a tree of its own: Where, Data, Type, Text, Cell', async () => {
+        const r = await js(`(async function () {
+            var t = NexaTest.inspector("nexa-ui-${ID}", { populate: [{ at: "B2" }] });
+            await new Promise(function (r) { setTimeout(r, 250); });
+            await t.field("populate#0.fill");
+            var ids = NexaTest.rows(t.box).map(function (x) { return x.id; }).filter(function (id) { return /^populate#0\\//.test(id); });
+            t.destroy();
+            return ids;
+        })()`);
+        for (const s of ['Where', 'Data', 'Type', 'Text', 'Cell']) assert.ok(r.indexOf('populate#0/' + s) !== -1, 'the section ' + s + ' in ' + r.join(' | '));
+    });
+
     await ok('the Edit grid row of the inspector says what the sheet has', async () => {
         const r = await js(`(function () { var p = NEXA.getComponent("nexa-ui-data-grid").nexa.props.editGrid; return [p.info({ rows: 50, cols: 10, cells: { A1: 1, B1: 2 }, cellRules: [{}], merges: ["A1:B2"], populate: [{}, {}], locks: [{}] }), p.info({})]; })()`);
         assert.strictEqual(r[0], '50 rows x 10 columns, 2 cells typed, 1 type / style rule, 2 populate rules, 1 merged, 1 lock rule');

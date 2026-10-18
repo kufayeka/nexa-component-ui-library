@@ -113,20 +113,29 @@ export function parseCells(obj, rows, cols) {
 }
 
 /**
- * What the populate rules put in the sheet now. `items` are the rules with their value already taken from the message / variable / tag:
+ * What the populate rules put in the sheet now: the values (`map`) and the type and style they give the cells (`styles`). `items` are the rules with their value already taken from the message / variable / tag:
  * { at: "B2", value, enabled, direction, header, fields (text), limit }. A later rule covers an earlier one. Returns the cells and, per rule, the box it filled.
  */
 export function populatedCells(items, rows, cols) {
-    const map = new Map(), blocks = [];
+    const map = new Map(), styles = new Map(), blocks = [];
     (Array.isArray(items) ? items : []).forEach((item, index) => {
         if (!item || item.enabled === false) { blocks.push(null); return; }
         const at = parseAddress(item.at);
         if (!at) { blocks.push(null); return; }
-        const done = expandPopulate(item.value, { at, direction: item.direction === "right" ? "right" : "down", header: item.header === true, fields: parseFields(item.fields), limit: item.limit }, { rows, cols });
-        done.cells.forEach((cell) => map.set(cellKey(cell.r, cell.c), cell.v));
+        const done = expandPopulate(item.value, { at, direction: item.direction === "right" ? "right" : "down", header: item.header === true, fields: parseFields(item.fields), limit: item.limit,
+            shape: item.shape, cellKeys: RULE_FIELDS }, { rows, cols });
+        // what the rule says about the cells it fills (their type and style), and, over it, what a cell object of the value says
+        const defaults = {};
+        RULE_FIELDS.forEach((k) => { if (isSet(item[k])) defaults[k] = item[k]; });
+        done.cells.forEach((cell) => {
+            const key = cellKey(cell.r, cell.c);
+            if (cell.v !== undefined) map.set(key, cell.v);
+            const f = Object.assign({}, defaults, cell.f || {});
+            if (Object.keys(f).length) styles.set(key, f); else styles.delete(key);
+        });
         blocks.push(done.range);
     });
-    return { map, blocks };
+    return { map, styles, blocks };
 }
 
 /** The value of a cell: what the user edited on the page, else what was populated, else what was typed in the design. `null` when there is none. */
