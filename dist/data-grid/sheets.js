@@ -116,3 +116,27 @@ export function renameSheet(sheets, i, name) {
     out[i] = Object.assign({}, sheets[i], { name: final });
     return { sheets: out, name: final };
 }
+
+/**
+ * An import that brings the content only: for each sheet of the file, the sheet of the same name (any case) here gets the cells of the file and nothing else of it (its
+ * types, styles, merges, borders, sizes, freeze, populate rules stay), made as big as the content needs; a sheet this grid does not have is added with its content (and its
+ * size and whether it is hidden). Sheets of the grid that the file does not have are left as they are. Returns the new list.
+ */
+export function mergeContent(sheets, imported) {
+    const out = sheets.slice();
+    imported.forEach((from) => {
+        const at = indexOfSheet(out, from.name);
+        if (at < 0) {
+            const fresh = { name: from.name, rows: from.rows, cols: from.cols, cells: from.cells };
+            if (from.visible === false) fresh.visible = false;
+            out.push(fresh);
+            return;
+        }
+        const own = out[at];
+        const next = Object.assign({}, own, { cells: from.cells });
+        if ((Number(from.rows) || 0) > (Number(own.rows) || 100)) next.rows = from.rows;
+        if ((Number(from.cols) || 0) > (Number(own.cols) || 26)) next.cols = from.cols;
+        out[at] = next;
+    });
+    return out;
+}

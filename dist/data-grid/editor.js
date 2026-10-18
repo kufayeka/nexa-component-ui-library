@@ -14,7 +14,7 @@ import { normalizeMerges, normalizeLocks, lockRuleAt } from "./layout.js";
 import { sortRangeCells } from "./sort.js";
 import { crossesFreeze, mergeRange, unmergeRange, mergesTouching, addBorder, clearBorders, addLock, resetLocks, lockState, describeRange, addRule, commonFields, toTextMerges, toTextRules } from "./design.js";
 import { RULE_SCHEMA, SHEET_PROPS } from "./fields.js";
-import { normalizeSheets, activeIndex, indexOfSheet, addSheet, removeSheet, moveSheet, duplicateSheet, renameSheet } from "./sheets.js";
+import { normalizeSheets, activeIndex, indexOfSheet, addSheet, removeSheet, moveSheet, duplicateSheet, renameSheet, mergeContent } from "./sheets.js";
 import { renameInFormula, isFormula } from "./formula.js";
 import { readXlsx } from "./xlsx-read.js";
 
@@ -24,6 +24,7 @@ const COMPONENT_ID = "nexa-ui-data-grid";
 export const GRID_KEYS = ["sortable", "findable", "exportable", "showFormulaBar", "showSheetTabs"];
 const SEL_KEYS = Object.keys(RULE_SCHEMA).filter((k) => k !== "range");
 const BORDER_COLORS = [{ value: "bd", label: "Light line" }, { value: "bd-strong", label: "Strong line" }, { value: "fg", label: "Text colour" }, { value: "primary", label: "Primary" }, { value: "error", label: "Error" }, { value: "custom", label: "Other colour…" }];
+const IMPORT_MODES = [{ value: "all", label: "Import everything (sheets, types, styles)" }, { value: "content", label: "Import the content only (cells and formulas)" }];
 const BORDER_STYLES = ["solid", "dashed", "dotted", "double"].map((v) => ({ value: v, label: v }));
 
 const clone = (v) => JSON.parse(JSON.stringify(v));
@@ -102,7 +103,8 @@ defineInspectorWidget("nexa-data-grid-editor", ({ KitElement, html: h, nothing }
         _bstyle: { state: true },
         _bwidth: { state: true },
         _bcolor: { state: true },
-        _bcustom: { state: true }
+        _bcustom: { state: true },
+        _importMode: { state: true }
     };
 
     constructor() {
@@ -117,6 +119,7 @@ defineInspectorWidget("nexa-data-grid-editor", ({ KitElement, html: h, nothing }
         this._bwidth = 1;
         this._bcolor = "bd-strong";
         this._bcustom = "#161616";
+        this._importMode = "all";   // what an imported Excel file brings: "all" (the sheets as they are in the file) or "content" (the cells only)
         this._prevSig = "";
         this._prevWired = false;
         this._form = null;
@@ -369,9 +372,16 @@ defineInspectorWidget("nexa-data-grid-editor", ({ KitElement, html: h, nothing }
         if (!file) return;
         try {
             const out = await readXlsx(new Uint8Array(await file.arrayBuffer()));
-            const d = this._doc;
-            this._commit({ grid: d.grid, sheets: out.sheets, active: out.active }, "Read " + out.sheets.length + " sheet" + (out.sheets.length === 1 ? "" : "s") + " from " + file.name + ". Undo takes the old ones back."
-                + (out.warnings.length ? " " + out.warnings.join(" · ") : ""));
+            const d = this._doc, n = out.sheets.length + " sheet" + (out.sheets.length === 1 ? "" : "s");
+            const warn = out.warnings.length ? " " + out.warnings.join(" · ") : "";
+            if (this._importMode === "content") {
+                // the cells only: the sheets here keep their types, styles, merges, sizes ...; a sheet of the file with a name they do not have is added
+                const sheets = mergeContent(d.sheets, out.sheets);
+                const shown = indexOfSheet(sheets, out.sheets[out.active].name);
+                this._commit({ grid: d.grid, sheets, active: shown >= 0 ? shown : d.active }, "Read the content of " + n + " from " + file.name + ": cells and formulas only, the types and styles here stay. Undo takes it back." + warn);
+            } else {
+                this._commit({ grid: d.grid, sheets: out.sheets, active: out.active }, "Read " + n + " from " + file.name + ", with their types and styles. Undo takes the old ones back." + warn);
+            }
             this._range = null;
         } catch (e) {
             this._note = "Could not read " + file.name + ": " + (e && e.message ? e.message : e);
@@ -504,7 +514,8 @@ defineInspectorWidget("nexa-data-grid-editor", ({ KitElement, html: h, nothing }
                 <button type="button" class="nx-btn" title="Move the tab to the right" ?disabled=${this._doc.active >= this._doc.sheets.length - 1} @click=${() => this._moveSheet(1)}>▶</button></div>
             <div class="dge-grp"><span class="dge-t">Excel</span>
                 <button type="button" class="nx-btn" title="Download every sheet as an Excel file (.xlsx)" @click=${() => this._exportXlsx()}>Export .xlsx</button>
-                <button type="button" class="nx-btn" title="Read an Excel file: its sheets replace the ones here (Undo takes them back)" @click=${() => this.querySelector("[data-import]").click()}>Import .xlsx…</button>
+                <nx-select .options=${IMPORT_MODES} .value=${this._importMode} title="What an imported file brings" @nx-change=${(e) => { this._importMode = e.detail.value; }}></nx-select>
+                <button type="button" class="nx-btn" title="Read an Excel file (Undo takes it back)" @click=${() => this.querySelector("[data-import]").click()}>Import .xlsx…</button>
                 <input type="file" data-import accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden @change=${(e) => { const f = e.target.files && e.target.files[0]; e.target.value = ""; this._import(f); }}></div>
             <div class="dge-grp"><span class="dge-t">Sort</span>
                 ${this._btn("A→Z", "Sort the selected rows by the first column of the selection, ascending (the typed cells move)", () => this._sortSelection("asc"))}

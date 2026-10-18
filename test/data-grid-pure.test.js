@@ -1146,6 +1146,21 @@ ok('sheets: renameInFormula writes the new name where a formula read the old one
     assert.strictEqual(Fm.formulaProblem('=1+'), 'a formula it cannot read');
 });
 
+ok('sheets: mergeContent puts the cells of an imported file in the sheets of the same name and leaves their types, styles and sizes; a new name is added; the others stay', () => {
+    const mine = [{ name: 'Main', rows: 30, cells: { A1: 'old' }, cellRules: [{ range: 'A1', bold: true }], merges: ['A1:B1'], freezeRows: 1 }, { name: 'Keep', cells: { A1: 'k' } }];
+    const file = [{ name: 'main', rows: 80, cols: 40, cells: { A1: 'new', B2: 5 }, cellRules: [{ range: 'B2', fill: 'red' }], merges: ['C1:D1'] }, { name: 'Extra', visible: false, rows: 50, cols: 10, cells: { A1: 'x' }, cellRules: [{ range: 'A1', bold: true }] }];
+    const out = Sh.mergeContent(mine, file);
+    assert.deepStrictEqual(out.map((s) => s.name), ['Main', 'Keep', 'Extra']);
+    assert.deepStrictEqual(out[0].cells, { A1: 'new', B2: 5 }, 'the cells of the file');
+    assert.deepStrictEqual(out[0].cellRules, [{ range: 'A1', bold: true }], 'its own styles, not the file\'s');
+    assert.deepStrictEqual([out[0].merges, out[0].freezeRows], [['A1:B1'], 1], 'merges and freeze stay');
+    assert.deepStrictEqual([out[0].rows, out[0].cols], [80, 40], 'as big as the content needs');
+    assert.deepStrictEqual(out[1], mine[1], 'a sheet the file does not have is untouched');
+    assert.deepStrictEqual(out[2], { name: 'Extra', rows: 50, cols: 10, cells: { A1: 'x' }, visible: false }, 'a new sheet: content, size, hidden; no styles');
+    assert.deepStrictEqual(mine[0].cells, { A1: 'old' }, 'the input is not changed');
+    assert.strictEqual(Sh.mergeContent([{ name: 'S', rows: 200 }], [{ name: 'S', rows: 80, cells: {} }])[0].rows, 200, 'never smaller');
+});
+
 // ---- reading Excel files ------------------------------------------------------------------------------------------------------------------------
 const zlib = require('zlib');
 const Xr = M['xlsx-read.js'], Xw = M['xlsx.js'];

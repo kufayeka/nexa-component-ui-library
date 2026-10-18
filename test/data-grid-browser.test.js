@@ -1458,6 +1458,41 @@ withHarness({
         function dlg0() { return 'document.querySelector("nexa-data-grid-editor .dge-prev")'; }
     });
 
+    await ok('the Edit grid dialog: import the content only keeps the types and styles of the sheets here; "everything" brings the file\'s', async () => {
+        await mount('src2', { exportable: true, sheets: [{ name: 'Plant', cells: { A1: 'from file', B1: 9 }, cellRules: [{ range: 'A1', bold: true, fill: '#ff0000' }, { range: 'B1', type: 'number', decimals: 3 }], merges: ['F1:G2'] }] });
+        await hookDownload();
+        await js('NexaTest.invoke("src2", "exportXlsx")');
+        const file = await download();
+        const run = (mode) => js(`(async function () {
+            var ed = document.querySelector("nexa-data-grid-editor");
+            ed._importMode = ${JSON.stringify(mode)};
+            var bytes = Uint8Array.from(atob(${JSON.stringify(file.data)}), function (c) { return c.charCodeAt(0); });
+            await ed._import(new File([bytes], "plant.xlsx"));
+            return { sheets: ed.design().sheets, note: ed._note };
+        })()`);
+        const open = async () => { await js(`window.__runEditor({ sheets: [{ name: "Plant", cells: { A1: "mine" }, cellRules: [{ range: "A1", italic: true }], merges: ["A5:B5"], freezeRows: 2 }, { name: "Mine only", cells: { A1: "keep" } }] }, { set: function () {} })`); await settle(); await wait(300); };
+        const cancel = () => clickAt(`Array.from(document.querySelectorAll(".nx-dialog-foot button")).filter(function (b) { return b.textContent.trim() === "Cancel"; })[0]`);
+        await open();
+        // the choice is there, "everything" first
+        assert.ok((await js(`document.querySelector("nexa-data-grid-editor")._importMode`)) === 'all');
+        const content = await run('content');
+        assert.deepStrictEqual(content.sheets.map((s) => s.name), ['Plant', 'Mine only'], 'the sheets here stay');
+        const p = content.sheets[0];
+        assert.strictEqual(p.cells.A1, 'from file');
+        assert.strictEqual(p.cells.B1, 9);
+        assert.deepStrictEqual(p.cellRules, [{ range: 'A1', italic: true }], 'its own styles stay: nothing of the file\'s');
+        assert.deepStrictEqual([p.merges, p.freezeRows], [['A5:B5'], 2], 'merges and freeze stay');
+        assert.ok(content.note.startsWith('Read the content of 1 sheet'), content.note);
+        assert.deepStrictEqual(content.sheets[1].cells, { A1: 'keep' });
+        await cancel();
+        await open();
+        const all = await run('all');
+        assert.deepStrictEqual(all.sheets.map((s) => s.name), ['Plant'], 'everything: the file\'s sheets replace them');
+        assert.ok(all.sheets[0].cellRules.some((r) => r.bold === true && r.fill === '#ff0000'), 'with its styles');
+        assert.deepStrictEqual(all.sheets[0].merges, ['F1:G2']);
+        await cancel();
+    });
+
     await ok('no JavaScript errors in the page', async () => {
         const errs = logs.filter((l) => /error|exception|uncaught/i.test(l) && !/favicon|net::ERR/i.test(l));
         assert.deepStrictEqual(errs.slice(0, 5), []);
