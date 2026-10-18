@@ -83,6 +83,9 @@ const DATA_GRID_CSS = css`
     .rz-r { left: 0; bottom: 0; height: 6px; width: 100%; cursor: row-resize; }
     .rz:hover { background: var(--cp-solid, #0f62fe); opacity: 0.5; }
     .cell.wrap { overflow-y: auto; }
+    /* a field in the cell (being typed in, or an input cell) is as big as the cell: the cell's own padding would leave a frame round it */
+    .cell.field { padding: 0; gap: 0; }
+    .cell.field > .ed, .cell.field > .in { flex: 1 1 auto; width: 100%; min-width: 0; height: 100%; }
     .fillh { position: absolute; right: 0; bottom: 0; width: 8px; height: 8px; background: var(--cp-solid, #0f62fe); border: 1px solid var(--bg); cursor: crosshair; z-index: 4; box-sizing: border-box; }
     .cell.fillp { outline: 1px dashed var(--cp-solid, #0f62fe); outline-offset: -1px; background-image: linear-gradient(color-mix(in srgb, var(--cp-solid, #0f62fe) 10%, transparent), color-mix(in srgb, var(--cp-solid, #0f62fe) 10%, transparent)); }
     textarea.ed { resize: none; padding: 4px 6px; line-height: 1.25; font: inherit; }
@@ -470,7 +473,7 @@ export const dataGrid = defineUI({
             const handle = !!range && lastR === range.r2 && lastC === range.c2 && this._canFill();
             const plan = this._fill && this._fill.plan ? this._fill.plan.target : null;
             const planned = !!plan && r >= plan.r1 && r <= plan.r2 && c >= plan.c1 && c <= plan.c2;
-            const cls = ["cell", inSel ? "sel" : "", planned ? "fillp" : "", found, focus ? "focus" : "", hatch ? "hatch" : "", dirty ? "dirty" : "", anchor ? "pop" : "", fields.wrap === true ? "wrap" : ""].filter(Boolean).join(" ");
+            const cls = ["cell", inSel ? "sel" : "", planned ? "fillp" : "", found, focus ? "focus" : "", hatch ? "hatch" : "", dirty ? "dirty" : "", anchor ? "pop" : "", fields.wrap === true ? "wrap" : "", (this._edit && this._edit.r === r && this._edit.c === c) || spec.type === "input" ? "field" : ""].filter(Boolean).join(" ");
             return html`<div class=${cls} part="cell" data-r=${r} data-c=${c} style=${style} title=${anchor ? "Populated from a message: " + this._populateAt.get(key) : nothing}>${this._content(spec, value, r, c, editable, fields)}${handle ? html`<div class="fillh" data-fill title="Drag to fill down or across (Ctrl: copy as it is)"></div>` : nothing}</div>`;
         }
 

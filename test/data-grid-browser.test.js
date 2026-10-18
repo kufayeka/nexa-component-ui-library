@@ -203,6 +203,25 @@ withHarness({
         assert.strictEqual(await text('ed1', 1, 0), 'msg', 'a message covers what the user typed in the cell it fills');
     });
 
+    await ok('the box typed in fills the whole cell, also in a wrapped cell and a merged one; an input cell too', async () => {
+        await mount('fb', { mode: 'editable', cells: { A1: 'x', B2: 'y', C3: 'z', D1: 'in' }, cellRules: [{ range: 'B2', wrap: true }, { range: 'D1', type: 'input' }], merges: ['C3:D4'] }, { width: 700, height: 300 });
+        const fits = (r, c, sel) => js(`(function () { var cell = ${cell('fb', r, c)}, f = cell.querySelector(${JSON.stringify(sel)}); if (!f) return null; var a = cell.getBoundingClientRect(), b = f.getBoundingClientRect(); return { dw: Math.round(a.width - b.width), dh: Math.round(a.height - b.height) }; })()`);
+        await clickAt(cell('fb', 0, 0), 2);
+        const input = await fits(0, 0, '[data-edit]');
+        assert.ok(input && input.dw <= 2 && input.dh <= 2, 'an input: the cell minus its border only: ' + JSON.stringify(input));
+        await press('Escape');
+        await clickAt(cell('fb', 1, 1), 2);
+        const area = await fits(1, 1, 'textarea[data-edit]');
+        assert.ok(area && area.dw <= 2 && area.dh <= 2, 'a text area: ' + JSON.stringify(area));
+        await press('Escape');
+        await clickAt(cell('fb', 2, 2), 2);
+        const merged = await fits(2, 2, '[data-edit]');
+        assert.ok(merged && merged.dw <= 2 && merged.dh <= 2, 'a merged cell: ' + JSON.stringify(merged));
+        await press('Escape');
+        const always = await fits(0, 3, 'input[data-act="input"]');
+        assert.ok(always && always.dw <= 2 && always.dh <= 2, 'an input cell: ' + JSON.stringify(always));
+    });
+
     await ok('locks: a locked range cannot be edited, an open rule opens a cell of it, a read-only grid wins over all', async () => {
         await mount('lk', { mode: 'editable', cells: { A1: 'a', A2: 'b', A3: 'c', B1: 'd' }, locks: [{ range: 'A1:A3', locked: true }, { range: 'A2', locked: false }] });
         const can = async (r, c) => { await clickAt(cell('lk', r, c), 2); const open = await js(q('lk', '[data-edit]') + ' ? 1 : 0'); if (open) await press('Escape'); return !!open; };
