@@ -551,6 +551,151 @@ withHarness({
         assert.deepStrictEqual(s.colRules, [{ columns: 'B', width: 150 }]);
     });
 
+    // ---- the clipboard and the fill handle ------------------------------------------------------------------------------------------------------
+    const dragCells = async (n, from, to, mods) => {
+        const a = await js(`(function () { var e = ${from}; var host = e.getRootNode().host; if (host) host.scrollIntoView({ block: "center" }); var b = e.getBoundingClientRect(); return { x: b.left + Math.min(12, b.width / 2), y: b.top + Math.min(8, b.height / 2) }; })()`);
+        const b = await js(`(function () { var b = ${to}.getBoundingClientRect(); return { x: b.left + Math.min(12, b.width / 2), y: b.top + Math.min(8, b.height / 2) }; })()`);
+        await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: a.x, y: a.y });
+        await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: a.x, y: a.y, button: 'left', buttons: 1, clickCount: 1 });
+        await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: b.x, y: b.y, buttons: 1 });
+        await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: b.x, y: b.y, button: 'left', buttons: 0, clickCount: 1, modifiers: mods || 0 });
+        await settle(); await wait(100);
+    };
+    // a clipboard event on the grid: what the copy puts in the clipboard, or what the paste finds in it
+    const clip = (n, type, data) => js(`(function () {
+        var g = ${q(n, '.grid')}; var dt = new DataTransfer(); var d = ${JSON.stringify(data || {})};
+        Object.keys(d).forEach(function (k) { dt.setData(k, d[k]); });
+        g.dispatchEvent(new ClipboardEvent(${JSON.stringify(type)}, { clipboardData: dt, bubbles: true, cancelable: true, composed: true }));
+        return { text: dt.getData("text/plain"), grid: dt.getData("application/x-nexa-grid") };
+    })()`);
+
+    await ok('copy: the cells as tab-separated text (Excel) and as a JSON of values and styles; cut empties the editable ones', async () => {
+        await mount('cp', { mode: 'editable', cells: { A1: 'one', B1: 2, A2: 'two\nlines', B2: 4 }, cellRules: [{ range: 'A1', bold: true, fill: '#ff0000' }, { range: 'B1:B2', type: 'number', decimals: 1 }], locks: [{ range: 'B2', locked: true }] });
+        await dragCells('cp', cell('cp', 0, 0), cell('cp', 1, 1));
+        const out = await clip('cp', 'copy');
+        assert.strictEqual(out.text, 'one\t2.0\n"two\nlines"\t4.0', 'the text as shown, with quotes for a new line');
+        const g = JSON.parse(out.grid);
+        assert.strictEqual(g.cells[0][0].v, 'one');
+        assert.strictEqual(g.cells[0][1].v, 2, 'the value, not its text');
+        assert.deepStrictEqual([g.cells[0][0].f.bold, g.cells[0][0].f.fill], [true, '#ff0000'], 'with its style');
+        assert.strictEqual(g.cells[0][1].f.type, 'number');
+        await clip('cp', 'cut');
+        assert.strictEqual(await text('cp', 0, 0), '', 'cut empties');
+        assert.strictEqual(await text('cp', 1, 1), '4.0', 'a locked cell is not emptied');
+    });
+
+    await ok('paste: text from Excel at the selected cell; one cell over a selection fills it; locked cells and a read-only grid are not touched; a copy of this grid brings its values', async () => {
+        await mount('ps', { mode: 'editable', rows: 20, cols: 8, cellRules: [{ range: 'C1:C5', type: 'number' }], locks: [{ range: 'B2', locked: true }] });
+        await clickAt(cell('ps', 0, 0));
+        await clip('ps', 'paste', { 'text/plain': 'a\tb\tc\n1\t2\t3\r\nx\ty\tz\r\n' });
+        assert.deepStrictEqual([await text('ps', 0, 0), await text('ps', 0, 1), await text('ps', 0, 2)], ['a', 'b', 'c']);
+        assert.strictEqual(await text('ps', 1, 1), '', 'the locked cell B2 was not written');
+        assert.deepStrictEqual([await text('ps', 1, 0), await text('ps', 1, 2), await text('ps', 2, 2)], ['1', '3', 'z']);
+        const ev = await events('ps', 'cellChange');
+        assert.ok(ev.some((x) => x.address === 'C2' && x.new === 3), 'a number cell took the text as a number');
+        assert.ok(!ev.some((x) => x.address === 'B2'), 'and nothing was told of the locked one');
+        // one cell over a selection fills it
+        await dragCells('ps', cell('ps', 5, 4), cell('ps', 6, 5));
+        await clip('ps', 'paste', { 'text/plain': 'same' });
+        assert.deepStrictEqual([await text('ps', 5, 4), await text('ps', 5, 5), await text('ps', 6, 4), await text('ps', 6, 5)], ['same', 'same', 'same', 'same']);
+        // a copy of this grid: values
+        await dragCells('ps', cell('ps', 0, 0), cell('ps', 0, 2));
+        const copied = await clip('ps', 'copy');
+        await clickAt(cell('ps', 4, 0));
+        await clip('ps', 'paste', { 'text/plain': copied.text, 'application/x-nexa-grid': copied.grid });
+        assert.deepStrictEqual([await text('ps', 4, 0), await text('ps', 4, 1), await text('ps', 4, 2)], ['a', 'b', 'c']);
+        // read only
+        await js('NexaTest.setProps("ps", { mode: "readonly" })'); await settle();
+        await clickAt(cell('ps', 7, 0));
+        await clip('ps', 'paste', { 'text/plain': 'nope' });
+        assert.strictEqual(await text('ps', 7, 0), '', 'a read-only grid takes no paste');
+    });
+
+    await ok('fill handle: the dot at the corner of the selection; dragged down it copies the value and numbers go up; Ctrl copies as it is; text that ends in a number goes up too', async () => {
+        await mount('fh', { mode: 'editable', rows: 30, cols: 8, cells: { A1: 5, B1: 'Item 1', C1: 'same', D1: 10, D2: 20 } }, { width: 700, height: 700 });
+        await clickAt(cell('fh', 0, 0));
+        assert.strictEqual(await js(q('fh', '[data-r="0"][data-c="0"] [data-fill]') + ' ? 1 : 0'), 1, 'the handle is on the selection\'s corner cell');
+        assert.strictEqual(await js(q('fh', '[data-r="1"][data-c="0"] [data-fill]') + ' ? 1 : 0'), 0, 'only there');
+        await dragCells('fh', q('fh', '[data-r="0"][data-c="0"] [data-fill]'), cell('fh', 3, 0));
+        assert.deepStrictEqual([await text('fh', 1, 0), await text('fh', 2, 0), await text('fh', 3, 0)], ['6', '7', '8'], 'a number goes up by one');
+        // the selection grew over what was filled; the handle is now at A4
+        assert.strictEqual(await js(q('fh', '[data-r="3"][data-c="0"] [data-fill]') + ' ? 1 : 0'), 1);
+        await clickAt(cell('fh', 0, 1));
+        await dragCells('fh', q('fh', '[data-r="0"][data-c="1"] [data-fill]'), cell('fh', 2, 1));
+        assert.deepStrictEqual([await text('fh', 1, 1), await text('fh', 2, 1)], ['Item 2', 'Item 3']);
+        await clickAt(cell('fh', 0, 2));
+        await dragCells('fh', q('fh', '[data-r="0"][data-c="2"] [data-fill]'), cell('fh', 2, 2));
+        assert.deepStrictEqual([await text('fh', 1, 2), await text('fh', 2, 2)], ['same', 'same'], 'text repeats');
+        // two cells: the step between them
+        await dragCells('fh', cell('fh', 0, 3), cell('fh', 1, 3));
+        await dragCells('fh', q('fh', '[data-r="1"][data-c="3"] [data-fill]'), cell('fh', 3, 3));
+        assert.deepStrictEqual([await text('fh', 2, 3), await text('fh', 3, 3)], ['30', '40'], 'by the step of the selection (10)');
+        // Ctrl: as it is; across; upwards
+        await clickAt(cell('fh', 10, 0)); await clip('fh', 'paste', { 'text/plain': '3' });
+        await dragCells('fh', q('fh', '[data-r="10"][data-c="0"] [data-fill]'), cell('fh', 12, 0), 2);
+        assert.deepStrictEqual([await text('fh', 11, 0), await text('fh', 12, 0)], ['3', '3'], 'Ctrl copies as it is');
+        await clickAt(cell('fh', 15, 2));
+        await clip('fh', 'paste', { 'text/plain': '1' });
+        await dragCells('fh', q('fh', '[data-r="15"][data-c="2"] [data-fill]'), cell('fh', 15, 5));
+        assert.deepStrictEqual([await text('fh', 15, 3), await text('fh', 15, 4), await text('fh', 15, 5)], ['2', '3', '4'], 'across, to the right');
+        await clickAt(cell('fh', 20, 2));
+        await clip('fh', 'paste', { 'text/plain': '10' });
+        await dragCells('fh', q('fh', '[data-r="20"][data-c="2"] [data-fill]'), cell('fh', 18, 2));
+        assert.deepStrictEqual([await text('fh', 19, 2), await text('fh', 18, 2)], ['9', '8'], 'upwards: before the selection, going down in value');
+        // the events say what changed
+        const ev = await events('fh', 'cellChange');
+        assert.ok(ev.some((x) => x.address === 'A2' && x.old === null && x.new === 6));
+        // no handle on a read-only grid
+        await js('NexaTest.setProps("fh", { mode: "readonly" })'); await settle();
+        await clickAt(cell('fh', 0, 0));
+        assert.strictEqual(await js(q('fh', '[data-fill]') + ' ? 1 : 0'), 0, 'a read-only grid has no handle');
+    });
+
+    await ok('the Edit grid dialog: a paste and a fill bring values AND styles (as short rules), each one step of history', async () => {
+        const dlg = (sel) => `document.querySelector("nexa-data-grid-editor ${sel}")`;
+        const prev = () => `${dlg('.dge-prev')}.firstElementChild.shadowRoot`;
+        const pcell = (r, c) => `${prev()}.querySelector('[data-r="${r}"][data-c="${c}"]')`;
+        await js(`window.__sets = []; NEXA.getComponent("nexa-ui-data-grid").nexa.props.editGrid.buttons[0].run({ cells: { A1: 1 }, cellRules: [{ range: "A1", bold: true, fill: "#ff0000" }] }, { set: function (k, v) { window.__sets.push([k, v]); } })`);
+        await settle(); await wait(300);
+        const grid = `${dlg('.dge-prev')}.firstElementChild.shadowRoot.querySelector(".grid")`;
+        const clipP = (type, data) => js(`(function () { var g = ${grid}; var dt = new DataTransfer(); var d = ${JSON.stringify(data || {})}; Object.keys(d).forEach(function (k) { dt.setData(k, d[k]); }); g.dispatchEvent(new ClipboardEvent(${JSON.stringify(type)}, { clipboardData: dt, bubbles: true, cancelable: true, composed: true })); return { text: dt.getData("text/plain"), grid: dt.getData("application/x-nexa-grid") }; })()`);
+        const dragP = async (from, to) => {
+            const a = await js(`(function () { var b = ${from}.getBoundingClientRect(); return { x: b.left + Math.min(12, b.width / 2), y: b.top + Math.min(8, b.height / 2) }; })()`);
+            const b = await js(`(function () { var b = ${to}.getBoundingClientRect(); return { x: b.left + Math.min(12, b.width / 2), y: b.top + Math.min(8, b.height / 2) }; })()`);
+            await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: a.x, y: a.y });
+            await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: a.x, y: a.y, button: 'left', buttons: 1, clickCount: 1 });
+            await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: b.x, y: b.y, buttons: 1 });
+            await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: b.x, y: b.y, button: 'left', buttons: 0, clickCount: 1 });
+            await settle(); await wait(150);
+        };
+        // copy A1 (a bold red 1), paste it at C3: the value and the style
+        await dragP(pcell(0, 0), pcell(0, 0));
+        const copied = await clipP('copy');
+        await dragP(pcell(2, 2), pcell(2, 2));
+        await clipP('paste', { 'text/plain': copied.text, 'application/x-nexa-grid': copied.grid });
+        assert.strictEqual(await js(`${pcell(2, 2)}.textContent.trim()`), '1');
+        assert.strictEqual(await js(`getComputedStyle(${pcell(2, 2)}).fontWeight`), '700', 'the style came with it');
+        assert.strictEqual(await js(`getComputedStyle(${pcell(2, 2)}).backgroundColor`), 'rgb(255, 0, 0)');
+        // fill A1 down three cells: values go up, the style repeats
+        await dragP(pcell(0, 0), pcell(0, 0));
+        await dragP(`${prev()}.querySelector('[data-r="0"][data-c="0"] [data-fill]')`, pcell(3, 0));
+        assert.deepStrictEqual([await js(`${pcell(1, 0)}.textContent.trim()`), await js(`${pcell(3, 0)}.textContent.trim()`)], ['2', '4']);
+        assert.strictEqual(await js(`getComputedStyle(${pcell(3, 0)}).fontWeight`), '700', 'the style repeats in the fill');
+        // undo takes the fill back in one step
+        await js(`document.querySelector("nexa-data-grid-editor")._undo()`); await settle(); await wait(100);
+        assert.strictEqual(await js(`${pcell(1, 0)}.textContent.trim()`), '', 'one Undo: the whole fill');
+        assert.strictEqual(await js(`${pcell(2, 2)}.textContent.trim()`), '1', 'the paste before it is still there');
+        await js(`document.querySelector("nexa-data-grid-editor")._redo()`); await settle(); await wait(100);
+        await clickAt(`Array.from(document.querySelectorAll(".nx-dialog-foot button")).filter(function (b) { return b.textContent.trim() === "Apply"; })[0]`);
+        await wait(120);
+        const s = Object.fromEntries(await js('window.__sets'));
+        assert.deepStrictEqual(Object.keys(s).sort(), ['cellRules', 'cells']);
+        assert.deepStrictEqual(s.cells, { A1: 1, A2: 2, A3: 3, A4: 4, C3: 1 });
+        const rules = s.cellRules.filter((r) => r.range !== 'A1');
+        assert.ok(rules.length <= 3, 'the styles are a few short rules: ' + JSON.stringify(rules));
+        assert.ok(rules.some((r) => r.range === 'A2:A4' && r.bold === true), 'one range for the filled column: ' + JSON.stringify(rules));
+    });
+
     await ok('the Edit grid row of the inspector says what the sheet has', async () => {
         const r = await js(`(function () { var p = NEXA.getComponent("nexa-ui-data-grid").nexa.props.editGrid; return [p.info({ rows: 50, cols: 10, cells: { A1: 1, B1: 2 }, cellRules: [{}], merges: ["A1:B2"], populate: [{}, {}], locks: [{}] }), p.info({})]; })()`);
         assert.strictEqual(r[0], '50 rows x 10 columns, 2 cells typed, 1 type / style rule, 2 populate rules, 1 merged, 1 lock rule');

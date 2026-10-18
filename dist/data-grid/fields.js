@@ -10,7 +10,7 @@ const showFor = (...types) => (rule) => types.indexOf(rule.type || "text") !== -
 /** A cell rule: the type, the format and the style of a range. Every field is optional; the last rule that sets a field wins for it. */
 export const RULE_SCHEMA = {
     range,
-    type: { type: "enum", label: "Cell type", default: "", options: [{ value: "", label: "(text)" }].concat(CELL_TYPES.slice(1).map((t) => ({ value: t, label: t }))), style: "select", bindable: false, section: "Type" },
+    type: { type: "enum", label: "Cell type", default: "", options: [{ value: "", label: "(general)" }].concat(CELL_TYPES.slice(1).map((t) => ({ value: t, label: t }))), style: "select", bindable: false, section: "Type" },
     decimals: { type: "number", label: "Decimals", default: "", min: 0, max: 10, section: "Type", visibleWhen: showFor("number") },
     suffix: { type: "string", label: "Unit / suffix", default: "", section: "Type", visibleWhen: showFor("number") },
     dateFormat: { type: "enum", label: "Date format", default: "", options: [{ value: "", label: "date and time" }, { value: "date", label: "date" }, { value: "time", label: "time" }], section: "Type", visibleWhen: showFor("date") },

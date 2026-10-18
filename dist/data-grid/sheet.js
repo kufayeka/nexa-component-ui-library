@@ -48,7 +48,7 @@ export function fieldsAt(rules, r, c) {
 export function cellSpec(fields) {
     const f = fields || {};
     const decimals = Number(f.decimals), max = Number(f.max);
-    const type = typeof f.type === "string" && f.type ? f.type : "text";
+    const type = typeof f.type === "string" && f.type ? f.type : "general";
     return {
         type,
         decimals: f.decimals !== undefined && f.decimals !== "" && isFinite(decimals) && decimals >= 0 ? Math.floor(decimals) : -1,

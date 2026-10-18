@@ -11,7 +11,7 @@ import { BASE_CSS, UIElement, PREFIX, part, sizeProp, paletteProp, radiusProp, i
 import { colName, parseAddress, addressOf, rangeText, sizeOf } from "./address.js";
 import { displayText, badgePalette, coerceEdit, dateInputValue } from "./cell-types.js";
 import { expandPopulate, parseFields } from "./populate.js";
-import { cellKey, parseCells, parseRules, fieldsAt, cellSpec, styleCss, populatedCells, valueAt, viewAreaOf, mergesFromProps, rangedFromProps } from "./sheet.js";
+import { RULE_FIELDS, cellKey, parseCells, parseRules, fieldsAt, cellSpec, styleCss, populatedCells, valueAt, viewAreaOf, mergesFromProps, rangedFromProps } from "./sheet.js";
 import { normalizeFreeze, normalizeMerges, normalizeBorders, buildEdges, boxBorders, normalizeLocks, cellEditable, mergeOf } from "./layout.js";
 import { uniformAxis, sizesAxis, visibleRange, scrollToShow } from "./window.js";
 import { createStage, stageSet, stageValue, stageHas, stageCount, stageClear, stageDrop } from "./stage.js";
@@ -19,6 +19,9 @@ import { noSelection, selectCell, extendTo, rangeOf, growToMerges, moveFocus, ra
 import { RULE_SCHEMA, POPULATE_SCHEMA, BORDER_SCHEMA, LOCK_SCHEMA, COL_RULE_SCHEMA, ROW_RULE_SCHEMA } from "./fields.js";
 import { parseColRules, parseRowRules, colSizes, rowSizes, rowSizeAt, clampSize } from "./sizes.js";
 import { openGridEditor, summaryOf } from "./editor.js";
+import { GRID_MIME, packCells, unpackCells, parseTsv, pasteTargets } from "./clipboard.js";
+import { seriesValues, fillTarget } from "./fill.js";
+import { rulesFromCells } from "./design.js";
 
 export const CATEGORY_DATA = "UI · Data";
 
@@ -62,6 +65,8 @@ const DATA_GRID_CSS = css`
     .rz-r { left: 0; bottom: 0; height: 6px; width: 100%; cursor: row-resize; }
     .rz:hover { background: var(--cp-solid, #0f62fe); opacity: 0.5; }
     .cell.wrap { overflow-y: auto; }
+    .fillh { position: absolute; right: 0; bottom: 0; width: 8px; height: 8px; background: var(--cp-solid, #0f62fe); border: 1px solid var(--bg); cursor: crosshair; z-index: 4; box-sizing: border-box; }
+    .cell.fillp { outline: 1px dashed var(--cp-solid, #0f62fe); outline-offset: -1px; background-image: linear-gradient(color-mix(in srgb, var(--cp-solid, #0f62fe) 10%, transparent), color-mix(in srgb, var(--cp-solid, #0f62fe) 10%, transparent)); }
     textarea.ed { resize: none; padding: 4px 6px; line-height: 1.25; font: inherit; }
     .head.corner { background: var(--bg-muted); }
     .cb { width: 16px; height: 16px; box-sizing: border-box; border: 1px solid var(--bd-strong); border-radius: 2px; display: inline-flex; align-items: center; justify-content: center; background: var(--bg); color: var(--fg); flex: 0 0 auto; }
@@ -202,12 +207,13 @@ export const dataGrid = defineUI({
         _dataVersion = 0;           // grows when the values or the sizes change: the heights that fit the text are measured again
         _editFit = null;            // { r, h }: the row of the cell being typed in grows with the text
         _measure = null;
+        _fill = null;               // { source, plan } while the fill handle is dragged
 
         propsChanged() { this._prepare(); }
 
         mounted() {
             // one listener for the whole life of the grid: a drag that ends outside the grid still ends
-            this.listen(window, "mouseup", () => { this._dragging = ""; if (this._resize) this._endResize(); });
+            this.listen(window, "mouseup", (e) => { this._dragging = ""; if (this._resize) this._endResize(); if (this._fill) this._endFill(e); });
             this.listen(window, "mousemove", (e) => this._dragResize(e));
         }
 
@@ -391,8 +397,12 @@ export const dataGrid = defineUI({
             const dirty = stageHas(this._stage, key, "v");
             const hatch = this.isEditor && this._mode() === "editable" && this._locked(r, c);
             const anchor = this.isEditor && this._populateAt && this._populateAt.has(key);
-            const cls = ["cell", inSel ? "sel" : "", focus ? "focus" : "", hatch ? "hatch" : "", dirty ? "dirty" : "", anchor ? "pop" : "", fields.wrap === true ? "wrap" : ""].filter(Boolean).join(" ");
-            return html`<div class=${cls} part="cell" data-r=${r} data-c=${c} style=${style} title=${anchor ? "Populated from a message: " + this._populateAt.get(key) : nothing}>${this._content(spec, value, r, c, editable, fields)}</div>`;
+            const lastR = merge ? merge.r2 : r, lastC = merge ? merge.c2 : c;
+            const handle = !!range && lastR === range.r2 && lastC === range.c2 && this._canFill();
+            const plan = this._fill && this._fill.plan ? this._fill.plan.target : null;
+            const planned = !!plan && r >= plan.r1 && r <= plan.r2 && c >= plan.c1 && c <= plan.c2;
+            const cls = ["cell", inSel ? "sel" : "", planned ? "fillp" : "", focus ? "focus" : "", hatch ? "hatch" : "", dirty ? "dirty" : "", anchor ? "pop" : "", fields.wrap === true ? "wrap" : ""].filter(Boolean).join(" ");
+            return html`<div class=${cls} part="cell" data-r=${r} data-c=${c} style=${style} title=${anchor ? "Populated from a message: " + this._populateAt.get(key) : nothing}>${this._content(spec, value, r, c, editable, fields)}${handle ? html`<div class="fillh" data-fill title="Drag to fill down or across (Ctrl: copy as it is)"></div>` : nothing}</div>`;
         }
 
         _colHead(g, c, left) {
@@ -467,7 +477,7 @@ export const dataGrid = defineUI({
             const frozenTop = g.hh + g.frozenRowsH;
             const staged = this._staged() && stageCount(this._stage) > 0;
             return html`<div class="grid ${p.showGridLines === false ? "nolines" : ""}" part="root" tabindex="0" role="grid" aria-rowcount=${g.nR} aria-colcount=${g.nC}
-                @mousedown=${this._onMouseDown} @mouseover=${this._onMouseOver} @click=${this._onClick} @dblclick=${this._onDblClick} @keydown=${this._onKey} @copy=${this._onCopy} @change=${this._onChange} @focusout=${this._onFocusOut}>
+                @mousedown=${this._onMouseDown} @mouseover=${this._onMouseOver} @click=${this._onClick} @dblclick=${this._onDblClick} @keydown=${this._onKey} @copy=${this._onCopy} @cut=${this._onCut} @paste=${this._onPaste} @change=${this._onChange} @focusout=${this._onFocusOut}>
                 <div class="pane" style="left:0;top:0;width:${g.frozenW}px;height:${frozenTop}px"><div class="inner">${headTL}${tl}</div></div>
                 <div class="pane" style="left:${g.frozenW}px;top:0;width:${g.viewW}px;height:${frozenTop}px"><div class="inner" data-pane="tr" style="transform:translateX(${-sl}px)">${headTR}${tr}</div></div>
                 <div class="pane" style="left:0;top:${frozenTop}px;width:${g.frozenW}px;height:${g.viewH}px"><div class="inner" data-pane="bl" style="transform:translateY(${-st}px)">${bl}</div></div>
@@ -680,6 +690,7 @@ export const dataGrid = defineUI({
             if (e.button !== 0) return;
             const handle = e.target.closest && e.target.closest("[data-rz]");
             if (handle) { this._beginResize(e, handle); return; }
+            if (e.target.closest && e.target.closest("[data-fill]") && this._selRange) { this._fill = { source: Object.assign({}, this._selRange), plan: null }; e.preventDefault(); return; }
             const head = this._headAt(e);
             if (head) {
                 if (this._edit) this._commitEdit(this._editText());
@@ -703,6 +714,11 @@ export const dataGrid = defineUI({
         }
 
         _onMouseOver(e) {
+            if (this._fill && (e.buttons & 1)) {
+                const hit = this._at(e);
+                if (hit) { this._fill.plan = fillTarget(this._fill.source, { r: hit.r, c: hit.c }, this._size); this.requestUpdate(); }
+                return;
+            }
             if (!this._dragging || !(e.buttons & 1)) return;
             if (this._dragging === "cells") { const hit = this._at(e); if (hit) this._select(extendTo(this._sel, hit.r, hit.c)); return; }
             const head = this._headAt(e);
@@ -888,11 +904,110 @@ export const dataGrid = defineUI({
             if (f) this._ensureVisible(f.r, f.c, !before || before.r !== f.r, !before || before.c !== f.c);
         }
 
+        // the fill handle shows where the user can fill: in the Edit grid dialog, and on an editable page
+        _canFill() { return !!this._selRange && this.p.selection !== "none" && (this._designing() || (!this.isEditor && this._mode() === "editable")); }
+
+        // the style fields of a cell, the ones a rule can have
+        _styleOf(r, c) {
+            const f = this._fields(r, c), out = {};
+            RULE_FIELDS.forEach((k) => { if (Object.prototype.hasOwnProperty.call(f, k)) out[k] = f[k]; });
+            return out;
+        }
+
+        // Copy: the text of the cells as shown (tab-separated, for Excel and any text field), and a JSON of their values and styles (for this grid and others)
         _onCopy(e) {
             const range = this._selRange;
-            if (!range || !e.clipboardData || (e.target.closest && e.target.closest("input, select"))) return;
+            if (!range || !e.clipboardData || (e.target.closest && e.target.closest("input, select, textarea"))) return;
             e.clipboardData.setData("text/plain", rangeToTsv(range, (r, c) => displayText(cellSpec(this._fields(r, c)), this._value(r, c))));
+            const rows = [];
+            for (let r = range.r1; r <= range.r2; r++) { const line = []; for (let c = range.c1; c <= range.c2; c++) line.push({ v: this._value(r, c), f: this._styleOf(r, c) }); rows.push(line); }
+            e.clipboardData.setData(GRID_MIME, packCells(rows));
             e.preventDefault();
+        }
+
+        // Cut: a copy, then the editable cells of the selection are emptied
+        _onCut(e) {
+            if (!this._selRange || (e.target.closest && e.target.closest("input, select, textarea"))) return;
+            this._onCopy(e);
+            this._clearSelection();
+        }
+
+        // Paste: what this grid (values and styles) or Excel / any text (values) copied, from the cell of the selection on; one cell over a selection fills it
+        _onPaste(e) {
+            if (!e.clipboardData || (e.target.closest && e.target.closest("input, select, textarea"))) return;
+            const range = this._selRange;
+            if (!range || this.p.selection === "none") return;
+            e.preventDefault();
+            const packed = unpackCells(e.clipboardData.getData(GRID_MIME));
+            const text = packed ? null : parseTsv(e.clipboardData.getData("text/plain"));
+            const block = packed || (text || []).map((row) => row.map((v) => ({ v })));
+            if (!block.length) return;
+            const h = block.length, w = Math.max(...block.map((row) => row.length));
+            const items = pasteTargets({ r: range.r1, c: range.c1 }, h, w, range, this._size).map((t) => {
+                const src = block[t.i] && block[t.i][t.j];
+                return src === undefined ? null : { r: t.r, c: t.c, v: src.v, f: packed ? src.f || {} : undefined, text: !packed };
+            }).filter(Boolean);
+            this._applyBlock(items);
+        }
+
+        // Cells put in by a paste or a fill: [{ r, c, v, f }]. Only the cells the mode and the locks let the user edit. On a page the values are kept (and each
+        // change is told); in the Edit grid dialog they are the design's content, with their styles as rules, in one go.
+        _applyBlock(items) {
+            const todo = items.filter((x) => this._editable(x.r, x.c) && x.v !== undefined);
+            if (!todo.length) return;
+            const coerced = todo.map((x) => Object.assign({}, x, { value: coerceEdit(cellSpec(this._fields(x.r, x.c)), x.v === null ? "" : x.v) }));
+            if (this._designing()) {
+                const r0 = Math.min(...coerced.map((x) => x.r)), r1 = Math.max(...coerced.map((x) => x.r)), c0 = Math.min(...coerced.map((x) => x.c)), c1 = Math.max(...coerced.map((x) => x.c));
+                const grid = [];
+                for (let r = r0; r <= r1; r++) grid.push(new Array(c1 - c0 + 1).fill(null));
+                coerced.forEach((x) => { if (x.f) grid[x.r - r0][x.c - c0] = x.f; });
+                const rules = coerced.some((x) => x.f) ? rulesFromCells(grid, { r: r0, c: c0 }, (r, c) => this._fields(r, c), RULE_FIELDS) : [];
+                this.dispatchEvent(new CustomEvent("nexa-cells", { detail: { cells: coerced.map((x) => ({ address: addressOf(x.r, x.c), value: x.value })), rules }, bubbles: true, composed: true }));
+                return;
+            }
+            if (this.isEditor) return;
+            const changes = [];
+            coerced.forEach((x) => {
+                const key = cellKey(x.r, x.c), old = this._value(x.r, x.c);
+                if (JSON.stringify(old) === JSON.stringify(x.value)) return;
+                if (this._staged()) stageSet(this._stage, key, "v", x.value, this._baseValue(x.r, x.c));
+                else this._edits.set(key, x.value);
+                changes.push({ address: addressOf(x.r, x.c), old, new: x.value, staged: this._staged() });
+            });
+            this._dataVersion++;
+            this.requestUpdate();
+            changes.forEach((c) => this.fire("cellChange", c));
+        }
+
+        // The fill handle was let go: the cells it passed get the values of the selection as a series (or copied, with Ctrl) and its styles repeated
+        _endFill(e) {
+            const f = this._fill;
+            this._fill = null;
+            this.requestUpdate();
+            if (!f || !f.plan) return;
+            const S = f.source, { dir, target } = f.plan;
+            const vertical = dir === "down" || dir === "up", backward = dir === "up" || dir === "left";
+            const lines = vertical ? S.c2 - S.c1 + 1 : S.r2 - S.r1 + 1;            // a column (a row) of the selection is one series
+            const length = vertical ? S.r2 - S.r1 + 1 : S.c2 - S.c1 + 1;
+            const count = vertical ? target.r2 - target.r1 + 1 : target.c2 - target.c1 + 1;
+            const items = [];
+            for (let line = 0; line < lines; line++) {
+                const cell = (k) => (vertical ? { r: S.r1 + k, c: S.c1 + line } : { r: S.r1 + line, c: S.c1 + k });
+                const src = [];
+                for (let k = 0; k < length; k++) { const a = cell(k); src.push(this._value(a.r, a.c)); }
+                const vals = seriesValues(src, count, { copy: !!(e && (e.ctrlKey || e.metaKey)), backward });
+                for (let k = 0; k < count; k++) {
+                    // the k-th cell added: going away from the selection; its style is the one of the selection's cell it repeats
+                    const at = dir === "down" ? { r: S.r2 + 1 + k, c: S.c1 + line } : dir === "up" ? { r: S.r1 - 1 - k, c: S.c1 + line }
+                        : dir === "right" ? { r: S.r1 + line, c: S.c2 + 1 + k } : { r: S.r1 + line, c: S.c1 - 1 - k };
+                    const from = backward ? (length - 1 - (k % length)) : (k % length);
+                    const a = cell(from);
+                    items.push({ r: at.r, c: at.c, v: vals[k], f: this._styleOf(a.r, a.c) });
+                }
+            }
+            this._applyBlock(items);
+            // the selection grows over what was filled
+            this._select({ anchor: { r: Math.min(S.r1, target.r1), c: Math.min(S.c1, target.c1) }, focus: { r: Math.max(S.r2, target.r2), c: Math.max(S.c2, target.c2) } });
         }
 
         // ---- actions (Logic) ------------------------------------------------------------------------------------------

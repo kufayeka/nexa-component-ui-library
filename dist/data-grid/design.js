@@ -140,3 +140,47 @@ export function commonFields(rules, range, keys) {
     }
     return out;
 }
+
+// ---- rules for pasted and filled cells -------------------------------------------------------------------------------------
+
+/**
+ * The rules that give the cells of a block the styles they came with. "cells" is the block as rows of the fields (the styles) each cell had in the copy,
+ * "at" the cell of the sheet where it lands, currentFieldsAt(r, c) what the cell has now, "keys" the fields a rule may have. A field the copy does not
+ * have but the cell has now is set to "" (back to the default), so a pasted plain cell is plain. The rules are short: neighbours with the same fields in
+ * a row become one range, and identical rows one under the other become one range too.
+ */
+export function rulesFromCells(cells, at, currentFieldsAt, keys) {
+    const runs = [];                                           // rows of { c1, c2, f, json }
+    cells.forEach((row, i) => {
+        const line = [];
+        row.forEach((src, j) => {
+            const now = currentFieldsAt(at.r + i, at.c + j) || {};
+            const f = {};
+            // a cell the block does not touch (null) is left as it is
+            if (src !== null) (keys || []).forEach((k) => {
+                if (src && Object.prototype.hasOwnProperty.call(src, k) && src[k] !== undefined && src[k] !== null) f[k] = src[k];
+                else if (Object.prototype.hasOwnProperty.call(now, k)) f[k] = "";
+            });
+            const json = JSON.stringify(f);
+            const last = line[line.length - 1];
+            if (last && last.json === json && last.c2 === at.c + j - 1) last.c2 = at.c + j;
+            else line.push({ c1: at.c + j, c2: at.c + j, f, json });
+        });
+        runs.push(line);
+    });
+    const out = [];
+    const open = new Map();                                    // "c1:c2:json" -> the rule being extended downwards
+    runs.forEach((line, i) => {
+        const keep = new Set();
+        line.forEach((run) => {
+            if (run.json === "{}") return;
+            const id = run.c1 + ":" + run.c2 + ":" + run.json;
+            const above = open.get(id);
+            if (above && above.r2 === at.r + i - 1) { above.r2 = at.r + i; keep.add(id); return; }
+            const rule = { r1: at.r + i, r2: at.r + i, c1: run.c1, c2: run.c2, f: run.f };
+            open.set(id, rule); keep.add(id); out.push(rule);
+        });
+        open.forEach((v, id) => { if (!keep.has(id)) open.delete(id); });
+    });
+    return out.map((x) => Object.assign({ range: rangeText(x) }, x.f));
+}

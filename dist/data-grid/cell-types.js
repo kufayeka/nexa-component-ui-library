@@ -3,7 +3,7 @@
 // A cell has a type (text, number, checkbox, choice, date, badge, progress, link, image, button, input) given by the rules of its range. This file
 // knows how each type shows a value as text and what an edit of it stores. Nothing is validated: a value is taken as typed.
 
-export const CELL_TYPES = ["text", "number", "boolean", "select", "date", "badge", "progress", "link", "image", "button", "input"];
+export const CELL_TYPES = ["general", "text", "number", "boolean", "select", "date", "badge", "progress", "link", "image", "button", "input"];
 
 const ALIGN_BY_TYPE = { number: "right", boolean: "center", button: "center", image: "center" };
 
@@ -86,7 +86,13 @@ export function coerceEdit(col, input) {
             const d = toDate(text);
             return d ? (/^\d{4}-\d{2}-\d{2}$/.test(text) ? text : d.toISOString()) : text;
         }
-        default: return input === undefined || input === null ? "" : String(input);
+        case "text": return input === undefined || input === null ? "" : String(input);
+        default: {
+            // general: what looks like a number is a number (zero-padded codes like "0123" stay text), as in a sheet
+            if (typeof input === "number" || typeof input === "boolean") return input;
+            const text = input === undefined || input === null ? "" : String(input);
+            return /^\s*-?(0|[1-9]\d*)([.,]\d+)?\s*$/.test(text) ? Number(text.trim().replace(",", ".")) : text;
+        }
     }
 }
 

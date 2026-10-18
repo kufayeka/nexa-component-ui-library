@@ -10,7 +10,7 @@ const path = require('path');
 
 // The modules are plain ES modules. They are loaded without a bundler: each one in its own function scope, an `import { a } from "./x.js"`
 // becoming a destructuring of what x.js exported (so the order below is the order of the imports).
-const ORDER = ['address.js', 'sizes.js', 'cell-types.js', 'populate.js', 'sheet.js', 'layout.js', 'window.js', 'stage.js', 'selection.js', 'design.js'];
+const ORDER = ['address.js', 'sizes.js', 'cell-types.js', 'populate.js', 'sheet.js', 'clipboard.js', 'layout.js', 'window.js', 'stage.js', 'selection.js', 'design.js', 'fill.js'];
 const M = {};
 ORDER.forEach((file) => {
     let src = fs.readFileSync(path.join(__dirname, '..', 'dist', 'data-grid', file), 'utf8');
@@ -175,6 +175,17 @@ ok('coerceEdit: nothing is rejected: a number cell keeps a non-number as typed; 
     assert.strictEqual(T.coerceEdit(c('boolean'), 'true'), true);
     assert.strictEqual(T.coerceEdit(c('boolean'), false), false);
     assert.strictEqual(T.coerceEdit(c('text'), 5), '5');
+    assert.strictEqual(T.coerceEdit(c('text'), '12'), '12', 'the type text keeps what looks like a number as text');
+    // general (no type): a number when it looks like one
+    assert.strictEqual(T.coerceEdit(c('general'), '12'), 12);
+    assert.strictEqual(T.coerceEdit(c('general'), ' -3,5 '), -3.5);
+    assert.strictEqual(T.coerceEdit(c('general'), '0.25'), 0.25);
+    assert.strictEqual(T.coerceEdit(c('general'), '0123'), '0123', 'a zero-padded code stays text');
+    assert.strictEqual(T.coerceEdit(c('general'), '1e5'), '1e5');
+    assert.strictEqual(T.coerceEdit(c('general'), 'abc'), 'abc');
+    assert.strictEqual(T.coerceEdit(c('general'), ''), '');
+    assert.strictEqual(T.coerceEdit(c('general'), 7), 7);
+    assert.strictEqual(T.coerceEdit(c('general'), true), true);
     assert.strictEqual(T.coerceEdit(c('date'), '2026-10-18'), '2026-10-18');
     assert.strictEqual(T.coerceEdit(c('date'), ''), null);
 });
@@ -260,7 +271,7 @@ ok('parseRules: only usable rules, only the fields a rule may have, inside the s
 });
 
 ok('cellSpec: defaults and clean values', () => {
-    assert.deepStrictEqual(S.cellSpec({}), { type: 'text', decimals: -1, suffix: '', format: 'datetime', options: [], max: 100, buttonLabel: '', action: '', label: '' });
+    assert.deepStrictEqual(S.cellSpec({}), { type: 'general', decimals: -1, suffix: '', format: 'datetime', options: [], max: 100, buttonLabel: '', action: '', label: '' });
     const s = S.cellSpec({ type: 'progress', max: 50, decimals: 2, dateFormat: 'nope', options: 'a:A' });
     assert.strictEqual(s.max, 50);
     assert.strictEqual(s.decimals, 2);
@@ -485,9 +496,9 @@ ok('selection: rangeOf, extendTo, moveFocus clamps, steps over merges, extends w
     assert.deepStrictEqual(Sel.growToMerges({ r1: 4, c1: 0, r2: 4, c2: 1 }, m), { r1: 3, c1: 0, r2: 4, c2: 2 }, 'a range that touches a merge takes all of it');
 });
 
-ok('rangeToTsv: tab between cells, new line between rows, tabs / new lines inside a value become spaces', () => {
+ok('rangeToTsv: tab between cells, new line between rows, a cell with a tab / new line in quotes', () => {
     const v = (r, c) => (r === 0 && c === 1 ? 'a\tb\nc' : r + ',' + c);
-    assert.strictEqual(Sel.rangeToTsv({ r1: 0, c1: 0, r2: 1, c2: 1 }, v), '0,0\ta b c\n1,0\t1,1');
+    assert.strictEqual(Sel.rangeToTsv({ r1: 0, c1: 0, r2: 1, c2: 1 }, v), '0,0\t"a\tb\nc"\n1,0\t1,1');
     assert.strictEqual(Sel.rangeToTsv(null, v), '');
 });
 
@@ -542,6 +553,83 @@ ok('design: addLock overrides the rules inside the range; resetLocks forgets the
     assert.strictEqual(D.lockState({ r1: 1, c1: 0, r2: 3, c2: 0 }, ruleAt), 'mixed');
     assert.strictEqual(D.lockState({ r1: 7, c1: 7, r2: 8, c2: 8 }, ruleAt), 'default');
     assert.strictEqual(D.resetLocks(l, { r1: 0, c1: 0, r2: 9, c2: 9 }).length, 0);
+});
+
+const Cb = M['clipboard.js'], F = M['fill.js'];
+
+ok('clipboard: formatTsv / parseTsv round-trip a matrix, with quotes as Excel writes them (a tab, a new line and a quote inside a cell)', () => {
+    const m = [['a', 'b\tc', 'line1\nline2'], ['say "hi"', '', null], [1, 2.5, true]];
+    const text = Cb.formatTsv(m);
+    assert.strictEqual(text, 'a\t"b\tc"\t"line1\nline2"\n"say ""hi"""\t\t\n1\t2.5\ttrue');
+    assert.deepStrictEqual(Cb.parseTsv(text), [['a', 'b\tc', 'line1\nline2'], ['say "hi"', '', ''], ['1', '2.5', 'true']]);
+    assert.deepStrictEqual(Cb.parseTsv('x\ty\r\n1\t2\r\n'), [['x', 'y'], ['1', '2']], 'Windows line ends, a final line end is not a row');
+    assert.deepStrictEqual(Cb.parseTsv('only'), [['only']]);
+    assert.deepStrictEqual(Cb.parseTsv(''), []);
+    assert.deepStrictEqual(Cb.parseTsv('a\t\tb'), [['a', '', 'b']], 'an empty cell between tabs');
+    assert.deepStrictEqual(Cb.parseTsv('"unterminated'), [['unterminated']], 'a quote never closed does not lose the text');
+});
+
+ok('clipboard: packCells / unpackCells carry values and styles; text that is not a copy is null; pasteTargets lays a copy at a cell, cut at the sheet, or fills a selection with one cell', () => {
+    const cells = [[{ v: 1, f: { bold: true } }, { v: 'x', f: {} }]];
+    assert.deepStrictEqual(Cb.unpackCells(Cb.packCells(cells)), cells);
+    assert.strictEqual(Cb.unpackCells('a\tb'), null);
+    assert.strictEqual(Cb.unpackCells('{"v":2}'), null);
+    assert.strictEqual(Cb.unpackCells('{"v":1,"cells":[1]}'), null);
+    const lim = { rows: 10, cols: 5 };
+    assert.deepStrictEqual(Cb.pasteTargets({ r: 8, c: 4 }, 3, 2, null, lim), [{ r: 8, c: 4, i: 0, j: 0 }, { r: 9, c: 4, i: 1, j: 0 }], 'cut at the sheet\'s edge');
+    const sel = { r1: 1, c1: 1, r2: 2, c2: 2 };
+    assert.deepStrictEqual(Cb.pasteTargets({ r: 1, c: 1 }, 1, 1, sel, lim).map((t) => [t.r, t.c, t.i, t.j]), [[1, 1, 0, 0], [1, 2, 0, 0], [2, 1, 0, 0], [2, 2, 0, 0]], 'one cell fills the selection');
+    assert.strictEqual(Cb.pasteTargets({ r: 1, c: 1 }, 2, 2, sel, lim).length, 4, 'a bigger copy goes where it is: the selection does not matter');
+});
+
+ok('rangeToTsv quotes what needs it (the copy of a wrapped cell)', () => {
+    assert.strictEqual(Sel.rangeToTsv({ r1: 0, c1: 0, r2: 0, c2: 1 }, (r, c) => (c === 0 ? 'two\nlines' : 'x')), '"two\nlines"\tx');
+});
+
+ok('fill: numbers go on by the step of the selection (one number: by 1); text that ends in a number too; the rest repeats; Ctrl copies; backwards goes before', () => {
+    assert.deepStrictEqual(F.seriesValues([5], 3), [6, 7, 8]);
+    assert.deepStrictEqual(F.seriesValues([1, 3], 3), [5, 7, 9], 'a step of 2');
+    assert.deepStrictEqual(F.seriesValues([10, 20, 30], 2), [40, 50]);
+    assert.deepStrictEqual(F.seriesValues([0.1, 0.2], 2), [0.3, 0.4], 'no float noise');
+    assert.deepStrictEqual(F.seriesValues([5], 3, { copy: true }), [5, 5, 5]);
+    assert.deepStrictEqual(F.seriesValues([5, 7], 3, { backward: true }), [3, 1, -1], 'above the selection');
+    assert.deepStrictEqual(F.seriesValues(['Item 1'], 3), ['Item 2', 'Item 3', 'Item 4']);
+    assert.deepStrictEqual(F.seriesValues(['A007'], 2), ['A008', 'A009'], 'zero padding is kept');
+    assert.deepStrictEqual(F.seriesValues(['Pump 2', 'Pump 4'], 2), ['Pump 6', 'Pump 8']);
+    assert.deepStrictEqual(F.seriesValues(['Pump 3'], 2, { backward: true }), ['Pump 2', 'Pump 1']);
+    assert.deepStrictEqual(F.seriesValues(['a', 'b'], 5), ['a', 'b', 'a', 'b', 'a'], 'text repeats');
+    assert.deepStrictEqual(F.seriesValues(['a', 'b'], 3, { backward: true }), ['b', 'a', 'b'], 'above: the end of the selection comes first');
+    assert.deepStrictEqual(F.seriesValues(['A 1', 'B 2'], 2), ['A 1', 'B 2'], 'different prefixes: repeat');
+    assert.deepStrictEqual(F.seriesValues([1, 'x'], 3), [1, 'x', 1], 'mixed: repeat');
+    assert.deepStrictEqual(F.seriesValues([], 3), []);
+    assert.deepStrictEqual(F.seriesValues([1], 0), []);
+});
+
+ok('fill: the cells a drag adds are in the direction it went furthest, kept in the sheet; a drag inside the selection adds none', () => {
+    const lim = { rows: 20, cols: 10 }, src = { r1: 2, c1: 2, r2: 3, c2: 3 };
+    assert.deepStrictEqual(F.fillTarget(src, { r: 8, c: 3 }, lim), { dir: 'down', target: { r1: 4, c1: 2, r2: 8, c2: 3 } });
+    assert.deepStrictEqual(F.fillTarget(src, { r: 0, c: 2 }, lim), { dir: 'up', target: { r1: 0, c1: 2, r2: 1, c2: 3 } });
+    assert.deepStrictEqual(F.fillTarget(src, { r: 3, c: 7 }, lim), { dir: 'right', target: { r1: 2, c1: 4, r2: 3, c2: 7 } });
+    assert.deepStrictEqual(F.fillTarget(src, { r: 2, c: 0 }, lim), { dir: 'left', target: { r1: 2, c1: 0, r2: 3, c2: 1 } });
+    assert.strictEqual(F.fillTarget(src, { r: 3, c: 3 }, lim), null, 'inside');
+    assert.strictEqual(F.fillTarget(src, { r: 2, c: 2 }, lim), null);
+    assert.strictEqual(F.fillTarget(src, { r: 50, c: 3 }, lim).target.r2, 19, 'kept in the sheet');
+    assert.strictEqual(F.fillTarget(src, { r: 9, c: 6 }, lim).dir, 'down', 'the axis it went further along (7 rows against 3 columns)');
+});
+
+ok('design: rulesFromCells: the styles of a block as short rules (neighbours and identical rows become one range); a plain cell over a styled one resets it', () => {
+    const keys = ['bold', 'fill', 'type'];
+    const bold = { bold: true }, red = { fill: 'red' };
+    const rules = D.rulesFromCells([[bold, bold, red], [bold, bold, red], [{}, {}, {}]], { r: 1, c: 1 }, () => ({}), keys);
+    assert.deepStrictEqual(rules, [{ range: 'B2:C3', bold: true }, { range: 'D2:D3', fill: 'red' }]);
+    // over a cell that has a fill, a plain copy resets it
+    const reset = D.rulesFromCells([[{}]], { r: 0, c: 0 }, (r, c) => (r === 0 && c === 0 ? { fill: 'blue', bold: true } : {}), keys);
+    assert.deepStrictEqual(reset, [{ range: 'A1', bold: '', fill: '' }]);
+    // what the rules say once read back
+    const parsed = S.parseRules(D.rulesFromCells([[bold, red]], { r: 4, c: 4 }, () => ({}), keys), 20, 20);
+    assert.deepStrictEqual(S.fieldsAt(parsed, 4, 4), { bold: true });
+    assert.deepStrictEqual(S.fieldsAt(parsed, 4, 5), { fill: 'red' });
+    assert.deepStrictEqual(D.rulesFromCells([[{}, {}]], { r: 0, c: 0 }, () => ({}), keys), [], 'plain over plain: nothing to say');
 });
 
 ok('design: toTextMerges / toTextRules store ranges as Excel text (whole columns and rows in their short form) and drop the numbers', () => {

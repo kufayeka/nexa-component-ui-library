@@ -2,6 +2,7 @@
 //
 // A selection is an anchor (where it started) and a focus (where it is now), both a cell { r, c } of the shown rows. The range is the
 // rectangle between them. A merged cell counts as one: a selection that touches part of a merge grows to take all of it.
+import { formatTsv } from "./clipboard.js";
 
 const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
 
@@ -53,14 +54,14 @@ export function moveFocus(sel, dr, dc, rowCount, colCount, merges, extend) {
     return extend && sel.anchor ? { anchor: sel.anchor, focus: { r, c } } : selectCell(r, c);
 }
 
-/** The selected range as text for the clipboard: tab between cells, a new line between rows. `valueAt(r, c)` gives the text of a cell. */
+/** The selected range as text for the clipboard: tab between cells, a new line between rows, quotes around a cell that holds a tab / new line / quote (as Excel). */
 export function rangeToTsv(range, valueAt) {
     if (!range) return "";
-    const lines = [];
+    const rows = [];
     for (let r = range.r1; r <= range.r2; r++) {
         const cells = [];
-        for (let c = range.c1; c <= range.c2; c++) cells.push(String(valueAt(r, c)).replace(/[\t\r\n]+/g, " "));
-        lines.push(cells.join("\t"));
+        for (let c = range.c1; c <= range.c2; c++) cells.push(valueAt(r, c));
+        rows.push(cells);
     }
-    return lines.join("\n");
+    return formatTsv(rows);
 }

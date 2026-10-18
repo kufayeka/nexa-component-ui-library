@@ -161,6 +161,7 @@ defineInspectorWidget("nexa-data-grid-editor", ({ KitElement, html: h, nothing }
             host.addEventListener("nexa-selection", (e) => { this._range = e.detail && e.detail.range ? e.detail.range : null; });
             host.addEventListener("nexa-cell-edit", (e) => this._typed(e.detail.address, e.detail.value));
             host.addEventListener("nexa-resize", (e) => this._resized(e.detail));
+            host.addEventListener("nexa-cells", (e) => this._cellsChanged(e.detail));
         }
         const props = this._previewProps();
         const sig = JSON.stringify(props);
@@ -285,6 +286,13 @@ defineInspectorWidget("nexa-data-grid-editor", ({ KitElement, html: h, nothing }
         const cells = Object.assign({}, this._draft.cells);
         if (value === null || value === "" || value === undefined) delete cells[address]; else cells[address] = value;
         this._set({ cells });
+    }
+
+    // a paste or a fill in the preview: the values go into the cells, the styles come as rules; one step of history
+    _cellsChanged(d) {
+        const cells = Object.assign({}, this._draft.cells);
+        d.cells.forEach((x) => { if (x.value === null || x.value === "" || x.value === undefined) delete cells[x.address]; else cells[x.address] = x.value; });
+        this._set({ cells, cellRules: (this._draft.cellRules || []).concat(d.rules || []) });
     }
 
     // a line dragged between two headers: a size rule over the columns / rows it moved
