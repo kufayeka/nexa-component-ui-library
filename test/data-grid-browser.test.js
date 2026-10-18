@@ -882,6 +882,110 @@ withHarness({
         for (const s of ['Where', 'Data', 'Type', 'Text', 'Cell']) assert.ok(r.indexOf('populate#0/' + s) !== -1, 'the section ' + s + ' in ' + r.join(' | '));
     });
 
+    // ---- export to Excel ---------------------------------------------------------------------------------------------------------------------------
+    // the file the page hands the browser (a link with a blob and a file name), read back here: a stored zip, its files, their CRC
+    const hookDownload = () => js(`(function () {
+        window.__dl = null;
+        if (!window.__dlHooked) {
+            window.__dlHooked = true;
+            var click = HTMLAnchorElement.prototype.click;
+            HTMLAnchorElement.prototype.click = function () {
+                var a = this;
+                if (a.download && /^blob:/.test(a.href)) {
+                    fetch(a.href).then(function (r) { return r.blob(); }).then(function (b) {
+                        var rd = new FileReader();
+                        rd.onload = function () { window.__dl = { name: a.download, data: String(rd.result).split(",")[1] }; };
+                        rd.readAsDataURL(b);
+                    });
+                    return;
+                }
+                return click.apply(this, arguments);
+            };
+        }
+        return true;
+    })()`);
+    const download = async () => { for (let i = 0; i < 40; i++) { const d = await js('window.__dl'); if (d) return d; await wait(100); } return null; };
+    const readZip = (b64) => {
+        const buf = Buffer.from(b64, 'base64'), files = {};
+        let i = 0;
+        while (buf.readUInt32LE(i) === 0x04034b50) {
+            const method = buf.readUInt16LE(i + 8), crc = buf.readUInt32LE(i + 14), size = buf.readUInt32LE(i + 18), nameLen = buf.readUInt16LE(i + 26), extra = buf.readUInt16LE(i + 28);
+            const name = buf.toString('utf8', i + 30, i + 30 + nameLen), start = i + 30 + nameLen + extra, data = buf.slice(start, start + size);
+            assert.strictEqual(method, 0, name + ' is stored');
+            assert.strictEqual(require('zlib').crc32(data), crc, name + ': the CRC is right');
+            files[name] = data.toString('utf8');
+            i = start + size;
+        }
+        return files;
+    };
+
+    await ok('export to Excel: the action and the corner button download an .xlsx with the values, formats, styles, merges, sizes and frozen panes of the sheet as it is shown', async () => {
+        await mount('xl', {
+            rows: 30, cols: 8, exportable: true, freezeRows: 1, sortArea: 'A1:B4',
+            cells: { A1: 'Machine', B1: 'Temp', C1: 'On', D1: '2026-01-01T12:00:00', A2: 'Mixer <1>', B2: 71.456, C2: true, A3: 'Pump', B3: 12, A4: 'Fig', B4: 3, F6: 'far' },
+            cellRules: [{ range: '1:1', bold: true, fill: '#d0e2ff', color: '#ff0000' }, { range: 'B2:B4', type: 'number', decimals: 1, suffix: ' °C' }, { range: 'C2', type: 'boolean' }, { range: 'D1', type: 'date', dateFormat: 'date' }, { range: 'A2', wrap: true, align: 'center' }],
+            merges: ['E2:F3'], borders: [{ range: 'A1:B1', sides: 'bottom', width: 2, color: 'primary' }],
+            colRules: [{ columns: 'A', width: 200 }], rowRules: [{ rows: '3', height: 60 }]
+        });
+        await hookDownload();
+        await js('NexaTest.invoke("xl", "exportXlsx", { name: "plant" })');
+        const d = await download();
+        assert.ok(d, 'a file was handed to the browser');
+        assert.strictEqual(d.name, 'plant.xlsx', 'the name gets .xlsx');
+        const files = readZip(d.data);
+        assert.deepStrictEqual(Object.keys(files), ['[Content_Types].xml', '_rels/.rels', 'xl/workbook.xml', 'xl/_rels/workbook.xml.rels', 'xl/styles.xml', 'xl/worksheets/sheet1.xml']);
+        const sheet = files['xl/worksheets/sheet1.xml'], styles = files['xl/styles.xml'];
+        assert.ok(sheet.includes('Mixer &lt;1&gt;'), 'text, escaped');
+        assert.ok(/<c r="B2" s="\d+"><v>71.456<\/v><\/c>/.test(sheet), 'a number is a number, not its text');
+        assert.ok(/<c r="C2" s="\d+" t="b"><v>1<\/v><\/c>/.test(sheet), 'a checkbox is a boolean');
+        assert.ok(/<c r="D1" s="\d+"><v>46023\.5<\/v><\/c>/.test(sheet), 'a date is a serial number');
+        assert.ok(sheet.includes('<mergeCell ref="E2:F3"/>'), 'the merge');
+        assert.ok(sheet.includes('<pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/>'), 'the frozen row');
+        assert.ok(sheet.includes('<col min="1" max="1" width="27.86" customWidth="1"/>'), 'the width of A (200 px)');
+        assert.ok(sheet.includes('<row r="3" ht="45" customHeight="1">'), 'the height of row 3 (60 px)');
+        assert.ok(styles.includes('formatCode="0.0&quot; °C&quot;"') && styles.includes('formatCode="yyyy-mm-dd"'), 'the number and date formats');
+        assert.ok(styles.includes('<b/>') && styles.includes('<color rgb="FFFF0000"/>') && styles.includes('<fgColor rgb="FFD0E2FF"/>'), 'bold, the colour, the fill');
+        assert.ok(styles.includes('<bottom style="medium"><color rgb="FF0F62FF"/></bottom>') || styles.includes('<top style="medium"><color rgb="FF0F62FF"/></top>'), 'the border');
+        assert.ok(styles.includes('horizontal="center"') && styles.includes('wrapText="1"'), 'the alignment and the wrap');
+        // every file is well-formed XML (Excel is strict)
+        const bad = await js(`(function () { var f = ${JSON.stringify(files)}; return Object.keys(f).filter(function (n) { var d = new DOMParser().parseFromString(f[n], "application/xml"); return d.getElementsByTagName("parsererror").length > 0; }); })()`);
+        assert.deepStrictEqual(bad, [], 'every file parses as XML');
+        // what the view shows is what is exported: sorted descending by B, the rows under the heading change places
+        await js('NexaTest.invoke("xl", "sortColumn", { column: "B", direction: "desc" })'); await settle(); await wait(60);
+        await js('window.__dl = null'); await js('NexaTest.invoke("xl", "exportXlsx")');
+        const sorted = readZip((await download()).data)['xl/worksheets/sheet1.xml'];
+        assert.ok(sorted.indexOf('<v>71.456</v>') < sorted.indexOf('<v>12</v>') && sorted.indexOf('<v>12</v>') < sorted.indexOf('<v>3</v>'), 'the sorted order');
+        // the corner button
+        assert.strictEqual(await js(q('xl', '[data-xlsx]') + ' ? 1 : 0'), 1, 'the button in the corner');
+        await js('window.__dl = null');
+        await clickAt(q('xl', '[data-xlsx]'));
+        assert.strictEqual((await download()).name, 'sheet.xlsx', 'the corner button downloads too');
+        await mount('xl2', { exportable: false });
+        assert.strictEqual(await js(q('xl2', '[data-xlsx]') + ' ? 1 : 0'), 0, 'no button unless asked for');
+    });
+
+    await ok('export to Excel: an empty sheet is a valid file; the Edit grid dialog exports what it shows; the design canvas does not', async () => {
+        await mount('xl3', {});
+        await hookDownload();
+        await js('NexaTest.invoke("xl3", "exportXlsx", "empty.xlsx")');
+        const e = await download();
+        assert.strictEqual(e.name, 'empty.xlsx');
+        assert.ok(readZip(e.data)['xl/worksheets/sheet1.xml'].includes('<sheetData></sheetData>'));
+        await js(`NexaTest.mount("xl4", "nexa-ui-${ID}", { cells: { A1: "x" } }, { width: 400, height: 200, design: true })`); await settle(); await wait(60);
+        await js('window.__dl = null'); await js('NexaTest.invoke("xl4", "exportXlsx")'); await wait(300);
+        assert.strictEqual(await js('window.__dl'), null, 'the design canvas exports nothing');
+        // the dialog
+        await js(`window.__sets = []; NEXA.getComponent("nexa-ui-data-grid").nexa.props.editGrid.buttons[0].run({ cells: { A1: "typed", B2: 5 } }, { set: function () {} })`);
+        await settle(); await wait(300);
+        await js('window.__dl = null');
+        await clickAt(`Array.from(document.querySelectorAll("nexa-data-grid-editor button")).filter(function (b) { return b.textContent.trim() === "Excel (.xlsx)"; })[0]`);
+        const dd = await download();
+        assert.strictEqual(dd.name, 'sheet.xlsx');
+        const sheet = readZip(dd.data)['xl/worksheets/sheet1.xml'];
+        assert.ok(sheet.includes('typed') && sheet.includes('<v>5</v>'), 'the design as the preview shows it');
+        await clickAt(`Array.from(document.querySelectorAll(".nx-dialog-foot button")).filter(function (b) { return b.textContent.trim() === "Cancel"; })[0]`);
+    });
+
     await ok('the Edit grid row of the inspector says what the sheet has', async () => {
         const r = await js(`(function () { var p = NEXA.getComponent("nexa-ui-data-grid").nexa.props.editGrid; return [p.info({ rows: 50, cols: 10, cells: { A1: 1, B1: 2 }, cellRules: [{}], merges: ["A1:B2"], populate: [{}, {}], locks: [{}] }), p.info({})]; })()`);
         assert.strictEqual(r[0], '50 rows x 10 columns, 2 cells typed, 1 type / style rule, 2 populate rules, 1 merged, 1 lock rule');

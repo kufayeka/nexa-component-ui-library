@@ -10,10 +10,12 @@ import { html, css, nothing, theme } from "../../../nexa-sdk/nexa-component-sdk.
 import { BASE_CSS, UIElement, PREFIX, part, sizeProp, paletteProp, radiusProp, icon, defineUI } from "../core.js";
 import { colName, parseAddress, parseRange, clampRange, addressOf, rangeText, sizeOf } from "./address.js";
 import { sortPerm, inversePerm, findMatches, nextMatch } from "./sort.js";
-import { displayText, badgePalette, coerceEdit, dateInputValue } from "./cell-types.js";
+import { displayText, badgePalette, coerceEdit, dateInputValue, toDate, defaultAlign } from "./cell-types.js";
 import { expandPopulate, parseFields } from "./populate.js";
+import { zipStore } from "../chart/export.js";
+import { buildXlsxFiles, cssToArgb, excelSerial, numberFormat } from "./xlsx.js";
 import { RULE_FIELDS, cellKey, parseCells, parseRules, fieldsAt, cellSpec, styleCss, populatedCells, valueAt, viewAreaOf, mergesFromProps, rangedFromProps } from "./sheet.js";
-import { normalizeFreeze, normalizeMerges, normalizeBorders, buildEdges, boxBorders, normalizeLocks, cellEditable, mergeOf } from "./layout.js";
+import { normalizeFreeze, normalizeMerges, normalizeBorders, buildEdges, boxBorders, normalizeLocks, cellEditable, mergeOf, isCovered } from "./layout.js";
 import { uniformAxis, sizesAxis, visibleRange, scrollToShow } from "./window.js";
 import { createStage, stageSet, stageValue, stageHas, stageCount, stageClear, stageDrop } from "./stage.js";
 import { noSelection, selectCell, extendTo, rangeOf, growToMerges, moveFocus, rangeToTsv } from "./selection.js";
@@ -74,6 +76,8 @@ const DATA_GRID_CSS = css`
     .findbar label { display: inline-flex; align-items: center; gap: 2px; cursor: pointer; }
     .cell.found { box-shadow: inset 0 0 0 2px #f1c21b; }
     .cell.foundcur { box-shadow: inset 0 0 0 2px #ff832b; background-image: linear-gradient(rgba(255,131,43,0.18), rgba(255,131,43,0.18)); }
+    .xl { all: unset; cursor: pointer; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; font-size: 14px; color: var(--fg-muted); }
+    .xl:hover { background: var(--bg-emph); color: var(--fg); }
     .rz { position: absolute; z-index: 3; }
     .rz-c { top: 0; right: 0; width: 6px; height: 100%; cursor: col-resize; }
     .rz-r { left: 0; bottom: 0; height: 6px; width: 100%; cursor: row-resize; }
@@ -142,6 +146,7 @@ export const dataGrid = defineUI({
         sortable: { type: "boolean", default: true, group: "Sort and find", label: "The user can sort (on the page)", help: "A small button on the letter of each column of the area to sort: ascending, descending, back to the order of the sheet. Only the view is sorted: the cells keep their addresses, and a message still fills the cell it was meant for." },
         sortArea: { type: "string", default: "", group: "Sort and find", label: "Area to sort", placeholder: "A1:F200", help: "The columns and rows that are sorted together (a row moves as one). Empty: no sorting." },
         sortHeader: { type: "boolean", default: true, group: "Sort and find", label: "The first row of the area is a heading", help: "A heading stays in place; the rows under it are sorted." },
+        exportable: { type: "boolean", default: false, group: "Sort and find", label: "A button in the corner exports to Excel (.xlsx)", help: "On the page, the corner where the letters and the numbers meet downloads the sheet as an .xlsx file. The action Export to Excel does the same from Logic." },
         findable: { type: "boolean", default: true, group: "Sort and find", label: "Ctrl+F finds in the sheet", help: "A search box over the grid: the cells that hold the text are marked, Enter goes to the next one." },
         populate: { type: "list", default: [], group: "Populate", label: "Populate from messages", noun: "rule", itemLabel: "at",
             help: "A rule takes a value from a message (or a variable, a tag) and puts it in the cells from one cell on: one value, a list down or to the right, a table.",
@@ -182,6 +187,7 @@ export const dataGrid = defineUI({
         clearRange: { label: "Empty cells", help: "Empties the cells of a range.", example: "\"B2:D9\"  or  { range: \"B2:D9\" }" },
         selectCell: { label: "Select a cell", help: "Selects a cell by its address.", example: "\"C5\"  or  { address: \"C5\" }" },
         scrollToCell: { label: "Scroll to a cell", help: "Brings a cell into view.", example: "\"C500\"  or  { address: \"C500\" }" },
+        exportXlsx: { label: "Export to Excel (.xlsx)", help: "Downloads the sheet as an .xlsx file: values, number formats, fonts, colours, alignment, borders, merged cells, column widths, row heights, frozen panes. What the view shows (the order of a sorted column, the area shown) is what is exported.", example: "{ name: \"plant.xlsx\" }" },
         sortColumn: { label: "Sort a column of the area to sort", help: "Sorts the view by a column; direction \"asc\", \"desc\", or \"\" for the order of the sheet.", example: "{ column: \"B\", direction: \"desc\" }" },
         save: { label: "Save the staged edits", help: "With the box or by message: sends the changed cells (On Save) and makes the changes final." },
         discard: { label: "Discard the staged edits", help: "With the box or by message: throws the waiting changes away." },
@@ -615,7 +621,7 @@ export const dataGrid = defineUI({
             // column letters: the frozen columns in the corner, the others in the strip that follows the horizontal scroll
             const headTL = [], headTR = [];
             if (g.heads) {
-                headTL.push(html`<div class="head corner" part="header" style="left:0;top:0;width:${g.rowHeadW}px;height:${g.hh}px"></div>`);
+                headTL.push(html`<div class="head corner" part="header" style="left:0;top:0;width:${g.rowHeadW}px;height:${g.hh}px">${p.exportable === true && !this.isEditor ? html`<button type="button" class="xl" data-xlsx title="Export to Excel (.xlsx)" tabindex="-1">⤓</button>` : nothing}</div>`);
                 for (let j = 0; j < fCols; j++) headTL.push(this._colHead(g, a.c1 + j, g.colAxis.offsetOf(j + g.rn)));
                 for (let ji = g.cols.from; ji < g.cols.to; ji++) { const j = ji - g.rn; if (j >= fCols && j < g.nC) headTR.push(this._colHead(g, a.c1 + j, g.colAxis.offsetOf(ji) - g.frozenW)); }
             }
@@ -846,7 +852,7 @@ export const dataGrid = defineUI({
             if (e.button !== 0) return;
             const handle = e.target.closest && e.target.closest("[data-rz]");
             if (handle) { this._beginResize(e, handle); return; }
-            if (e.target.closest && (e.target.closest("[data-sortc]") || e.target.closest(".findbar"))) return;
+            if (e.target.closest && (e.target.closest("[data-sortc]") || e.target.closest("[data-xlsx]") || e.target.closest(".findbar"))) return;
             if (e.target.closest && e.target.closest("[data-fill]") && this._selRange) { this._fill = { source: Object.assign({}, this._selRange), plan: null }; e.preventDefault(); return; }
             const head = this._headAt(e);
             if (head) {
@@ -884,6 +890,7 @@ export const dataGrid = defineUI({
         }
 
         _onClick(e) {
+            if (e.target.closest && e.target.closest("[data-xlsx]")) { this.exportXlsx(); return; }
             const srt = e.target.closest && e.target.closest("[data-sortc]");
             if (srt) { this._toggleSort(Number(srt.dataset.sortc)); return; }
             const go = e.target.closest("[data-findgo]");
@@ -1229,6 +1236,70 @@ export const dataGrid = defineUI({
         scrollToCell(params) {
             const a = this._addressOf(params);
             if (a && a.r < this._size.rows && a.c < this._size.cols) this._ensureVisible(a.r, a.c);
+        }
+
+        // ---- export to Excel -------------------------------------------------------------------------------------------------------
+        // The model of the file from the grid as it is shown (the order of a sorted view, the area shown, what the user typed): the box of the cells that have a
+        // value or are merged, with the types, formats and styles the cells have, the sizes, the merges and the frozen panes. Positions count from the box's corner.
+        _xlsxModel() {
+            const p = this.p || {}, a = this._area, dd = this._sizeDefaults(p);
+            let r0 = Infinity, c0 = Infinity, r1 = -1, c1 = -1;
+            const grow = (r, c) => { if (r < r0) r0 = r; if (r > r1) r1 = r; if (c < c0) c0 = c; if (c > c1) c1 = c; };
+            const keys = new Set([...this._cells.keys(), ...this._populated.map.keys(), ...this._edits.keys()]);
+            keys.forEach((k) => {
+                const [sr, c] = k.split(",").map(Number);
+                const r = this._disp(sr, c);
+                if (r < a.r1 || r > a.r2 || c < a.c1 || c > a.c2) return;
+                const v = this._value(r, c);
+                if (v !== null && v !== undefined && v !== "") grow(r, c);
+            });
+            this._merges.forEach((m) => { if (m.r2 >= a.r1 && m.r1 <= a.r2 && m.c2 >= a.c1 && m.c1 <= a.c2) { grow(Math.max(m.r1, a.r1), Math.max(m.c1, a.c1)); grow(Math.min(m.r2, a.r2), Math.min(m.c2, a.c2)); } });
+            if (r1 < 0) { r0 = a.r1; c0 = a.c1; r1 = a.r1; c1 = a.c1; }
+            const model = { name: "Sheet1", cells: [], cols: {}, rows: {}, merges: [], defaultCol: dd.col.width, defaultRow: dd.row.height, freeze: { rows: 0, cols: 0 } };
+            const edge = (map, key) => { const s = map.get(key); return s ? { style: s.style, width: s.width, color: s.color } : null; };
+            for (let r = r0; r <= r1 && model.cells.length < 200000; r++) {
+                for (let c = c0; c <= c1; c++) {
+                    if (isCovered(this._merges, r, c)) continue;
+                    const value = this._value(r, c), f = this._fields(r, c), spec = cellSpec(f);
+                    const border = { t: edge(this._edges.h, r + ":" + c), l: edge(this._edges.v, r + ":" + c), b: edge(this._edges.h, (r + 1) + ":" + c), r: edge(this._edges.v, r + ":" + (c + 1)) };
+                    const hasBorder = !!(border.t || border.l || border.b || border.r);
+                    const fill = cssToArgb(f.fill);
+                    const empty = value === null || value === undefined || value === "";
+                    if (empty && !fill && !hasBorder) continue;
+                    let kind = null, v = value, fmt = "";
+                    if (!empty) {
+                        if (spec.type === "boolean") { kind = "b"; v = value === true || value === "true" || value === 1; }
+                        else if (spec.type === "date" && toDate(value)) { kind = "n"; v = excelSerial(toDate(value)); fmt = spec.format === "date" ? "yyyy-mm-dd" : spec.format === "time" ? "hh:mm:ss" : "yyyy-mm-dd hh:mm:ss"; }
+                        else if ((spec.type === "number" || spec.type === "progress" || spec.type === "general") && typeof value === "number" && isFinite(value)) { kind = "n"; fmt = spec.type === "number" ? numberFormat(spec.decimals, spec.suffix) : ""; }
+                        else { kind = "s"; v = displayText(spec, value); }
+                    }
+                    const family = { mono: "Consolas", serif: "Georgia", sans: "Calibri" }[f.fontFamily];
+                    const size = Number(f.fontSize);
+                    const font = { b: f.bold === true, i: f.italic === true, u: f.underline === true, s: f.strike === true, sz: isFinite(size) && size >= 6 ? Math.round(size * 0.75 * 2) / 2 : 0, color: cssToArgb(f.color), name: family || "" };
+                    const h = f.align === "left" || f.align === "center" || f.align === "right" ? f.align : (kind === "n" ? "right" : defaultAlign(spec.type) === "left" ? "" : defaultAlign(spec.type));
+                    model.cells.push({ r: r - r0, c: c - c0, kind, v, fmt, font, fill, border, align: { h, v: f.valign === "top" ? "top" : f.valign === "bottom" ? "bottom" : "center", wrap: f.wrap === true } });
+                }
+            }
+            for (let c = c0; c <= c1; c++) { const w = this._widthOf(c); if (w !== dd.col.width) model.cols[c - c0] = w; }
+            for (let r = r0; r <= r1; r++) { const h = this._heightOf(r, dd); if (h !== dd.row.height) model.rows[r - r0] = h; }
+            this._merges.forEach((m) => { if (m.r1 >= r0 && m.r2 <= r1 && m.c1 >= c0 && m.c2 <= c1) model.merges.push({ r1: m.r1 - r0, c1: m.c1 - c0, r2: m.r2 - r0, c2: m.c2 - c0 }); });
+            model.freeze = { rows: Math.max(0, Math.min(this._freeze.rows - (r0 - a.r1), r1 - r0)), cols: Math.max(0, Math.min(this._freeze.cols - (c0 - a.c1), c1 - c0)) };
+            return model;
+        }
+
+        exportXlsx(params) {
+            if (this.isEditor && !this._designing()) return;
+            const given = params && typeof params === "object" ? params.name : params;
+            let name = typeof given === "string" && given.trim() ? given.trim().replace(/[\\/:*?"<>|]+/g, "_") : "sheet";
+            if (!/\.xlsx$/i.test(name)) name += ".xlsx";
+            const blob = zipStore(buildXlsxFiles(this._xlsxModel()));
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement("a");
+            link.href = url; link.download = name;
+            this.renderRoot.appendChild(link);
+            link.click();
+            link.remove();
+            this.after(4000, () => URL.revokeObjectURL(url));
         }
 
         sortColumn(params) {

@@ -10,7 +10,7 @@ const path = require('path');
 
 // The modules are plain ES modules. They are loaded without a bundler: each one in its own function scope, an `import { a } from "./x.js"`
 // becoming a destructuring of what x.js exported (so the order below is the order of the imports).
-const ORDER = ['address.js', 'sizes.js', 'cell-types.js', 'populate.js', 'sheet.js', 'clipboard.js', 'layout.js', 'window.js', 'stage.js', 'selection.js', 'design.js', 'fill.js', 'sort.js'];
+const ORDER = ['address.js', 'sizes.js', 'cell-types.js', 'populate.js', 'sheet.js', 'clipboard.js', 'layout.js', 'window.js', 'stage.js', 'selection.js', 'design.js', 'fill.js', 'sort.js', 'xlsx.js'];
 const M = {};
 ORDER.forEach((file) => {
     let src = fs.readFileSync(path.join(__dirname, '..', 'dist', 'data-grid', file), 'utf8');
@@ -601,7 +601,7 @@ ok('design: addLock overrides the rules inside the range; resetLocks forgets the
     assert.strictEqual(D.resetLocks(l, { r1: 0, c1: 0, r2: 9, c2: 9 }).length, 0);
 });
 
-const Cb = M['clipboard.js'], F = M['fill.js'], So = M['sort.js'];
+const Cb = M['clipboard.js'], F = M['fill.js'], So = M['sort.js'], X = M['xlsx.js'];
 
 ok('clipboard: formatTsv / parseTsv round-trip a matrix, with quotes as Excel writes them (a tab, a new line and a quote inside a cell)', () => {
     const m = [['a', 'b\tc', 'line1\nline2'], ['say "hi"', '', null], [1, 2.5, true]];
@@ -696,6 +696,68 @@ ok('find: the cells that hold a text, in reading order; case on request; next an
     assert.deepStrictEqual(So.findMatches(items, '', false), []);
     assert.deepStrictEqual(So.findMatches(items, 'zzz', false), []);
     assert.deepStrictEqual([So.nextMatch(3, -1), So.nextMatch(3, 0), So.nextMatch(3, 2), So.nextMatch(3, 0, true), So.nextMatch(3, -1, true), So.nextMatch(0, 0)], [0, 1, 0, 2, 2, -1]);
+});
+
+ok('xlsx: colours as ARGB (hex, rgb, names, the short names of the grid); a theme variable or nothing has no colour', () => {
+    assert.strictEqual(X.cssToArgb('#f00'), 'FFFF0000');
+    assert.strictEqual(X.cssToArgb('#00ff7f'), 'FF00FF7F');
+    assert.strictEqual(X.cssToArgb('rgb(255, 0, 128)'), 'FFFF0080');
+    assert.strictEqual(X.cssToArgb('rgba(0, 0, 255, 0.5)'), 'FF0000FF');
+    assert.strictEqual(X.cssToArgb('Red'), 'FFFF0000');
+    assert.strictEqual(X.cssToArgb('primary'), 'FF0F62FF');
+    assert.deepStrictEqual(['', 'transparent', 'inherit', 'var(--unknown)', 'nonsense', null].map(X.cssToArgb), [null, null, null, null, null, null]);
+    assert.strictEqual(X.cssToArgb('var(--bd-strong)'), 'FF8D8D8D', 'a theme variable of the grid, as its light colour');
+    assert.strictEqual(X.cssToArgb('var(--cp-solid, #123456)'), 'FF0F62FF');
+});
+
+ok('xlsx: sizes, dates and number formats as Excel keeps them', () => {
+    assert.strictEqual(X.pxToChars(110), 15);
+    assert.strictEqual(X.pxToPoints(28), 21);
+    assert.strictEqual(X.excelSerial(new Date(2026, 0, 1)), 46023, 'midnight of 2026-01-01, in any time zone');
+    assert.strictEqual(X.excelSerial(new Date(2026, 0, 1, 12, 0, 0)), 46023.5, 'noon is half a day');
+    assert.strictEqual(X.excelSerial('junk'), null);
+    assert.deepStrictEqual([X.numberFormat(1, ' °C'), X.numberFormat(2, ''), X.numberFormat(0, ''), X.numberFormat(-1, ''), X.numberFormat(-1, ' kg')], ['0.0" °C"', '0.00', '0', '', 'General" kg"']);
+});
+
+ok('xlsx: the package: the six files, the cells with their styles, the merges, the widths and heights, the frozen panes; every style once', () => {
+    const files = X.buildXlsxFiles({
+        name: 'Plant: A/B', defaultCol: 110, defaultRow: 28,
+        cells: [
+            { r: 0, c: 0, kind: 's', v: 'Name <&> "x"', font: { b: true, sz: 12, color: 'FFFF0000' }, fill: 'FFD0E2FF', align: { h: 'center', v: 'top', wrap: true }, border: { t: { style: 'solid', width: 2, color: 'primary' }, l: { style: 'dashed', width: 1, color: '' } } },
+            { r: 0, c: 1, kind: 'n', v: 71.4, fmt: '0.0" °C"' },
+            { r: 1, c: 0, kind: 'b', v: true },
+            { r: 1, c: 1, kind: 's', v: 'second', font: { b: true, sz: 12, color: 'FFFF0000' }, fill: 'FFD0E2FF', align: { h: 'center', v: 'top', wrap: true }, border: { t: { style: 'solid', width: 2, color: 'primary' }, l: { style: 'dashed', width: 1, color: '' } } },
+            { r: 2, c: 2, kind: null, fill: 'FF00FF00' },
+            { r: 2, c: 0, kind: 's', v: 'tab\tand\u0001control' }
+        ],
+        cols: { 0: 200, 3: 50 }, rows: { 1: 60, 2: 28 }, merges: [{ r1: 3, c1: 1, r2: 4, c2: 2 }], freeze: { rows: 1, cols: 2 }
+    });
+    assert.deepStrictEqual(files.map((x) => x.name), ['[Content_Types].xml', '_rels/.rels', 'xl/workbook.xml', 'xl/_rels/workbook.xml.rels', 'xl/styles.xml', 'xl/worksheets/sheet1.xml']);
+    const by = Object.fromEntries(files.map((x) => [x.name, x.text]));
+    assert.ok(by['xl/workbook.xml'].includes('name="Plant  A B"'), 'a sheet name Excel accepts');
+    const sheet = by['xl/worksheets/sheet1.xml'];
+    assert.ok(sheet.includes('<c r="A1" s="1" t="inlineStr"><is><t xml:space="preserve">Name &lt;&amp;&gt; &quot;x&quot;</t></is></c>'), 'text escaped');
+    assert.ok(sheet.includes('<c r="B1" s="2"><v>71.4</v></c>'), 'a number with its format');
+    assert.ok(sheet.includes('<c r="A2" t="b"><v>1</v></c>'), 'a boolean with the default style');
+    assert.ok(sheet.includes('<c r="B2" s="1" t="inlineStr">'), 'the same style is the same style');
+    assert.ok(sheet.includes('<c r="C3" s="3"/>'), 'a styled empty cell');
+    assert.ok(sheet.includes('tab\tand'), 'a tab stays');
+    assert.ok(!sheet.includes('\u0001'), 'a control character does not');
+    assert.ok(sheet.includes('<row r="2" ht="45" customHeight="1">'), 'a row of its own height (60 px = 45 pt)');
+    assert.ok(!sheet.includes('<row r="3" ht='), 'a row of the default height says nothing');
+    assert.ok(sheet.includes('<col min="1" max="1" width="27.86" customWidth="1"/>') && sheet.includes('<col min="4" max="4" width="6.43" customWidth="1"/>'), 'column widths');
+    assert.ok(sheet.includes('<mergeCell ref="B4:C5"/>') && sheet.includes('<mergeCells count="1">'));
+    assert.ok(sheet.includes('<pane xSplit="2" ySplit="1" topLeftCell="C2" activePane="bottomRight" state="frozen"/>'), 'frozen panes');
+    assert.ok(sheet.includes('<dimension ref="A1:C3"/>'));
+    const styles = by['xl/styles.xml'];
+    assert.ok(styles.includes('<numFmt numFmtId="164" formatCode="0.0&quot; °C&quot;"/>'), 'the custom number format');
+    assert.ok(styles.includes('<b/>') && styles.includes('<sz val="12"/>') && styles.includes('<color rgb="FFFF0000"/>'), 'the font');
+    assert.ok(styles.includes('<fgColor rgb="FFD0E2FF"/>'), 'the fill');
+    assert.ok(styles.includes('<top style="medium"><color rgb="FF0F62FF"/></top>') && styles.includes('<left style="dashed">'), 'the borders');
+    assert.ok(styles.includes('<alignment horizontal="center" vertical="top" wrapText="1"/>'), 'the alignment');
+    assert.ok(styles.includes('<fills count="4">') && styles.includes('<cellXfs count="4">'), 'the two default fills first, then each style once: ' + styles.slice(styles.indexOf('<cellXfs'), styles.indexOf('<cellXfs') + 30));
+    const only = X.buildXlsxFiles({ cells: [], merges: [], cols: {}, rows: {} });
+    assert.ok(only[5].text.includes('<sheetData></sheetData>') && !only[5].text.includes('<dimension'), 'an empty sheet is a valid one');
 });
 
 ok('design: rulesFromCells: the styles of a block as short rules (neighbours and identical rows become one range); a plain cell over a styled one resets it', () => {

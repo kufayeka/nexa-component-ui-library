@@ -18,7 +18,7 @@ import { RULE_SCHEMA } from "./fields.js";
 const COMPONENT_ID = "nexa-ui-data-grid";
 
 // What the dialog edits: these props, as one draft (the keys are the component's stored names).
-export const DESIGN_KEYS = ["rows", "cols", "viewArea", "freezeRows", "freezeCols", "showHeaders", "showGridLines", "colWidth", "colRules", "adjustCols", "minColWidth", "maxColWidth", "rowHeight", "rowRules", "adjustRows", "autoFit", "minRowHeight", "maxRowHeight", "sortable", "sortArea", "sortHeader", "findable", "populate", "cells", "cellRules", "merges", "borders", "locks"];
+export const DESIGN_KEYS = ["rows", "cols", "viewArea", "freezeRows", "freezeCols", "showHeaders", "showGridLines", "colWidth", "colRules", "adjustCols", "minColWidth", "maxColWidth", "rowHeight", "rowRules", "adjustRows", "autoFit", "minRowHeight", "maxRowHeight", "sortable", "sortArea", "sortHeader", "findable", "exportable", "populate", "cells", "cellRules", "merges", "borders", "locks"];
 const SEL_KEYS = Object.keys(RULE_SCHEMA).filter((k) => k !== "range");
 const BORDER_COLORS = [{ value: "bd", label: "Light line" }, { value: "bd-strong", label: "Strong line" }, { value: "fg", label: "Text colour" }, { value: "primary", label: "Primary" }, { value: "error", label: "Error" }, { value: "custom", label: "Other colour…" }];
 const BORDER_STYLES = ["solid", "dashed", "dotted", "double"].map((v) => ({ value: v, label: v }));
@@ -196,7 +196,7 @@ defineInspectorWidget("nexa-data-grid-editor", ({ KitElement, html: h, nothing }
         ["rows", "cols", "viewArea", "freezeRows", "freezeCols", "showHeaders", "showGridLines"].forEach((k) => take(k, "Sheet"));
         ["colWidth", "colRules", "adjustCols", "minColWidth", "maxColWidth"].forEach((k) => take(k, "Columns"));
         ["rowHeight", "rowRules", "adjustRows", "autoFit", "minRowHeight", "maxRowHeight"].forEach((k) => take(k, "Rows"));
-        ["sortable", "sortArea", "sortHeader", "findable"].forEach((k) => take(k, "Sort and find"));
+        ["sortable", "sortArea", "sortHeader", "findable", "exportable"].forEach((k) => take(k, "Sort and find"));
         take("populate", "Populate from messages");
         take("cellRules", "Types and styles");
         take("merges", "Merged cells");
@@ -364,6 +364,12 @@ defineInspectorWidget("nexa-data-grid-editor", ({ KitElement, html: h, nothing }
         this._set({ cells: sortRangeCells(this._draft.cells, r, r.c1, dir, addressOf) });
     }
 
+    // Excel (.xlsx) of the design as the preview shows it
+    _exportXlsx() {
+        const grid = this.querySelector(".dge-prev") && this.querySelector(".dge-prev").firstElementChild;
+        if (grid && typeof grid.exportXlsx === "function") grid.exportXlsx({ name: "sheet.xlsx" });
+    }
+
     _borders(list) { const s = this._size(); this._set({ borders: toTextRules(list, s.rows, s.cols) }); }
     _border(sides) { if (this._range) this._borders(addBorder(rangedFromProps(this._draft.borders), this._range, sides, this._spec())); }
     _clearBorders() { if (this._range) this._borders(clearBorders(rangedFromProps(this._draft.borders), this._range)); }
@@ -392,6 +398,8 @@ defineInspectorWidget("nexa-data-grid-editor", ({ KitElement, html: h, nothing }
                 ${this._btn(h`<i>I</i>`, "Italic", () => this._toggle("italic"), { on: common.italic === true })}
                 ${this._btn(h`<u>U</u>`, "Underline", () => this._toggle("underline"), { on: common.underline === true })}
                 ${align("left", "Left", "Align left")}${align("center", "Centre", "Align in the middle")}${align("right", "Right", "Align right")}</div>
+            <div class="dge-grp"><span class="dge-t">Export</span>
+                <button type="button" class="nx-btn" title="Download the sheet as an Excel file (.xlsx)" @click=${() => this._exportXlsx()}>Excel (.xlsx)</button></div>
             <div class="dge-grp"><span class="dge-t">Sort</span>
                 ${this._btn("A→Z", "Sort the selected rows by the first column of the selection, ascending (the typed cells move)", () => this._sortSelection("asc"))}
                 ${this._btn("Z→A", "Sort the selected rows by the first column of the selection, descending (the typed cells move)", () => this._sortSelection("desc"))}</div>
