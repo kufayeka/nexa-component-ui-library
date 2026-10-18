@@ -124,8 +124,32 @@ withHarness({
         await clickAt(q('n', '.stepper button[aria-label=Increase]'));
         await clickAt(q('n', '.stepper button[aria-label=Increase]'));
         await clickAt(q('n', '.stepper button[aria-label=Increase]'));
-        const ch = (await item('n')).events.filter((e) => e[0] === 'change').map((e) => e[1].value);
+        const ch = (await item('n')).events.filter((e) => e[0] === 'commit').map((e) => e[1].value);
         assert.deepStrictEqual(ch, [1, 2], 'the third + stays at the max');
+    });
+
+    await ok('Input / Password: On Change fires while typing (after the pause), On Commit only on Enter; the last text is never lost', async () => {
+        const nap = (ms) => new Promise((r) => setTimeout(r, ms));
+        const events = async (name, kind) => (await item(name)).events.filter((e) => e[0] === kind).map((e) => e[1]);
+        await mount('tc', 'password-input', { changeDebounce: 150, label: 'Password' }, { width: 220, height: 40 });
+        await js(`${q('tc', 'input')}.focus()`);
+        await type('a'); await type('b'); await type('c');
+        assert.deepStrictEqual(await events('tc', 'change'), [], 'not on every key: the timer is still running');
+        await nap(400);
+        let ch = await events('tc', 'change');
+        assert.deepStrictEqual(ch.map((e) => e.text), ['abc'], 'one event after the pause, with the whole text, before any Enter or blur');
+        assert.strictEqual(ch[0].valid, true);
+        assert.deepStrictEqual(await events('tc', 'commit'), [], 'nothing is committed yet');
+        await type('d'); await key('Enter'); await settle();
+        ch = await events('tc', 'change');
+        assert.deepStrictEqual(ch.map((e) => e.text), ['abc', 'abcd'], 'Enter flushes the pending change at once');
+        assert.deepStrictEqual((await events('tc', 'commit')).map((e) => e.text), ['abcd'], 'and then commits');
+        await mount('tn', 'number-input', { changeDebounce: 0, label: 'N' }, { width: 220, height: 40 });
+        await js(`${q('tn', 'input')}.focus()`);
+        await type('4'); await type('x'); await nap(100);
+        ch = await events('tn', 'change');
+        assert.deepStrictEqual(ch.map((e) => [e.text, e.valid]), [['4', true], ['4x', false]], 'delay 0 = every key; text that is not a number: valid false, value null');
+        assert.strictEqual(ch[1].value, null);
     });
 
     await ok('Checkbox / Switch: a click writes true (two-way), the binding shows the state; unbound keeps its own', async () => {

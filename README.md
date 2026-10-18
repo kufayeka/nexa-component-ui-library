@@ -699,7 +699,7 @@ The SDK's property kit does this for every field of every component, with no cod
 - **Value (write)** is where the user's change goes. Empty: back to Value (read). A Slider bound to `{speed}` changes `{speed}`, and everything bound to `{speed}` follows.
 - Unbound, a control keeps its own value, starting at **Default value**.
 - Text fields write on Enter (or on leaving the field), with validation, a pending state until the tag confirms it, and a write error shown under the field.
-- Every control has **On Change** (Logic) with `msg.payload.value`. Some have more: On Click, On Complete (Pin Input), On Slide, On Open / On Close (Select), On Action (Card, Empty State), On Close (Alert, Tag).
+- Every control has **On Change** (Logic) with `msg.payload.value`. The text fields (Input, Textarea, Number, Password) fire it **while typing**, once the user pauses (**On Change delay**, 300 ms by default, 0 = every key), with `value`, `text` and `valid`, for example to check a password's strength as it is typed; leaving the field sends the last one at once. Their separate **On Commit** fires when the value is written (Enter, or blur when that is on). Some have more: On Click, On Complete (Pin Input), On Slide, On Open / On Close (Select), On Action (Card, Empty State), On Close (Alert, Tag).
 
 **The field** of a form control is built in: Label (top or left), Helper text, Invalid + Error text (bind Invalid to a check), Required (`*`).
 
