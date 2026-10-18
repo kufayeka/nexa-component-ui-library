@@ -35,6 +35,7 @@ This is a Nexa component plugin (`@kufayeka/nexa-component-ui-library`). Every c
 
 - Modules:
   - `dist/`: containers.js core.js datetime.js display.js embed.js form.js pagination.js ui-library.js;
+  - `dist/data-grid/`: data-grid.js (the Data Grid view and its definition), and the pure model beside it: columns.js (types, formats, edits), rows.js (store by key, sort, filter), layout.js (merges, freeze, borders, who may edit), window.js (virtual scrolling), stage.js (staged edits), selection.js (selection, keyboard, copy); test/data-grid-pure.test.js (Node) and test/data-grid-browser.test.js (Chrome);
   - `dist/chart/`:
     - core.js (ChartElement: the shared look, numbers, times, the export menu);
     - time-chart.js (TimeChartElement: time, ruler, zoom / pan, the range buttons, annotations, gestures, the frozen clock, print);

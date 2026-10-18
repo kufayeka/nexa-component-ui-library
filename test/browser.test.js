@@ -19,7 +19,7 @@ async function ok(label, fn) { if (only && !only.test(label)) return; await fn()
 const P = 'nexa-ui-';
 const ALL = ['button', 'input', 'textarea', 'number-input', 'password-input', 'checkbox', 'switch', 'radio-group', 'segmented', 'select', 'combobox', 'slider', 'tags-input', 'pin-input', 'rating',
     'text', 'heading', 'badge', 'tag', 'card', 'avatar', 'stat', 'alert', 'progress', 'spinner', 'skeleton', 'separator', 'empty-state', 'timeline', 'fieldset',
-    'tabs', 'iframe', 'datetime', 'daterange', 'pagination', 'line-chart', 'state-timeline', 'column-chart', 'pie', 'pareto', 'scatter', 'spc', 'radar', 'gauge', 'bar-gauge', 'area-chart', 'kpi', 'histogram'];
+    'tabs', 'iframe', 'datetime', 'daterange', 'pagination', 'line-chart', 'state-timeline', 'column-chart', 'pie', 'pareto', 'scatter', 'spc', 'radar', 'gauge', 'bar-gauge', 'area-chart', 'kpi', 'histogram', 'data-grid'];
 const TAG = '{sparkplug:Plant::Line1::Mixer::Speed}';
 
 withHarness({
@@ -44,9 +44,9 @@ withHarness({
         await settle();
     };
 
-    await ok('all 48 components register (UI · Form / Display / Layout / Embed / Charts), each mounts and draws', async () => {
+    await ok('all 49 components register (UI · Form / Display / Layout / Embed / Data / Charts), each mounts and draws', async () => {
         const reg = await js(`${JSON.stringify(ALL)}.map(function (id) { var d = NEXA.getComponent("${P}" + id); return d ? d.category : "MISSING " + id; })`);
-        assert.deepStrictEqual(reg.filter((c) => c !== 'UI · Form' && c !== 'UI · Display' && c !== 'UI · Layout' && c !== 'UI · Embed' && c !== 'UI · Charts'), []);
+        assert.deepStrictEqual(reg.filter((c) => c !== 'UI · Form' && c !== 'UI · Display' && c !== 'UI · Layout' && c !== 'UI · Embed' && c !== 'UI · Data' && c !== 'UI · Charts'), []);
         for (const id of ALL) await mount('all-' + id, id, {}, { width: 320, height: 120 });
         const empty = await js(`${JSON.stringify(ALL)}.filter(function (id) { var r = NexaTest.wc("all-" + id).renderRoot; return !r || !r.innerHTML || r.innerHTML.replace(/<!--[^]*?-->/g, "").trim() === ""; })`);
         assert.deepStrictEqual(empty, []);

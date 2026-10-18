@@ -112,6 +112,20 @@ Modeled after the official IBM Carbon Design System Pagination specifications an
 - **Logic Events**: Emits `change` (full payload with `page`, `pageSize`, `total`, `offset`, `limit`), `pageChange`, and `pageSizeChange`.
 - **Keyboard & Action Controls**: `next()`, `prev()`, `first()`, `last()`, and `setPage(n)`.
 
+### Data Grid (`nexa-ui-data-grid`)
+
+A grid for data that arrives as messages, the replacement of a plain table. Category **UI · Data**. Only the cells in view are drawn (virtual scrolling), so 100 000 rows scroll like ten.
+- **Data in:** the `Data` input is an array of objects (or an array of arrays whose first row is the column names). A new value replaces all the rows. With a **Row key** (a field such as `id`) a message can change one row (`patchRow`, `upsertRows`) without sending them all. `Columns` is an optional input that overrides the Columns list. With no columns designed, they come from the keys of the first rows.
+- **Cell types:** text, number (decimals, unit), boolean (checkbox), select (options `value:Label`), date, badge (`value:Label:palette`), progress, link, image, button (sends `On Button Click`), input (always an input box).
+- **Layout:** frozen rows and columns (any number), merged cells, borders per range (outer / inner lines, style, width, colour), row and header height, row numbers. Rows and columns are counted from 0 in the order shown: the grid is positional, like a sheet. A merge in the body switches sorting and filtering off (the rows under a merge must stay put); a merge that is invalid (one cell, overlapping, across the frozen line) is not drawn.
+- **Editing on the live page:** `Mode` is **Read only** (the default) or **Editable**, and it can be bound. In an editable grid the most specific rule wins: a range rule (**Locked / open cells**) > the row (the **Locked-row field** of its data) > the column > the grid. A read-only grid edits nothing, a button still acts. Nothing is validated: a value is taken as typed (a number column keeps non-numeric text). **Edits** are *instant* (every change goes out at once) or *staged* (changes wait, marked in the cell, until Save or Discard).
+- **Keyboard:** arrows, Tab, Home / End, PageUp / PageDown, Shift extends a range, Enter / F2 edits, typing starts an edit, Delete clears, Ctrl+C copies the selection as tab-separated text.
+- **Events:** `On Cell Change` (`rowKey`, `col`, `old`, `new`, `row`, `staged`), `On Row Change` (instant), `On Save` (staged: the changed rows), `On Discard`, `On Selection Change`, `On Cell Click`, `On Row Click`, `On Button Click` (`rowKey`, `action`, `col`, `row`), `On Sort Change`, `On Filter Change`, `On Data`.
+- **Actions:** `setData`, `upsertRows`, `patchRow` (`{ key, fields }` or a row with the Row key), `removeRow`, `appendRow`, `clear`, `setCell`, `selectCell`, `scrollToRow`, `save`, `discard`, `getData` (fires `On Data` with every row).
+- In the editor the grid shows sample rows with a **Sample data** chip: decoration for the design, never data. A page with no data is empty.
+- The model is plain functions in `dist/data-grid/` (columns, rows, layout, window, stage, selection), tested in Node: `node test/data-grid-pure.test.js`; the view is tested in Chrome: `node test/data-grid-browser.test.js`.
+- Not yet: the editor dialog (**Edit grid…**), grouped header cells, resizing columns by dragging, Excel import / export, validation, cells that render a template.
+
 ### Password Input (`nexa-ui-password-input`)
 
 - **Strict IBM Carbon Alignment**: Styled identically to Text Input with subtle background fill (`var(--nexa-colors-bg-subtle)`), bottom border (`border-bottom: 1px solid var(--nexa-colors-border-emphasized)`), and 2px focus ring.

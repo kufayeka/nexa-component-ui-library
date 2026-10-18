@@ -8,3 +8,4 @@ import "./embed.js";
 import "./datetime.js";
 import "./pagination.js";
 import "./chart/index.js";
+import "./data-grid/data-grid.js";
