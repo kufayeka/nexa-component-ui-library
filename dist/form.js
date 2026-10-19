@@ -2,7 +2,7 @@
 // Switch, Radio Group, Segmented Control, Select, Combobox, Slider, Tags Input, Pin Input,
 // Rating. Text fields run on the SDK's FieldController (edit -> validate -> write -> ack);
 // the widgets with a keyboard model of their own on zag.js (from the SDK).
-import { FieldController, html, css, nothing, zag } from "../../nexa-sdk/nexa-component-sdk.js";
+import { FieldController, FormWatcher, html, css, nothing, zag } from "../../nexa-sdk/nexa-component-sdk.js";
 import {
     CATEGORY_FORM, PREFIX, BASE_CSS, UIElement, field, FIELD_PROPS, FIELD_PARTS, CSS_GROUP, part,
     sizeProp, paletteProp, variantProp, radiusProp, disabledProp, iconProp, icon, spinner, starIcon,
@@ -66,6 +66,10 @@ export const button = defineUI({
         align: { type: "enum", default: "start", group: "Style", label: "Text", style: "segmented", options: [{ value: "start", label: "Start" }, { value: "center", label: "Center" }] },
         size: sizeProp(), colorPalette: paletteProp(), radius: radiusProp("md"),
         disabled: disabledProp(),
+        formAction: { type: "enum", default: "none", group: "Form", label: "In a form, this button", style: "select",
+            options: [{ value: "none", label: "Does nothing to the form" }, { value: "submit", label: "Sends the form" }, { value: "reset", label: "Resets the form" }],
+            help: "Inside a Form component: a Send button checks the form and fires its On Submit (or On Invalid Submit), and shows a spinner while it is being sent." },
+        waitForValid: { type: "boolean", default: false, group: "Form", label: "Disabled until the form is valid", visibleWhen: (p) => p.formAction === "submit" },
         clickValue: { type: "string", default: "true", group: "Data", label: "Value written on click", help: "true / false / a number / text / JSON. Written to Write on click." }
     },
     outputs: { value: { label: "Write on click", help: "Where the value goes on a click (a tag, a variable). Empty = nothing is written." } },
@@ -77,17 +81,23 @@ export const button = defineUI({
     parts: { control: part("The button", "control"), text: part("Its text", "text") },
     view: class extends UIElement {
         static styles = [BASE_CSS, BUTTON_CSS];
+        // the form around the button, when there is one: what it needs to know of it and to ask of it
+        fw = new FormWatcher(this);
         _click() {
-            if (this.isEditor || this.p.disabled || this.p.loading) return;
+            if (this.isEditor || this.p.disabled || this.p.loading || this._formBusy() || this._formWaits()) return;
+            if (this.p.formAction === "submit" || this.p.formAction === "reset") this.fw.action(this.p.formAction);
             const v = parseValue(this.p.clickValue);
             this.emit("click", { value: v });
             if (this.out.canWrite("value")) this.out.write("value", v).catch(() => {});
         }
+        // a Send button shows the form's sending as its own spinner, and can wait for the form to be valid
+        _formBusy() { return this.p.formAction === "submit" && !!(this.fw.snap && this.fw.snap.submitting); }
+        _formWaits() { return this.p.formAction === "submit" && !!this.p.waitForValid && !!(this.fw.snap && !this.fw.snap.valid); }
         render() {
-            const p = this.p, busy = !!p.loading;
+            const p = this.p, busy = !!p.loading || this._formBusy(), waits = this._formWaits();
             // Carbon: the text at the start, an icon at the far end
             const place = p.align === "center" ? "center" : (!busy && p.iconRight) ? "between" : "";
-            return html`<button class="btn ${place}" part="control" type="button" ?disabled="${p.disabled || busy}" aria-busy="${busy ? "true" : "false"}"
+            return html`<button class="btn ${place}" part="control" type="button" ?disabled="${p.disabled || busy || waits}" aria-busy="${busy ? "true" : "false"}"
                 @click="${this._click}" @pointerdown="${() => this.fire("press")}" @pointerup="${() => this.fire("release")}">
                 ${busy ? spinner() : icon(p.iconLeft)}<span class="text" part="text">${busy && p.loadingText ? p.loadingText : p.text}</span>${busy ? nothing : icon(p.iconRight)}
             </button>`;
@@ -352,7 +362,7 @@ const boolProps = (label, variants, d) => Object.assign({}, FIELD_PROPS, {
 const boolIO = { inputs: { value: { ...VALUE_IO.inputs.value, type: "boolean" } }, outputs: VALUE_IO.outputs };
 class BoolView extends UIElement {
     static styles = [BASE_CSS, CHECK_CSS];
-    vs = new ValueState(this, { coerce: boolOf });
+    vs = new ValueState(this, { coerce: boolOf, kind: "boolean" });
     kind() { return "checkbox"; }
     render() {
         const p = this.p, v = this.vs.value === true, mixed = this.kind() === "checkbox" && !!p.indeterminate && !v;

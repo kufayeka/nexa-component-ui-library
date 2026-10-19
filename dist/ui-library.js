@@ -2,6 +2,7 @@
 // Each module defines its components with core.js defineUI (the SDK defineComponent + Custom CSS fields); this entry only
 // loads them (the plugin registers this one module: widgets/ui-library-plugin.js).
 import "./form.js";
+import "./form-box.js";
 import "./display.js";
 import "./containers.js";
 import "./embed.js";

@@ -5,7 +5,7 @@
   "description": "Nexa UI: a themed component library for Nexa Dashboard (form controls, display and feedback), built on the Nexa component SDK — design tokens, light / dark, every property bindable, responsive and themeable.",
   "main": "widgets/ui-library-plugin.js",
   "scripts": {
-    "test": "npm run lint && node test/chart-pure.test.js && node test/data-grid-pure.test.js && node test/browser.test.js && node test/data-grid-browser.test.js",
+    "test": "npm run lint && node test/chart-pure.test.js && node test/data-grid-pure.test.js && node test/browser.test.js && node test/form-browser.test.js && node test/data-grid-browser.test.js",
     "test:tags": "node test/tags-e2e.test.js",
     "test:chart": "node test/chart-e2e.test.js",
     "test:charts": "node test/chart-pure.test.js && node test/browser.test.js --only \"Chart|Timeline|Print|Colours|Histogram|Gauge|KPI|Pie|Pareto|Scatter|SPC|Radar|Sample data|all 4. components|Gestures|JavaScript errors\"",

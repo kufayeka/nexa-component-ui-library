@@ -10,7 +10,7 @@
 //      — declarations for that part, which win over the library's own
 // Every prop is bindable (Variable / Tag / Message / Expression), per breakpoint (📱)
 // and takes theme tokens (◆): the SDK's property kit does it for every field.
-import { defineComponent, cssFields, NexaElement, html, css, svg, nothing, theme } from "../../nexa-sdk/nexa-component-sdk.js";
+import { defineComponent, cssFields, NexaElement, FormMember, formFieldProps, html, css, svg, nothing, theme } from "../../nexa-sdk/nexa-component-sdk.js";
 
 export const CATEGORY_FORM = "UI · Form";
 export const CATEGORY_DISPLAY = "UI · Display";
@@ -39,7 +39,9 @@ export const FIELD_PROPS = {
     helperText: { type: "string", default: "", group: "Field", label: "Helper text" },
     invalid: { type: "boolean", default: false, group: "Field", label: "Invalid", help: "Shows the error text (bind it to a check)." },
     errorText: { type: "string", default: "", group: "Field", label: "Error text", help: "Shown while it is invalid." },
-    required: { type: "boolean", default: false, group: "Field", label: "Required (a * after the label)" }
+    required: { type: "boolean", default: false, group: "Field", label: "Required (a * after the label)" },
+    // inside a Form: the field's name there, its message when empty, a rule of its own (the SDK's props for a field of a form)
+    ...formFieldProps()
 };
 
 // Custom CSS: each part's declarations (the SDK wraps them in its selector). ":host" makes
@@ -234,10 +236,23 @@ export class ValueState {
         this.local = undefined;
         this.pending = undefined;
         this.timer = null;
+        // inside a Form (the control has a "Name in the form") this is one of its fields: opts.kind "boolean" says that "required" means "on"
+        const vs = this;
+        this.member = new FormMember(host, {
+            getValue: () => vs.value,
+            setValue: (v) => vs.set(v),
+            focus: () => { const el = host.renderRoot && host.renderRoot.querySelector("input, select, textarea, button, [tabindex]"); if (el) el.focus(); }
+        }, this.opts.kind);
+        this.reported = undefined;
         host.addController(this);
     }
     hostDisconnected() { clearTimeout(this.timer); this.timer = null; }
     hostUpdate() {
+        // a value that came from outside (a variable, a tag) is the form's value too
+        if (this.member.joined) {
+            const now = this.value, text = JSON.stringify(now);
+            if (text !== this.reported) { this.reported = text; this.member.reported(now); }
+        }
         // the binding now reports the value written: no longer pending
         const st = this.host.status(this.opts.input);
         if (this.pending !== undefined && st.bound && this.opts.same(this.opts.coerce(this.host.in[this.opts.input]), this.pending)) { this.pending = undefined; clearTimeout(this.timer); }
@@ -259,6 +274,8 @@ export class ValueState {
         if (bound) this.pending = v; else this.local = v;
         host.requestUpdate();
         host.emit("change", Object.assign({ value: v }, payload || {}));
+        // a chosen value is also an interaction that is over: the form counts the field as touched
+        if (this.member.joined) { this.reported = JSON.stringify(v); this.member.changed(v, null); this.member.blurred(); }
         if (!host.out.canWrite(this.opts.output)) { if (bound) this.pending = undefined; return; }
         const out = this.opts.toWrite ? this.opts.toWrite(v, bound ? host.in[this.opts.input] : undefined) : v;
         clearTimeout(this.timer);

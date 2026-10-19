@@ -2599,7 +2599,7 @@ withHarness({
         assert.strictEqual(r.text, true, 'Text: the Static | Binding switch');
         assert.ok(/radii\.md/.test(r.radius || ''), 'the radius is a token chip: ' + r.radius);
         assert.strictEqual(r.tokenBtn, true);
-        assert.deepStrictEqual(r.tabs, ['Data', 'Content', 'Style', 'Behaviour', 'Custom CSS']);
+        assert.deepStrictEqual(r.tabs, ['Data', 'Content', 'Style', 'Behaviour', 'Form', 'Custom CSS']);
     });
 
     await ok('no JavaScript errors or warnings while drawing them', async () => {

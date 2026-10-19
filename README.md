@@ -2,7 +2,7 @@
 
 A themed component library for **Nexa Dashboard**: 43 form, display, feedback, navigation, layout and chart components. It is a normal Nexa plugin, built only on the Nexa component SDK, so it is also the example to follow when you **build your own UI library**.
 
-- **Form**: Button, Input, Textarea, Number Input, Password Input, Date Time, Date Range, Checkbox, Switch, Radio Group, Segmented Control, Select, Combobox, Slider, Tags Input, Pin Input, Rating.
+- **Form**: Button, Input, Textarea, Number Input, Password Input, Date Time, Date Range, Checkbox, Switch, Radio Group, Segmented Control, Select, Combobox, Slider, Tags Input, Pin Input, Rating, and **Form**: a container that makes them one form (rules, errors, On Submit).
 - **Display & feedback**: Text, Heading, Badge, Tag, Card, Avatar, Stat, Alert, Progress (a bar or a circle), Spinner, Skeleton, Separator, Empty State, Timeline, Fieldset.
 
 - **Layout & Navigation**: Tabs — each tab has a panel you drop components into (the SDK's *slots*); Pagination — IBM Carbon-inspired pagination bar.
@@ -58,6 +58,26 @@ In the editor they are in the palette under **UI · Form**, **UI · Display**, *
 - **Back / Forward**: only for a page of the same origin; the browser allows nothing else.
 
 Grafana must allow embedding: `allow_embedding = true` in `grafana.ini`, and anonymous or proxied auth for the viewers.
+
+### Form (`nexa-ui-form`)
+
+A container that makes the controls inside it one form: it knows their values, which of them are wrong, whether the form can be sent and whether anything changed since it started.
+
+**Build it.** Drop a Form, then drop controls into its slot (its auto layout is a column). Give each control a **Name in the form** (Form tab of its inspector): `email`, or `owner.name` for an object. A control with no name is not part of the form. Every control joins: Input, Textarea, Number, Password, Checkbox, Switch, Radio, Segmented, Select, Combobox, Slider, Tags, Pin and Rating (Date Time and Date Range are not fields yet).
+
+**Rules** (a control's own props, the Form tab): *Required* (and its message), *Shortest text*, *Max length* and *Pattern* (Data tab; inside a form they are rules), the Number's own *Minimum* / *Maximum*, and **Rule (JavaScript)**: the body of a function of `(value, values, form)`; return `true` (or nothing) when it is fine, `false` or a text (the message) when it is not. `values` is every field of the form by name, so a rule can compare fields: `return values.ok + values.reject === values.total || "Does not add up"`. A rule answers at once. What needs the server (is this order number taken?) is Logic's: **On Change** → API Call → the form's **Set errors** action.
+
+**When an error is shown** is the form's *Show errors*: while the user types (the default), when a field is left, or only when sending. Whether the form is **valid** never waits: it is known from the first moment, so a button that waits for it is right even before any error shows. After a failed Send, errors always follow the typing.
+
+**Events** (Logic): On Submit (only when every rule is met; `msg.payload = { values }`), On Invalid Submit (`{ errors, values }`), On Change (a field, after a pause of *On Change delay*: `{ name, value, values, valid, errors }`), On Valid Change, On Changed Change, On Reset.
+
+**Outputs** (the Data tab: where the form writes; bind them to variables): `values` (an object by the fields' names), `errors` (`{ field: message }`), `valid`, `dirty` (differs from where it started) and `submitting`. A Text can read them (`valid={formValid}`), a button can wait for them.
+
+**Actions** (an Update node on the form): Check every rule now, Send the form, Reset, **Set values** (`msg.payload` = `{ email: "a@b.co", owner: { name: "Ann" } }`: loads a record, which is where the form starts from, so it is not a change), **Set errors** (`{ po: "Already used" }`: the server refused an entry; it ends the sending, and the message goes when that field is edited), Clear errors, Focus a field, **Done** (sending is over; `{ reset: true }` also empties the form).
+
+**The Send button.** A Button inside the form has *In a form, this button*: *Sends the form* (checks, then On Submit or On Invalid Submit, shows a spinner while the form is being sent, and can be *Disabled until the form is valid*) or *Resets the form*. *Enter in a field sends the form* is the form's choice.
+
+The usual wiring: **On Submit** → API Call (or a Function) → Update Form **Done**; if the server refuses, API Call's error output → Update Form **Set errors**. Tests: `test/form-browser.test.js`, `test/form-e2e.test.js` (a real Node-RED with this wiring).
 
 ### Tabs
 
@@ -796,6 +816,7 @@ export const chip = defineComponent({
 npm test                       # the plugin lint, then 63 headless-Chrome tests (build the dashboard first: npm run build there)
 npm run test:chart             # charts end to end: a real Node-RED, the charts driven by Logic, live tags, exports
 node test/tags-e2e.test.js     # tags end to end (~1 min): a real Node-RED, MQTT broker and Sparkplug edge
+node test/form-e2e.test.js     # the Form end to end (~30 s): a real Node-RED, the form wired with Logic (submit, server errors)
 ```
 
 `test:chart` checks the Line Chart and the State Timeline on a real page:
