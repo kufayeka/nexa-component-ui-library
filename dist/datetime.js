@@ -1,7 +1,7 @@
 // Nexa UI — Date Time Picker: granular unit selection (Year, Month, Day, Hours, Minutes, Seconds),
 // custom format templating / regex / expressions, and first-class UTC & Local timezone handling.
 // Fully styled to Nexa UI / IBM Carbon specifications.
-import { html, css, nothing } from "../../nexa-sdk/nexa-component-sdk.js";
+import { html, css, nothing, FormMember } from "../../nexa-sdk/nexa-component-sdk.js";
 import {
     CATEGORY_FORM, PREFIX, BASE_CSS, UIElement, field, FIELD_PROPS, FIELD_PARTS, CSS_GROUP, part,
     sizeProp, paletteProp, variantProp, radiusProp, disabledProp, icon, defineUI } from "./core.js";
@@ -342,13 +342,13 @@ export const dateTime = defineUI({
         value: { fallback: "value", label: "Value (write)", help: "Written back as ISO string, Unix timestamp, or formatted string based on outputType." }
     },
     events: {
-        change: { label: "On Change", payload: { value: "any", iso: "string", timestamp: "number", text: "string", utc: "string" } },
-        open: { label: "On Popover Open" },
-        close: { label: "On Popover Close" }
+        change: { label: "On Change", help: "The user chose or cleared a date.", payload: { value: "any", iso: "string", timestamp: "number", text: "string", utc: "string" } },
+        open: { label: "On Popover Open", help: "The calendar opened." },
+        close: { label: "On Popover Close", help: "The calendar closed." }
     },
     actions: {
-        setNow: { label: "Set to current time" },
-        clear: { label: "Clear date time" }
+        setNow: { label: "Set to current time", help: "Chooses the current date and time." },
+        clear: { label: "Clear date time", help: "Removes the date." }
     },
     parts: Object.assign({}, FIELD_PARTS, {
         box: part("Input box", "box"),
@@ -361,6 +361,13 @@ export const dateTime = defineUI({
             super();
             this._isOpen = false;
             this._currentDate = null;
+            // inside a Form (a "Name in the form") this is one of its fields; its value is what it writes (the output format)
+            this.member = new FormMember(this, {
+                getValue: () => this._formValue(),
+                setValue: (v) => this._setFromForm(v),
+                focus: () => { const el = this.renderRoot && this.renderRoot.querySelector("input, button"); if (el) el.focus(); }
+            }, "text");
+            this._reported = undefined;
             this._navMonth = new Date().getUTCMonth();
             this._navYear = new Date().getUTCFullYear();
             this._onDocumentClick = this._onDocumentClick.bind(this);
@@ -451,10 +458,8 @@ export const dateTime = defineUI({
             this.requestUpdate();
         }
 
-        _commitDate(newDate) {
-            if (!newDate || isNaN(newDate.getTime())) return;
-            this._localValue = newDate;
-
+        // what the field writes for a date, in the chosen output format: also the value the form has
+        _outValue(newDate) {
             const p = this.p;
             let outVal = newDate.toISOString();
             switch (p.outputType) {
@@ -476,19 +481,49 @@ export const dateTime = defineUI({
                 default:
                     outVal = newDate.toISOString();
             }
+            return outVal;
+        }
+
+        // `quiet`: the form set it (Reset, Set values): written and drawn, but no change event and not an edit by the user
+        _commitDate(newDate, quiet) {
+            if (!newDate || isNaN(newDate.getTime())) return;
+            this._localValue = newDate;
+            const outVal = this._outValue(newDate);
 
             if (this.out.canWrite("value")) {
                 this.out.write("value", outVal).catch(() => { });
             }
 
-            this.emit("change", {
-                value: outVal,
-                iso: newDate.toISOString(),
-                timestamp: newDate.getTime(),
-                text: this._formatDisplay(newDate),
-                utc: formatDateTemplate(newDate, "YYYY-MM-DD HH:mm:ss [UTC]", true)
-            });
+            if (!quiet) {
+                this.emit("change", {
+                    value: outVal,
+                    iso: newDate.toISOString(),
+                    timestamp: newDate.getTime(),
+                    text: this._formatDisplay(newDate),
+                    utc: formatDateTemplate(newDate, "YYYY-MM-DD HH:mm:ss [UTC]", true)
+                });
+                if (this.member.joined) { this._reported = JSON.stringify(outVal); this.member.changed(outVal, null); this.member.blurred(); }
+            }
             this.requestUpdate();
+        }
+
+        _formValue() {
+            const d = this.currentDate;
+            return d && !isNaN(d.getTime()) ? this._outValue(d) : null;
+        }
+
+        _setFromForm(v) {
+            if (v === null || v === undefined || v === "") { this.clear(true); return; }
+            const d = parseUniversalDate(v, this.p.customRegex);
+            if (d) this._commitDate(d, true);
+        }
+
+        // a value that came from outside (a variable, a tag) is the form's value too
+        updated(changed) {
+            super.updated(changed);
+            if (!this.member.joined) return;
+            const v = this._formValue(), text = JSON.stringify(v);
+            if (text !== this._reported) { this._reported = text; this.member.reported(v); }
         }
 
         setNow() {
@@ -496,12 +531,15 @@ export const dateTime = defineUI({
             this.closePopover();
         }
 
-        clear() {
+        clear(quiet) {
             this._localValue = null;
             if (this.out.canWrite("value")) {
                 this.out.write("value", null).catch(() => { });
             }
-            this.emit("change", { value: null, iso: "", timestamp: null, text: "", utc: "" });
+            if (!quiet) {
+                this.emit("change", { value: null, iso: "", timestamp: null, text: "", utc: "" });
+                if (this.member.joined) { this._reported = "null"; this.member.changed(null, null); this.member.blurred(); }
+            }
             this.closePopover();
             this.requestUpdate();
         }
@@ -1103,13 +1141,13 @@ export const dateRange = defineUI({
         range: { fallback: "range", label: "Range Object (write)", help: "Written back as { start, end } object with values formatted based on outputType." }
     },
     events: {
-        change: { label: "On Change", payload: { start: "any", end: "any", range: "object", startIso: "string", endIso: "string", text: "string" } },
-        open: { label: "On Popover Open" },
-        close: { label: "On Popover Close" }
+        change: { label: "On Change", help: "The user chose or cleared a range.", payload: { start: "any", end: "any", range: "object", startIso: "string", endIso: "string", text: "string" } },
+        open: { label: "On Popover Open", help: "The calendar opened." },
+        close: { label: "On Popover Close", help: "The calendar closed." }
     },
     actions: {
-        setPreset: { label: "Apply preset range", payload: { preset: "string" } },
-        clear: { label: "Clear date range" }
+        setPreset: { label: "Apply preset range", help: "Chooses a quick range by its name (msg.payload.preset).", payload: { preset: "string" } },
+        clear: { label: "Clear date range", help: "Removes the range." }
     },
     parts: Object.assign({}, FIELD_PARTS, {
         box: part("Input box", "box"),
@@ -1127,6 +1165,13 @@ export const dateRange = defineUI({
             this._hoverDate = null;
             this._localStart = null;
             this._localEnd = null;
+            // inside a Form (a "Name in the form") this is one of its fields; its value is { start, end } in the output format
+            this.member = new FormMember(this, {
+                getValue: () => this._formValue(),
+                setValue: (v) => this._setFromForm(v),
+                focus: () => { const el = this.renderRoot && this.renderRoot.querySelector("input, button"); if (el) el.focus(); }
+            }, "text");
+            this._reported = undefined;
             this._navMonth = new Date().getUTCMonth();
             this._navYear = new Date().getUTCFullYear();
             this._onDocumentClick = this._onDocumentClick.bind(this);
@@ -1259,7 +1304,8 @@ export const dateRange = defineUI({
             }
         }
 
-        _commitRange(startD, endD) {
+        // `quiet`: the form set it (Reset, Set values): written and drawn, but no change event and not an edit by the user
+        _commitRange(startD, endD, quiet) {
             this._localStart = startD;
             this._localEnd = endD;
 
@@ -1282,15 +1328,38 @@ export const dateRange = defineUI({
             const endStr = endD ? formatDateTemplate(endD, fmt, this.isUtc) : "";
             const text = startStr && endStr ? `${startStr} ${this.p.separator || "→"} ${endStr}` : (startStr || endStr);
 
-            this.emit("change", {
-                start: outStart,
-                end: outEnd,
-                range: outRange,
-                startIso: startD ? startD.toISOString() : "",
-                endIso: endD ? endD.toISOString() : "",
-                text
-            });
+            if (!quiet) {
+                this.emit("change", {
+                    start: outStart,
+                    end: outEnd,
+                    range: outRange,
+                    startIso: startD ? startD.toISOString() : "",
+                    endIso: endD ? endD.toISOString() : "",
+                    text
+                });
+                if (this.member.joined) { this._reported = JSON.stringify(outRange); this.member.changed(outRange, null); this.member.blurred(); }
+            }
             this.requestUpdate();
+        }
+
+        // the form's value of a range: { start, end } in the output format, or null until both ends are chosen
+        _formValue() {
+            const s = this.startDate, e = this.endDate;
+            return s && e && !isNaN(s.getTime()) && !isNaN(e.getTime()) ? { start: this._formatOutput(s), end: this._formatOutput(e) } : null;
+        }
+
+        _setFromForm(v) {
+            if (!v || typeof v !== "object") { this.clear(true); return; }
+            const s = parseUniversalDate(v.start, this.p.customRegex), e = parseUniversalDate(v.end, this.p.customRegex);
+            if (s && e) this._commitRange(s, e, true);
+        }
+
+        // a value that came from outside (a variable, a tag) is the form's value too
+        updated(changed) {
+            super.updated(changed);
+            if (!this.member.joined) return;
+            const v = this._formValue(), text = JSON.stringify(v);
+            if (text !== this._reported) { this._reported = text; this.member.reported(v); }
         }
 
         applyPreset(presetId) {
@@ -1310,7 +1379,7 @@ export const dateRange = defineUI({
             this.applyPreset(presetId);
         }
 
-        clear() {
+        clear(quiet) {
             this._localStart = null;
             this._localEnd = null;
             this._tempStart = null;
@@ -1320,7 +1389,10 @@ export const dateRange = defineUI({
             if (this.out.canWrite("start")) this.out.write("start", null).catch(() => { });
             if (this.out.canWrite("end")) this.out.write("end", null).catch(() => { });
             if (this.out.canWrite("range")) this.out.write("range", null).catch(() => { });
-            this.emit("change", { start: null, end: null, range: null, startIso: "", endIso: "", text: "" });
+            if (!quiet) {
+                this.emit("change", { start: null, end: null, range: null, startIso: "", endIso: "", text: "" });
+                if (this.member.joined) { this._reported = "null"; this.member.changed(null, null); this.member.blurred(); }
+            }
             this.closePopover();
             this.requestUpdate();
         }

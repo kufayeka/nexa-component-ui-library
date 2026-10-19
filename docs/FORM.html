@@ -1,0 +1,815 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Nexa Form: what it can do, and a cookbook</title><style>
+:root { --bg: #fff; --fg: #161616; --muted: #525252; --line: #e0e0e0; --soft: #f4f4f4; --accent: #0f62fe; --code: #f4f4f4; }
+@media (prefers-color-scheme: dark) { :root { --bg: #161616; --fg: #f4f4f4; --muted: #c6c6c6; --line: #393939; --soft: #262626; --accent: #78a9ff; --code: #262626; } }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.6 "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 1040px; margin: 0 auto; padding: 32px 20px 96px; }
+h1 { font-size: 2rem; margin: 0 0 16px; } h2 { font-size: 1.5rem; margin: 48px 0 12px; padding-top: 16px; border-top: 1px solid var(--line); } h3 { font-size: 1.2rem; margin: 36px 0 8px; } h4 { margin: 24px 0 6px; }
+a { color: var(--accent); } p, li { max-width: 78ch; } td p, td li { max-width: none; }
+img { max-width: 100%; height: auto; border: 1px solid var(--line); border-radius: 4px; background: #fff; display: block; margin: 8px 0; }
+td img, th img { margin: 0; }
+p > em:only-child { color: var(--muted); display: block; margin-bottom: 8px; }
+table { border-collapse: collapse; width: 100%; margin: 12px 0 20px; font-size: .94rem; }
+th, td { border: 1px solid var(--line); padding: 8px 10px; vertical-align: top; text-align: left; }
+th { background: var(--soft); }
+code { background: var(--code); padding: 1px 5px; border-radius: 3px; font: .9em/1.4 "IBM Plex Mono", ui-monospace, Consolas, monospace; }
+pre { background: var(--code); border: 1px solid var(--line); border-radius: 4px; padding: 12px 14px; overflow: auto; }
+pre code { background: none; padding: 0; font-size: .86rem; }
+hr { border: 0; border-top: 1px solid var(--line); margin: 32px 0; }
+nav.top { font-size: .9rem; margin-bottom: 12px; color: var(--muted); }
+</style></head>
+<body><main><nav class="top">Made from FORM.md, with its pictures from images/form. <a href="FORM_COMPONENTS.html">Every property of every control</a>.</nav>
+<h1 id="nexa-form-what-it-can-do-and-a-cookbook">Nexa Form: what it can do, and a cookbook</h1>
+<p>A <strong>Form</strong> makes the controls inside it one thing: it knows what is typed in each of them, which are wrong and why, whether the whole can be sent, and whether anything changed. You still wire the work with Logic nodes, the way you wire any control. The Form only gives you what a screen of loose controls cannot.</p>
+<p><img src="images/form/login-sending.png" alt="A login form while it is being sent"></p>
+<p><em>Every picture in this guide is taken from a real screen running in a real Node-RED, not drawn. The screens are the examples of <a href="examples/form-cookbook.nexa.json">examples/form-cookbook.nexa.json</a>: <a href="#try-the-examples">try them yourself</a>.</em></p>
+<ul>
+<li><strong>What every property of every control is for:</strong> <a href="FORM_COMPONENTS.html">FORM_COMPONENTS.md</a>.</li>
+<li><strong>What the pieces are made of</strong> (for developers): <code>src/features/form/README.md</code> in <code>@kufayeka/node-red-nexa-dashboard</code>.</li>
+</ul>
+<p>Contents: <a href="#what-it-can-do">What it can do</a> · <a href="#your-first-form">Your first form</a> · <a href="#rules">Rules</a> · <a href="#when-an-error-shows">When an error shows</a> · <a href="#what-the-form-gives-you">What the form gives you</a> · <a href="#things-to-know">Things to know</a> · <a href="#try-the-examples">Try the examples</a> · <a href="#cookbook">Cookbook</a> · <a href="#when-something-does-not-work">When something does not work</a></p>
+<hr>
+<h2 id="what-it-can-do">What it can do</h2>
+<table>
+<thead>
+<tr>
+<th>You want</th>
+<th>The Form gives you</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Tell the user what is wrong <strong>as they type</strong></td>
+<td>A rule on each control (required, shortest and longest text, a pattern, a number&#39;s limits, any rule in JavaScript); the message appears under the control</td>
+</tr>
+<tr>
+<td>Rules that compare fields</td>
+<td>A rule in JavaScript sees every field by name: <code>values.ok + values.reject === value</code></td>
+</tr>
+<tr>
+<td>Send only when everything is right</td>
+<td><strong>On Submit</strong> fires only when every rule is met. <strong>On Invalid Submit</strong> fires otherwise, and the first wrong field gets the focus</td>
+</tr>
+<tr>
+<td>A Send button that knows</td>
+<td><em>Sends the form</em>, waits (disabled) until the form is valid, shows a spinner while it is being sent</td>
+</tr>
+<tr>
+<td>Know the state anywhere on the screen</td>
+<td>Five outputs you bind to variables: <code>values</code>, <code>errors</code>, <code>valid</code>, <code>dirty</code> (changed), <code>submitting</code></td>
+</tr>
+<tr>
+<td>The server says no (&quot;order number taken&quot;)</td>
+<td>An action, <strong>Set errors</strong>, puts the server&#39;s message on the right field</td>
+</tr>
+<tr>
+<td>Load a record to edit</td>
+<td>An action, <strong>Set values</strong>; the loaded record is where the form starts from, so it is not a change</td>
+</tr>
+<tr>
+<td>Start again</td>
+<td><strong>Reset</strong> (back to where the form started) or <strong>Done</strong> with reset after a send</td>
+</tr>
+<tr>
+<td>Warn about unsaved changes</td>
+<td><code>dirty</code> is true while anything differs from the start</td>
+</tr>
+<tr>
+<td>One list of the problems</td>
+<td><strong>List the errors above the form</strong>; each line focuses its field</td>
+</tr>
+<tr>
+<td>Many kinds of control in one form</td>
+<td>Input, Textarea, Number, Password, Checkbox, Switch, Radio, Segmented, Select, Combobox, Slider, Tags, Pin, Rating, Date Time and Date Range all join by name</td>
+</tr>
+<tr>
+<td>Values as an object ready for an API</td>
+<td><code>owner.name</code> and <code>owner.city</code> make <code>{ owner: { name, city } }</code></td>
+</tr>
+</tbody></table>
+<p>What it does <strong>not</strong> do yet: a dialog to edit rules (they are properties of each control), lists of rows that grow, wizard steps, and holding setpoints until an Apply button (recipe 10 shows how to apply setpoints together with Logic today).</p>
+<hr>
+<h2 id="your-first-form">Your first form</h2>
+<ol>
+<li><strong>Drop a Form</strong> from the palette (UI · Form). Its slot is a column: drop controls into it. On the canvas it shows a dashed frame called <em>Form</em>.</li>
+<li><strong>Name each control</strong>: in its inspector, tab <strong>Form</strong>, <em>Name in the form</em>: <code>email</code>, <code>password</code>, <code>agree</code>. A control with no name is not part of the form.</li>
+<li><strong>Add rules</strong> in the same tab and in the control&#39;s own tabs: <em>Required</em> (Field tab), <em>Shortest text</em>, <em>Rule (JavaScript)</em>; <em>Max length</em>, <em>Pattern</em> (Data tab); a Number&#39;s <em>Minimum</em> and <em>Maximum</em>.</li>
+<li><strong>Drop a Button</strong> into the form. Its tab <strong>Form</strong>: <em>In a form, this button</em> → <em>Sends the form</em>. Tick <em>Disabled until the form is valid</em> if you want it off until then.</li>
+<li><strong>Wire the work</strong>: in the Events tab pick the Form&#39;s <strong>On Submit</strong> node, wire it to what sends the data (an API Call, a Function ...), and wire the result back to an <strong>Update</strong> node on the Form with the action <strong>Sending is over</strong> (<code>done</code>).</li>
+</ol>
+<p>This is the login screen of recipe 1, as you build it:</p>
+<p><img src="images/form/login-design.png" alt="The login screen in the editor: a Form with two fields and a Send button"></p>
+<p><em>The screen in the editor. The dashed frame is the Form; what is inside it is its fields. The text on the right shows the form&#39;s state (recipe 13).</em></p>
+<table>
+<thead>
+<tr>
+<th>The field&#39;s name</th>
+<th>The Send button</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><img src="images/form/login-inspector-name.png" alt="Name in the form, in the inspector"></td>
+<td><img src="images/form/login-inspector-send.png" alt="In a form, this button: Sends the form"></td>
+</tr>
+</tbody></table>
+<p>And its Logic: three kinds of node, wired left to right. <em>On Submit</em> is the form&#39;s event; the Functions are your work (here a pretend server); the orange nodes are Update nodes that talk back to the form.</p>
+<p><img src="images/form/login-logic.png" alt="The Logic of the login screen"></p>
+<hr>
+<h2 id="rules">Rules</h2>
+<p>A rule belongs to a control. The Form runs all of a control&#39;s rules on every change, in this order, and shows the first one that fails.</p>
+<table>
+<thead>
+<tr>
+<th>Rule</th>
+<th>Where</th>
+<th>What it checks</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Required</td>
+<td>Field tab (<code>required</code>), message in the Form tab</td>
+<td>Not empty. A Checkbox or Switch: must be <strong>on</strong></td>
+</tr>
+<tr>
+<td>Shortest text</td>
+<td>Form tab (<code>minLength</code>) of a text field</td>
+<td>At least that many characters</td>
+</tr>
+<tr>
+<td>Max length</td>
+<td>Data tab (<code>maxLength</code>)</td>
+<td>At most that many characters</td>
+</tr>
+<tr>
+<td>Pattern</td>
+<td>Data tab (<code>pattern</code>, <code>patternMessage</code>)</td>
+<td>The whole text matches a regular expression</td>
+</tr>
+<tr>
+<td>Minimum / Maximum</td>
+<td>Data tab of a Number</td>
+<td>The number is not outside them. Text that is not a number is refused at once</td>
+</tr>
+<tr>
+<td>Rule (JavaScript)</td>
+<td>Form tab (<code>ruleCode</code>, <code>ruleMessage</code>)</td>
+<td>Whatever you write</td>
+</tr>
+</tbody></table>
+<p><strong>A rule in JavaScript</strong> is the body of a function of <code>(value, values, form)</code>:</p>
+<ul>
+<li><code>value</code>: this field&#39;s value. <code>values</code>: every field by name (<code>values.password</code>). <code>form.name</code>: this field&#39;s name.</li>
+<li>Return <code>true</code> (or nothing) when it is fine. Return <code>false</code> (the message is <em>Message when the rule says false</em>) or a text (that text is the message) when it is not.</li>
+<li>It answers <strong>at once</strong> and is run on every change (and again when any other field changes, because it may read them). It cannot wait for a server: ask the server with Logic (<a href="#3-production-entry-that-adds-up-and-checks-the-server">recipe 3</a>).</li>
+<li>A mistake in your code shows as the field&#39;s error (&quot;The rule failed: ...&quot;), so it never passes in silence.</li>
+</ul>
+<pre><code class="language-js">// at least 8 characters, an upper case letter and a digit
+return (value.length &gt;= 8 &amp;&amp; /[A-Z]/.test(value) &amp;&amp; /[0-9]/.test(value)) || &quot;8+ characters, a capital and a digit&quot;;
+</code></pre>
+<p>An empty field that is not required passes the length and pattern rules (there is nothing to measure). A rule in JavaScript always runs; test for empty yourself when it matters.</p>
+<hr>
+<h2 id="when-an-error-shows">When an error shows</h2>
+<p>The form&#39;s <strong>Show errors</strong> setting (Behaviour tab):</p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>The error appears</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>While the user types (default)</td>
+<td>as soon as the user has edited that field</td>
+</tr>
+<tr>
+<td>When a field is left</td>
+<td>when the user leaves it</td>
+</tr>
+<tr>
+<td>Only when sending</td>
+<td>after a Send was tried</td>
+</tr>
+</tbody></table>
+<p><img src="images/form/login-inspector-form.png" alt="The Form&#39;s Behaviour settings: Show errors"></p>
+<p>Two things do not wait for this choice:</p>
+<ul>
+<li><strong>Whether the form is valid</strong> is known from the first moment. A Send button that waits for it is right even before any error shows.</li>
+<li><strong>A control&#39;s own refusal</strong> of what is typed (a Number that is not a number, or outside its Minimum / Maximum) shows at once.</li>
+</ul>
+<p>After a <strong>failed Send</strong>, every error follows the typing, whatever the setting. A field that was only <strong>loaded</strong> (Set values) and never touched shows its message when a Send is tried (<a href="#4-edit-a-record">recipe 4</a> shows it).</p>
+<hr>
+<h2 id="what-the-form-gives-you">What the form gives you</h2>
+<h3 id="events-logic-pick-the-form39s-quoton-quot-node">Events (Logic: pick the Form&#39;s &quot;On ...&quot; node)</h3>
+<table>
+<thead>
+<tr>
+<th>Event</th>
+<th><code>msg.payload</code></th>
+<th>When</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>On Submit</strong></td>
+<td><code>{ values }</code></td>
+<td>The user sent the form and every rule is met</td>
+</tr>
+<tr>
+<td><strong>On Invalid Submit</strong></td>
+<td><code>{ errors, values }</code></td>
+<td>The user tried to send it and something is wrong</td>
+</tr>
+<tr>
+<td><strong>On Change</strong></td>
+<td><code>{ name, value, values, valid, errors }</code></td>
+<td>A field changed and the user paused (<em>On Change delay</em>, 300 ms)</td>
+</tr>
+<tr>
+<td><strong>On Valid Change</strong></td>
+<td><code>{ valid }</code></td>
+<td>The form became valid or stopped being valid</td>
+</tr>
+<tr>
+<td><strong>On Changed or Unchanged</strong></td>
+<td><code>{ dirty }</code></td>
+<td>The form began to differ from its start, or came back</td>
+</tr>
+<tr>
+<td><strong>On Reset</strong></td>
+<td><code>{ values }</code></td>
+<td>The form was put back to its start</td>
+</tr>
+</tbody></table>
+<p><code>values</code> is an object by the fields&#39; names: <code>{ email: &quot;a@b.co&quot;, owner: { name: &quot;Ann&quot; } }</code>. <code>errors</code> is <code>{ field: message }</code>.</p>
+<h3 id="outputs-data-tab-of-the-form-bind-each-to-a-variable">Outputs (Data tab of the Form: bind each to a variable)</h3>
+<table>
+<thead>
+<tr>
+<th>Output</th>
+<th>Holds</th>
+<th>Use it to</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Values</td>
+<td>the same object as <code>values</code></td>
+<td>show a preview, send it from anywhere</td>
+</tr>
+<tr>
+<td>Errors</td>
+<td><code>{ field: message }</code> of what is shown</td>
+<td>show your own list</td>
+</tr>
+<tr>
+<td>Valid</td>
+<td><code>true</code> / <code>false</code></td>
+<td>enable things, show a green dot</td>
+</tr>
+<tr>
+<td>Changed</td>
+<td><code>true</code> / <code>false</code></td>
+<td>enable &quot;Save changes&quot;, warn about unsaved work</td>
+</tr>
+<tr>
+<td>Sending</td>
+<td><code>true</code> / <code>false</code></td>
+<td>show a banner, lock the screen</td>
+</tr>
+</tbody></table>
+<p>They are written when they change, not on every key. A Text can show them (<code>Valid: {formValid}</code>), a Button&#39;s Disabled can be bound to them (<a href="#4-edit-a-record">recipe 4</a>).</p>
+<h3 id="actions-logic-an-update-node-on-the-form">Actions (Logic: an Update node on the Form)</h3>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th><code>msg.payload</code></th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Check every rule now</td>
+<td></td>
+<td>Shows every error, as a failed Send does, and sends nothing</td>
+</tr>
+<tr>
+<td>Send the form</td>
+<td></td>
+<td>The same as the Send button</td>
+</tr>
+<tr>
+<td>Reset</td>
+<td></td>
+<td>Every field goes back to where the form started; errors are forgotten</td>
+</tr>
+<tr>
+<td><strong>Set values</strong></td>
+<td><code>{ email: &quot;a@b.co&quot;, owner: { name: &quot;Ann&quot; } }</code></td>
+<td>Fills fields by name. This becomes where the form starts from. It also works when it arrives <strong>before</strong> the fields are on the page: each field takes its value when it joins</td>
+</tr>
+<tr>
+<td><strong>Set errors</strong></td>
+<td><code>{ po: &quot;Already used&quot; }</code></td>
+<td>Puts messages on fields and ends the sending. A message goes when that field is edited</td>
+</tr>
+<tr>
+<td>Clear errors</td>
+<td>a list of names (optional)</td>
+<td>Removes the messages put by Set errors</td>
+</tr>
+<tr>
+<td>Focus a field</td>
+<td><code>&quot;po&quot;</code></td>
+<td>Focuses that field; without a name, the first one with an error</td>
+</tr>
+<tr>
+<td><strong>Sending is over</strong> (<code>done</code>)</td>
+<td><code>{ reset: true }</code> (optional)</td>
+<td>Not sending any more; what is entered becomes where the form starts from. With <code>reset</code>, the form goes back to its start instead</td>
+</tr>
+</tbody></table>
+<hr>
+<h2 id="things-to-know">Things to know</h2>
+<ul>
+<li><strong>A control joins by name.</strong> No name, no form. Two controls in one form with the same name: the second stays out. The same name in two <strong>different</strong> forms is fine (<a href="#14-several-forms-on-one-screen">recipe 14</a>).</li>
+<li><strong>Typed text counts.</strong> Inside a form, what a user typed is part of the values as soon as it is typed, and leaving the field keeps it. (A control outside a form works as before: Enter writes, leaving cancels.)</li>
+<li><strong>Enter sends the form</strong> from a one-line field; in a Textarea it is Ctrl+Enter. Turn it off with <em>Enter in a field sends the form</em>.</li>
+<li><strong>A password stays in its field</strong> inside a form (outside one it empties after it is written). The form holds the value until you send it. Remember it is in <code>values</code>: do not write <code>values</code> to a variable that is shown or saved if it has a password.</li>
+<li><strong>Where &quot;the start&quot; is.</strong> The form starts from each control&#39;s <em>Default value</em>. <em>Set values</em> and <em>Sending is over</em> move the start to what is in the form. <em>Reset</em> goes back to the start; <em>Changed</em> is true while anything differs from it.</li>
+<li><strong>A disabled or hidden field still counts.</strong> Its rules still apply, so a field you hide and leave empty keeps a required form invalid. To make a field required only sometimes, use a rule in JavaScript instead of <em>Required</em> (<a href="#8-a-field-that-is-required-only-sometimes">recipe 8</a>).</li>
+<li><strong>The server is Logic&#39;s job.</strong> A rule cannot wait for an answer. On Change → your server call → Set errors does it (<a href="#3-production-entry-that-adds-up-and-checks-the-server">recipe 3</a>).</li>
+<li><strong>At On Load, values may not be there yet.</strong> A variable or a tag may not have its value in the first moment of a page. Read it after a moment (<a href="#10-setpoints-applied-together">recipe 10</a>).</li>
+<li><strong>Dates.</strong> A Date Time&#39;s value is what it writes (by default an ISO text); a Date Range&#39;s is <code>{ start, end }</code>. Both are empty (<code>null</code>) until chosen.</li>
+</ul>
+<hr>
+<h2 id="try-the-examples">Try the examples</h2>
+<p>Every recipe below is a screen of one example project, <a href="examples/form-cookbook.nexa.json">examples/form-cookbook.nexa.json</a>.</p>
+<ol>
+<li>Open the <strong>Screens</strong> tab of the Nexa editor and press the <strong>Import</strong> button (the upload icon next to Export).</li>
+<li>Choose <code>form-cookbook.nexa.json</code>. Nexa shows what is in the file and what your project has now; <strong>nothing changes until you press <em>Replace the project</em></strong>. The import is one revision: Ctrl+Z brings your project back.</li>
+<li>Because it <strong>replaces</strong> the project, use a spare Node-RED (or a copy of your project&#39;s file), not the one you work in.</li>
+<li>Deploy, and open the screens at <code>/nexa/c1-login</code>, <code>/nexa/c2-register</code>, ...: each is named like its recipe.</li>
+</ol>
+<p>There is no real server in the examples: a Function node called <strong>Fake server ...</strong> answers after a short pause, the way your API would. In your own screen put your API Call (or HTTP Request) where it is.</p>
+<hr>
+<h2 id="cookbook">Cookbook</h2>
+<p>Each recipe says what to build, what to wire and what you see. <code>On Submit · Form</code> means the Form&#39;s On Submit node; <code>Update · Form · Done</code> means an Update node on the Form with the action <em>Sending is over</em>. The screens were run for real while the pictures were taken, and the run <strong>checks</strong> what the recipe says (for example that the message is the one written here); a recipe that stops being true makes the check fail.</p>
+<h3 id="1-login">1. Login</h3>
+<p><strong>Build.</strong> A Form with an Input (<code>username</code>, Required), a Password Input (<code>password</code>, Required) and a Button (<em>Sends the form</em>, <em>Disabled until the form is valid</em>). Form: <em>Show errors</em> &quot;When a field is left&quot;.</p>
+<p><img src="images/form/login-empty.png" alt="The empty login form: the Sign in button waits"></p>
+<p><em>Empty: the Sign in button is off until both fields are filled.</em></p>
+<p><strong>Wire.</strong></p>
+<p><img src="images/form/login-logic.png" alt="The Logic of the login screen"></p>
+<pre><code>[On Submit · Form] → [Fake server: log in]  (in your screen: an API Call)
+                       ├─ [Right password?] → [Update · Form · Done]
+                       └─ [Wrong password?] → [Update · Form · Set errors]
+</code></pre>
+<pre><code class="language-js">// Fake server: log in (it answers after 1.5 s: ann / secret is the right pair)
+var v = msg.payload.values;
+return new Promise(function (resolve) {
+    setTimeout(function () {
+        msg.statusCode = (v.username === &quot;ann&quot; &amp;&amp; v.password === &quot;secret&quot;) ? 200 : 401;
+        resolve(msg);
+    }, 1500);
+});
+</code></pre>
+<pre><code class="language-js">// Right password?
+if (msg.statusCode !== 200) return null;
+vars.screen.set(&quot;welcome&quot;, &quot;Welcome, &quot; + msg.payload.values.username + &quot;!&quot;);
+msg.payload = { reset: true };         // Sending is over, and the form is emptied
+return msg;
+</code></pre>
+<pre><code class="language-js">// Wrong password?
+if (msg.statusCode === 200) return null;
+msg.payload = { password: &quot;Wrong user name or password&quot; };      // goes on the password field
+return msg;
+</code></pre>
+<p><strong>You see.</strong></p>
+<table>
+<thead>
+<tr>
+<th>While the server answers</th>
+<th>A wrong password</th>
+<th>A right one</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><img src="images/form/login-sending.png" alt="The Sign in button shows a spinner"></td>
+<td><img src="images/form/login-wrong-password.png" alt="The message under the password"></td>
+<td><img src="images/form/login-welcome.png" alt="Welcome, ann!"></td>
+</tr>
+<tr>
+<td>The button shows a spinner and cannot be clicked again; <code>sending = true</code>.</td>
+<td>The message is on the password field, and the text is selected so the user retypes it.</td>
+<td>The form is empty again and the welcome shows.</td>
+</tr>
+</tbody></table>
+<h3 id="2-registration-with-a-password-strength-bar">2. Registration with a password strength bar</h3>
+<p><strong>Build.</strong> Form with Input <code>email</code> (Pattern <code>[^@ ]+@[^@ ]+</code>, message &quot;Not an email&quot;), Password Input <code>password</code>, Password Input <code>confirm</code>, a Progress bar bound to a variable <code>strength</code>, a Send button.</p>
+<table>
+<thead>
+<tr>
+<th>The rule of <code>password</code></th>
+<th>The rule of <code>confirm</code></th>
+</tr>
+</thead>
+<tbody><tr>
+<td><img src="images/form/register-inspector-password-rule.png" alt="The password rule in the inspector"></td>
+<td><img src="images/form/register-inspector-confirm-rule.png" alt="The confirm rule in the inspector"></td>
+</tr>
+</tbody></table>
+<pre><code class="language-js">// Rule (JavaScript) of `password`
+var score = 0;
+if (value.length &gt;= 8) score++;
+if (/[A-Z]/.test(value)) score++;
+if (/[0-9]/.test(value)) score++;
+if (/[^A-Za-z0-9]/.test(value)) score++;
+return score &gt;= 3 || &quot;Use 8 or more characters with capitals, digits or a symbol&quot;;
+</code></pre>
+<pre><code class="language-js">// Rule (JavaScript) of `confirm`
+return value === values.password || &quot;The passwords are not the same&quot;;
+</code></pre>
+<p>Because a rule is run again when any field changes, <code>confirm</code> turns red if the user changes <code>password</code> afterwards.</p>
+<p><strong>Wire the bar.</strong> The form&#39;s On Change fires while typing, after a pause:</p>
+<p><img src="images/form/register-logic.png" alt="The Logic of the registration screen"></p>
+<pre><code class="language-js">// Strength 0 to 100
+if (msg.payload.name !== &quot;password&quot;) return null;     // only the password field
+var p = msg.payload.value || &quot;&quot;, s = 0;
+if (p.length &gt;= 8) s++;
+if (/[A-Z]/.test(p)) s++;
+if (/[0-9]/.test(p)) s++;
+if (/[^A-Za-z0-9]/.test(p)) s++;
+vars.screen.set(&quot;strength&quot;, s * 25);
+return null;
+</code></pre>
+<p><strong>You see.</strong></p>
+<table>
+<thead>
+<tr>
+<th>Empty</th>
+<th>A weak password, a wrong email</th>
+<th>A strong one that was repeated wrongly</th>
+<th>Ready</th>
+<th>Created</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><img src="images/form/register-empty.png" alt="Empty"></td>
+<td><img src="images/form/register-weak.png" alt="Weak"></td>
+<td><img src="images/form/register-not-the-same.png" alt="Not the same"></td>
+<td><img src="images/form/register-ready.png" alt="Ready"></td>
+<td><img src="images/form/register-created.png" alt="Created"></td>
+</tr>
+</tbody></table>
+<p>The bar follows the typing (75% for <code>Abcdef12</code>); the Create account button turns on only when every rule is met, and after the send the form is empty again.</p>
+<h3 id="3-production-entry-that-adds-up-and-checks-the-server">3. Production entry that adds up and checks the server</h3>
+<p><strong>Build.</strong> Fields: Input <code>po</code> (Required, Pattern <code>PO-[0-9]+</code>, message &quot;Like PO-123&quot;), Number <code>total</code> (Required, Minimum 1), Number <code>ok</code> and Number <code>reject</code> (default 0), a Send button.</p>
+<table>
+<thead>
+<tr>
+<th>The rule of the total</th>
+<th>The pattern of the order number</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><img src="images/form/production-inspector-total-rule.png" alt="The rule of the total in the inspector"></td>
+<td><img src="images/form/production-inspector-po-pattern.png" alt="The pattern of the order number in the inspector"></td>
+</tr>
+</tbody></table>
+<pre><code class="language-js">// Rule (JavaScript) of `total`
+return values.ok + values.reject === value || &quot;OK + rejected must equal the total&quot;;
+</code></pre>
+<p>It is checked again whenever <code>ok</code> or <code>reject</code> changes.</p>
+<p><strong>Wire the server check</strong> (&quot;is this order number already used?&quot;) <strong>and the send:</strong></p>
+<p><img src="images/form/production-logic.png" alt="The Logic of the production screen: the check on the first row, the send on the second"></p>
+<pre><code class="language-js">// Only the order number
+if (msg.payload.name !== &quot;po&quot; || msg.payload.errors.po) return null;   // another field, or already wrong
+msg.po = msg.payload.value;
+return msg;
+</code></pre>
+<pre><code class="language-js">// Taken?  (the fake server says { exists: true } for PO-100)
+if (msg.payload.exists) return { payload: { po: &quot;Already used&quot; } };
+return null;
+</code></pre>
+<pre><code class="language-js">// Remember it  (after the fake server saved it)
+vars.screen.set(&quot;lastSaved&quot;, msg.saved);
+msg.payload = { reset: true };
+return msg;
+</code></pre>
+<p><strong>You see.</strong></p>
+<table>
+<thead>
+<tr>
+<th>Empty</th>
+<th>The numbers do not add up</th>
+<th>They add up</th>
+<th>The server says it is taken</th>
+<th>Saved</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><img src="images/form/production-empty.png" alt="Empty"></td>
+<td><img src="images/form/production-does-not-add-up.png" alt="7 + 2 is not 10"></td>
+<td><img src="images/form/production-adds-up.png" alt="7 + 3 is 10"></td>
+<td><img src="images/form/production-taken.png" alt="Already used"></td>
+<td><img src="images/form/production-saved.png" alt="Saved, and the form is clear"></td>
+</tr>
+</tbody></table>
+<p>The message from the server appears under <code>po</code> a moment after the user stops typing; it goes when they edit the field.</p>
+<h3 id="4-edit-a-record">4. Edit a record</h3>
+<p><strong>Build.</strong> The fields of recipe 3 (with the same rule on <code>total</code>), a <em>Revert</em> Button inside the form (<em>Resets the form</em>), the Form output <em>Changed</em> bound to a variable <code>formDirty</code>, and a Button <strong>outside</strong> the form, <em>Save changes</em>, with <strong>Disabled</strong> bound to an Expression <code>!{formDirty}</code>: it is on only while the form differs from the loaded record.</p>
+<p><img src="images/form/edit-inspector-disabled.png" alt="Disabled bound to !{formDirty}"></p>
+<p><img src="images/form/edit-inspector-outputs.png" alt="The outputs of the Form"></p>
+<p><strong>Wire.</strong></p>
+<p><img src="images/form/edit-logic.png" alt="The Logic of the edit screen"></p>
+<ul>
+<li><strong>On Load</strong> → the server (here: <em>Fake server: get order 7</em>) → <strong>Update · Form · Set values</strong>. The record&#39;s property names are the fields&#39; names (<code>po</code>, <code>total</code>, <code>ok</code>, <code>reject</code>); a nested record fills <code>owner.name</code> and the like.</li>
+<li><strong>On Click · Save changes</strong> → <strong>Update · Form · Send the form</strong>: a button outside the form can send it through the action.</li>
+<li><strong>On Submit · Form</strong> → the server (<em>Fake server: save order 7</em>) → <strong>Update · Form · Done</strong>: the saved values are the new start.</li>
+</ul>
+<p><strong>You see.</strong></p>
+<table>
+<thead>
+<tr>
+<th>Loaded</th>
+<th>Saved with a wrong total</th>
+<th>Edited and right</th>
+<th>Saving</th>
+<th>Saved</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><img src="images/form/edit-loaded.png" alt="Loaded"></td>
+<td><img src="images/form/edit-does-not-add-up.png" alt="Does not add up"></td>
+<td><img src="images/form/edit-edited.png" alt="Edited"></td>
+<td><img src="images/form/edit-saving.png" alt="Saving"></td>
+<td><img src="images/form/edit-saved.png" alt="Saved"></td>
+</tr>
+<tr>
+<td>The form opens filled; <em>Save changes</em> is off.</td>
+<td>Only <code>ok</code> was edited, so the total shows nothing yet; pressing <em>Save changes</em> sends the form and the total says it does not add up.</td>
+<td>Save changes is on while the form differs from the record.</td>
+<td>The server works: <code>sending = true</code>.</td>
+<td>After the save it is off again: the saved values are the new start.</td>
+</tr>
+</tbody></table>
+<h3 id="5-the-server-says-no-field-by-field">5. The server says no, field by field</h3>
+<p>If your API answers a bad request with <code>{ &quot;errors&quot;: { &quot;po&quot;: &quot;Already used&quot;, &quot;qty&quot;: &quot;Only 5 left&quot; } }</code>, one Function puts every message on its field. The form here also lists the errors above the fields (<em>List the errors above the form after a failed Submit</em>, recipe 7).</p>
+<p><img src="images/form/server-errors-logic.png" alt="The Logic of the screen: On Submit, the server, a Function, Set errors"></p>
+<pre><code class="language-js">// Take the field messages  (the error output of an API Call keeps the body the API gave as msg.payload)
+var body = msg.payload;
+if (body &amp;&amp; body.errors) { msg.payload = body.errors; return msg; }
+msg.payload = { _form: &quot;Something went wrong&quot; };    // not a field: ignored by the form
+return msg;
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>The form</th>
+<th>A Send with nothing filled (recipe 7)</th>
+<th>The server refused two fields</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><img src="images/form/server-errors-empty.png" alt="Empty"></td>
+<td><img src="images/form/server-errors-summary.png" alt="The list names the empty fields"></td>
+<td><img src="images/form/server-errors-server-says-no.png" alt="The server refused two fields: each shows its own message"></td>
+</tr>
+</tbody></table>
+<p>Names that are not fields are ignored, and Set errors also ends the sending.</p>
+<h3 id="6-a-send-button-that-waits-and-a-spinner">6. A Send button that waits, and a spinner</h3>
+<p>Button inside the form: <em>In a form, this button</em> = <em>Sends the form</em>, tick <em>Disabled until the form is valid</em>. While the form is being sent (from a valid Send until <code>Done</code> / <code>Set errors</code> / <code>Reset</code>) the button shows a spinner and cannot be clicked again. The pictures are in recipe 1: <a href="images/form/login-empty.png">empty (waiting)</a> and <a href="images/form/login-sending.png">sending</a>. To lock the whole screen as well, bind the form&#39;s <em>Sending</em> output to a variable and bind other controls&#39; <em>Disabled</em> to it.</p>
+<h3 id="7-a-list-of-the-errors">7. A list of the errors</h3>
+<p>Form → Behaviour tab → <em>List the errors above the form after a failed Submit</em>, and set <em>Title of the list</em>.</p>
+<p><img src="images/form/server-errors-inspector-summary.png" alt="The Form&#39;s Behaviour tab with the error list turned on"></p>
+<p>After a failed Send the list appears above the fields; each name in it focuses its field (the picture is in recipe 5, <a href="images/form/server-errors-summary.png">a Send with nothing filled</a>).</p>
+<h3 id="8-a-field-that-is-required-only-sometimes">8. A field that is required only sometimes</h3>
+<p><em>Required</em> always applies. For &quot;the order number is required when <em>This lot has an order</em> is ticked&quot;, leave <em>Required</em> off and use a rule on the Input <code>po</code>:</p>
+<p><img src="images/form/conditional-inspector-rule.png" alt="The rule in the inspector"></p>
+<pre><code class="language-js">return !values.hasOrder || !!value || &quot;Required when there is an order&quot;;
+</code></pre>
+<p>(<code>hasOrder</code> is the name of the Checkbox in the form.) The rule is run again when the checkbox changes.</p>
+<table>
+<thead>
+<tr>
+<th>Box off: nothing is required</th>
+<th>Box ticked, sent empty</th>
+<th>Filled</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><img src="images/form/conditional-off.png" alt="Off"></td>
+<td><img src="images/form/conditional-required.png" alt="Required"></td>
+<td><img src="images/form/conditional-sent.png" alt="Sent"></td>
+</tr>
+</tbody></table>
+<p><img src="images/form/conditional-logic.png" alt="The Logic: On Submit, a Function that says what was sent, Done"></p>
+<h3 id="9-a-report-filter-with-a-date-range">9. A report filter with a date range</h3>
+<p><strong>Build.</strong> Form with a Date Range (<code>period</code>, Required, <em>Write output format</em> ISO), a Select (<code>line</code>, Required, three options), a Button (<em>Sends the form</em>).</p>
+<p><img src="images/form/filter-inspector-period.png" alt="The name of the Date Range in the form, in the inspector"></p>
+<pre><code>[On Submit · Form] → [Fake server: the report] → [Update · Form · Done]
+</code></pre>
+<p><img src="images/form/filter-logic.png" alt="The Logic of the filter screen"></p>
+<pre><code class="language-js">// Fake server: the report (in your screen: an API Call; values.period is { start, end })
+var v = msg.payload.values;
+vars.screen.set(&quot;report&quot;, v.line + &quot;: &quot; + v.period.start.slice(0, 10) + &quot; to &quot; + v.period.end.slice(0, 10) + &quot; - 124 batches&quot;);
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Empty</th>
+<th>Filled</th>
+<th>The result</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><img src="images/form/filter-empty.png" alt="Empty"></td>
+<td><img src="images/form/filter-filled.png" alt="Filled"></td>
+<td><img src="images/form/filter-report.png" alt="Report"></td>
+</tr>
+</tbody></table>
+<p>(In the pictures the filter is filled with the <em>Set values</em> action; a user picks the dates in the calendar.) <code>values.period</code> is <code>{ start, end }</code>; each is an ISO text unless you chose another output format.</p>
+<h3 id="10-setpoints-applied-together">10. Setpoints applied together</h3>
+<p>Controls that are bound to a tag write as soon as the user presses Enter, one by one. To change several setpoints and apply them <strong>together</strong>, keep the controls <strong>local</strong> (no Value (read), no Value (write)) and let the Form&#39;s On Submit do the writing.</p>
+<p><strong>Build.</strong> A Form with Number <code>speed</code> (Minimum 0, Maximum 1500) and Number <code>temp</code> (Minimum 0, Maximum 120). The limits are the safe limits: a value outside them is refused as it is typed. A Button <em>Apply</em> (<em>Sends the form</em>, <em>Disabled until the form is valid</em>) and a Button <em>Revert</em> (<em>Resets the form</em>).</p>
+<p><img src="images/form/setpoints-inspector-limits.png" alt="The limits of a setpoint in the inspector"></p>
+<p><strong>Wire.</strong></p>
+<p><img src="images/form/setpoints-logic.png" alt="The Logic of the setpoints screen"></p>
+<ul>
+<li><strong>On Load</strong> → read the machine <strong>after a moment</strong> → <strong>Update · Form · Set values</strong>. A variable or a tag may not have its value in the first instant of a page, so the read waits a little (here half a second).</li>
+<li><strong>On Submit · Form</strong> → write the machine → <strong>Update · Form · Done</strong>.</li>
+</ul>
+<pre><code class="language-js">// Read the machine (after a moment)   - with real tags:
+msg.payload = {
+    speed: vars.shared.get(&quot;sparkplug::Plant::Line1::Mixer::Speed&quot;),
+    temp:  vars.shared.get(&quot;sparkplug::Plant::Line1::Mixer::Temp&quot;)
+};
+</code></pre>
+<pre><code class="language-js">// Write the machine (both together)   - with real tags: vars.shared.set(...) returns a promise
+var v = msg.payload.values;
+return Promise.all([
+    vars.shared.set(&quot;sparkplug::Plant::Line1::Mixer::Speed&quot;, v.speed),
+    vars.shared.set(&quot;sparkplug::Plant::Line1::Mixer::Temp&quot;, v.temp)
+]).then(function () { return msg; });
+</code></pre>
+<p>(The example uses two screen variables, <code>speedNow</code> and <code>tempNow</code>, in place of the tags, so that it runs anywhere.)</p>
+<table>
+<thead>
+<tr>
+<th>Loaded</th>
+<th>Edited, not written</th>
+<th>Out of range</th>
+<th>Applied</th>
+<th>Reverted</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><img src="images/form/setpoints-loaded.png" alt="Loaded"></td>
+<td><img src="images/form/setpoints-edited.png" alt="Edited"></td>
+<td><img src="images/form/setpoints-out-of-range.png" alt="Out of range"></td>
+<td><img src="images/form/setpoints-applied.png" alt="Applied"></td>
+<td><img src="images/form/setpoints-reverted.png" alt="Reverted"></td>
+</tr>
+<tr>
+<td>The form shows what the machine has.</td>
+<td>The user typed 1200 and 75: the machine still has 800 and 60.</td>
+<td>500 is over the limit: the message, and Apply waits.</td>
+<td>Both reached the machine together.</td>
+<td>Revert went back to the values of the machine.</td>
+</tr>
+</tbody></table>
+<p>A real HMI mode, with an Apply / Revert row built in, a confirmation and a read-back, is a later step.</p>
+<h3 id="11-show-every-problem-now-without-sending">11. Show every problem now, without sending</h3>
+<p>A button that lets the user see everything that is wrong before they try to send (a &quot;Check&quot; button): a normal Button (it does nothing to the form by itself) wired to an Update node on the Form with the action <strong>Check every rule now</strong>:</p>
+<p><img src="images/form/check-logic.png" alt="The Logic: On Click, then Check every rule now"></p>
+<table>
+<thead>
+<tr>
+<th>Before</th>
+<th>After the Check button</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><img src="images/form/check-empty.png" alt="Empty"></td>
+<td><img src="images/form/check-checked.png" alt="Checked"></td>
+</tr>
+</tbody></table>
+<p>Every error appears (as after a failed Send), the first wrong field is focused, and nothing is sent. Use the <strong>Valid</strong> output to enable the next step.</p>
+<h3 id="12-focus-a-field-when-the-screen-opens">12. Focus a field when the screen opens</h3>
+<pre><code>[On Load] → [Function: which field?] → [Update · Form · Focus a field]
+</code></pre>
+<p><img src="images/form/focus-logic.png" alt="The Logic: On Load, a Function that says &quot;username&quot;, Focus a field"></p>
+<pre><code class="language-js">// Which field?
+msg.payload = &quot;username&quot;;
+return msg;
+</code></pre>
+<p><img src="images/form/focus-focused.png" alt="The user name field has the focus when the screen opens"></p>
+<h3 id="13-show-the-form39s-state">13. Show the form&#39;s state</h3>
+<p>Bind <em>Valid</em>, <em>Changed</em> and <em>Sending</em> to variables, then show them anywhere: a Text <code>Valid: {formValid}</code>, a Badge whose colour follows <code>formValid</code>, a banner &quot;Unsaved changes&quot; visible while <code>formDirty</code> is true.</p>
+<p><img src="images/form/state-inspector-outputs.png" alt="The outputs of the Form, bound to variables"></p>
+<table>
+<thead>
+<tr>
+<th>Start</th>
+<th>Changed</th>
+<th>Valid</th>
+<th>Sending</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><img src="images/form/state-start.png" alt="Start"></td>
+<td><img src="images/form/state-changed.png" alt="Changed"></td>
+<td><img src="images/form/state-valid.png" alt="Valid"></td>
+<td><img src="images/form/state-sending.png" alt="Sending"></td>
+</tr>
+</tbody></table>
+<h3 id="14-several-forms-on-one-screen">14. Several forms on one screen</h3>
+<p>Each Form is its own world: names only have to be different <strong>inside</strong> one form. Two forms may both have a field called <code>name</code>. Each has its own outputs, events and actions; pick the Form you mean in each Logic node.</p>
+<table>
+<thead>
+<tr>
+<th>Both empty</th>
+<th>Only the customer form filled</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><img src="images/form/two-forms-both-empty.png" alt="Both empty"></td>
+<td><img src="images/form/two-forms-one-filled.png" alt="One filled"></td>
+</tr>
+</tbody></table>
+<h3 id="15-keep-the-data-or-clear-it">15. Keep the data, or clear it</h3>
+<p>After a good send, the <strong>Sending is over</strong> action decides:</p>
+<ul>
+<li>no payload: the form keeps what was typed, and that becomes where it starts from (good for editing);</li>
+<li><code>{ reset: true }</code>: the form goes back to its start (good for entering one record after another).</li>
+</ul>
+<p><img src="images/form/keep-or-clear-logic.png" alt="The Logic: the left form is sent and kept, the right one is sent and cleared"></p>
+<table>
+<thead>
+<tr>
+<th>Typed in both</th>
+<th>After both were sent</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><img src="images/form/keep-or-clear-typed.png" alt="Typed"></td>
+<td><img src="images/form/keep-or-clear-after-send.png" alt="After the send: the left keeps its text, the right is empty"></td>
+</tr>
+</tbody></table>
+<hr>
+<h2 id="when-something-does-not-work">When something does not work</h2>
+<table>
+<thead>
+<tr>
+<th>You see</th>
+<th>Look at</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>A field is not in <code>values</code></td>
+<td>Its <em>Name in the form</em> is empty, or another field in the same form has that name, or the control is not inside the Form&#39;s slot</td>
+</tr>
+<tr>
+<td>Send does nothing</td>
+<td>Is the Button inside the Form, with <em>In a form, this button</em> set to <em>Sends the form</em>? Is <em>Disabled until the form is valid</em> on and some field still wrong?</td>
+</tr>
+<tr>
+<td>On Submit never fires</td>
+<td>A rule fails. Turn on <em>List the errors above the form</em>, or wire On Invalid Submit to a Debug node</td>
+</tr>
+<tr>
+<td>Send worked once and now does nothing</td>
+<td>The form is still &quot;sending&quot;: wire the result back to <strong>Sending is over</strong> (or <strong>Set errors</strong>)</td>
+</tr>
+<tr>
+<td>An error will not go away</td>
+<td>It came from <strong>Set errors</strong>: it goes when the user edits that field, or use <strong>Clear errors</strong></td>
+</tr>
+<tr>
+<td>The error appears too early (or too late)</td>
+<td>The form&#39;s <em>Show errors</em> setting</td>
+</tr>
+<tr>
+<td>A field that was loaded shows no error although it is wrong</td>
+<td>Errors show for a field the user touched, or after a Send was tried; use <strong>Check every rule now</strong> to show them all</td>
+</tr>
+<tr>
+<td>A rule in JavaScript shows &quot;The rule failed&quot;</td>
+<td>A mistake in the code: the message says what</td>
+</tr>
+<tr>
+<td>A number field does not accept what is typed</td>
+<td>Its Minimum / Maximum, or the text is not a number</td>
+</tr>
+<tr>
+<td><em>Set values</em> did nothing</td>
+<td>Does the record use the fields&#39; names (<code>po</code>, <code>owner.name</code>)? A name the form does not have is ignored</td>
+</tr>
+<tr>
+<td><em>Reset</em> does not empty the form</td>
+<td>Reset goes back to where it <strong>started</strong>: after Set values or Sending is over that is the loaded or sent data. Use <code>{ reset: true }</code> on a form that started empty</td>
+</tr>
+<tr>
+<td>The form is empty at On Load although you set values</td>
+<td>A variable or a tag may not have its value yet at the first instant: read it after a moment (<a href="#10-setpoints-applied-together">recipe 10</a>)</td>
+</tr>
+</tbody></table>
+</main></body></html>

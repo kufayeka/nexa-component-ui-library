@@ -23,7 +23,7 @@ const check = (label, ok, actual) => { if (!ok) failures++; else passed++; conso
 const field = (id, type, w, h, props) => ({ id, type: 'nexa-ui-' + type, x: 0, y: 0, w, h, props });
 const FORM = {
     id: 'FORM', type: 'nexa-ui-form', x: 20, y: 20, w: 420, h: 440, slots: true,
-    props: { validateOn: 'change', changeDelay: 100, outputValid: '{formValid}', outputDirty: '{formDirty}', outputSubmitting: '{formSending}' },
+    props: { validateOn: 'change', changeDelay: 100, errorSummary: true, outputValid: '{formValid}', outputDirty: '{formDirty}', outputSubmitting: '{formSending}' },
     children: [{
         id: 'FF', type: '@frame', inSlot: 'content', slotLabel: 'Fields', x: 0, y: 0, w: 420, h: 440, style: {},
         layout: { mode: 'vertical', padding: { t: 12, r: 12, b: 12, l: 12 }, gap: 10 },
@@ -38,11 +38,17 @@ const FORM = {
 };
 const STATE = field('state', 'text', 400, 44, { text: 'valid={formValid} changed={formDirty} sending={formSending}' });
 STATE.x = 480; STATE.y = 20;
+// a button outside the form that is on only while the form has changed (Disabled bound to an expression over the form's "changed" output)
+const SAVE2 = field('save2', 'button', 140, 40, { text: 'Save changes', disabled: { $bind: [{ src: 'expr', ref: '!{formDirty}' }], static: true } });
+SAVE2.x = 480; SAVE2.y = 80;
+// what the Send wrote into a variable from On Submit (a Function writing a screen variable)
+const LAST = field('last', 'text', 400, 44, { text: 'last={lastPo}' });
+LAST.x = 480; LAST.y = 140;
 
 const LOGIC = {
     nodes: [
         { id: 'e1', type: 'ui-event', compId: 'FORM', event: 'submit' },
-        { id: 'f1', type: 'function', code: 'window.__submitted = msg.payload; return new Promise(function (resolve) { setTimeout(function () { resolve(msg); }, 900); });' },
+        { id: 'f1', type: 'function', code: 'window.__submitted = msg.payload; vars.screen.set("lastPo", msg.payload.values.po); return new Promise(function (resolve) { setTimeout(function () { resolve(msg); }, 900); });' },
         { id: 'u1', type: 'ui-update', compId: 'FORM', action: 'done', config: {} },
         { id: 'e2', type: 'ui-event', compId: 'FORM', event: 'change' },
         { id: 'f2', type: 'function', code: "var p = msg.payload; if (p.name === 'po' && p.value === 'TAKEN') { msg.payload = { po: 'Already used' }; return msg; } return null;" },
@@ -57,8 +63,8 @@ function writeFlows() {
     fs.writeFileSync(path.join(dir, 'settings.js'), 'module.exports = { uiPort: ' + PORTS.editor + ', flowFile: "flows.json", nexaDashboard: { screenWorkerPort: ' + PORTS.pages + ' }, logging: { console: { level: "warn" } }, editorTheme: { tours: false, projects: { enabled: false } } };\n');
     fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'nr-form', version: '0.0.1', private: true }));
     const project = { id: 'formproj', type: 'kufayeka-nexa-project', name: 'Form', sparkplugConnection: '',
-        screens: [{ id: 'sF', name: 'Form', path: '/form', width: 940, height: 520, gridSize: 10, snap: false, treeVersion: 1, orphans: [], components: [FORM, STATE], logic: LOGIC,
-            variables: [{ id: 'v1', name: 'formValid', type: 'boolean', defaultValue: false }, { id: 'v2', name: 'formDirty', type: 'boolean', defaultValue: false }, { id: 'v3', name: 'formSending', type: 'boolean', defaultValue: false }] }],
+        screens: [{ id: 'sF', name: 'Form', path: '/form', width: 940, height: 520, gridSize: 10, snap: false, treeVersion: 1, orphans: [], components: [FORM, STATE, SAVE2, LAST], logic: LOGIC,
+            variables: [{ id: 'v1', name: 'formValid', type: 'boolean', defaultValue: false }, { id: 'v2', name: 'formDirty', type: 'boolean', defaultValue: false }, { id: 'v3', name: 'formSending', type: 'boolean', defaultValue: false }, { id: 'v4', name: 'lastPo', type: 'string', defaultValue: 'none' }] }],
         templates: [], types: [], breakpoints: [], theme: null, variables: [] };
     fs.writeFileSync(path.join(dir, 'flows.json'), JSON.stringify([{ id: 'tab1', type: 'tab', label: 'T' }, project], null, 1));
     return dir;
@@ -98,7 +104,10 @@ const portFree = (port) => new Promise((resolve) => { const t = net.createServer
             check('at the start: not valid (an empty required field), nothing changed, nothing sent; the Send button waits', (await stateText()) === 'valid=false changed=false sending=false' && (await sendBtn()).disabled === true, [await stateText(), await sendBtn()]);
             check('... and no error is shown before the user touches anything', (await errorOf('po')) === '' && (await errorOf('agree')) === '', null);
 
+            const save2 = () => js(`${R('save2')}.querySelector(".btn").disabled`);
+            check('a button whose Disabled is bound to !{formDirty} is off while nothing changed', (await save2()) === true, await save2());
             await typeInto('po', 'PO-1');
+            check('... and on once the form has changed', (await save2()) === false, await save2());
             await typeInto('pw', 'short');
             check('typing a short password: its rule (JavaScript) says so at once, while typing', (await errorOf('pw')) === 'At least 8 characters', await errorOf('pw'));
             await typeInto('pw', 'long-enough-1');
@@ -138,12 +147,16 @@ const portFree = (port) => new Promise((resolve) => { const t = net.createServer
             check('On Submit gave Logic the values of every field, by name', submitted && JSON.stringify(submitted.values) === JSON.stringify({ po: 'PO-2', password: 'long-enough-1', qty: 3, agree: true }), submitted);
             await wait(1000);
             check('Update (Done): sending is over and what was sent is where the form starts from (not changed)', (await stateText()) === 'valid=true changed=false sending=false' && (await sendBtn()).busy === 'false', [await stateText(), await sendBtn()]);
+            check('... the Function on On Submit wrote a field into a screen variable; the Save changes button is off again', (await js(`${R('last')}.querySelector("p").textContent.trim()`)) === 'last=PO-2' && (await save2()) === true, [await js(`${R('last')}.querySelector("p").textContent.trim()`), await save2()]);
 
             // a form that is not valid: the Send button is disabled, so a click does nothing; Enter in a field shows the errors instead
             await typeInto('po', '');
             await js(`(function () { ${R('po')}.querySelector("input").focus(); return 1; })()`);
             await key('Enter'); await wait(300);
             check('Enter in a field of an invalid form: no submit, the error is shown on the field', (await errorOf('po')) === 'Required' && JSON.stringify((await js('window.__submitted')).values.po) === '"PO-2"', [await errorOf('po'), await js('window.__submitted')]);
+
+            const summary = await js(`(function () { var s = ${R('FORM')}.querySelector(".summary"); return s ? s.textContent.replace(/\\s+/g, " ").trim() : ""; })()`);
+            check('the list of errors above the form names the field and its message after a failed Send', /Please correct:.*po: Required/.test(summary), summary);
 
             const errs = logs.filter((l) => !/favicon|DevTools|dev mode/.test(l));
             check('no errors in the page', errs.length === 0, errs.slice(0, 3));

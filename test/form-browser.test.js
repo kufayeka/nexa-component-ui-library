@@ -45,11 +45,12 @@ withHarness({
     };
 
     // the form with its fields in its slot, as the page puts them: the slot frame is a light-DOM child of the form's element
-    const build = async (formProps) => {
-        await mount('frm', 'form', Object.assign({ changeDelay: 0, outputValues: OUT('values'), outputErrors: OUT('errors'), outputValid: OUT('valid'), outputDirty: OUT('dirty'), outputSubmitting: OUT('sending') }, formProps || {}), { width: 420, height: 420 });
-        await js(`(function () { var wc = NexaTest.wc("frm"); var f = document.createElement("div"); f.slot = "content"; f.id = "frame"; f.style.cssText = "display:flex;flex-direction:column;gap:6px;padding:8px"; wc.appendChild(f); return 1; })()`);
+    const build = async (formProps, formName, frameId) => {
+        const n = formName || 'frm';
+        await mount(n, 'form', Object.assign({ changeDelay: 0, outputValues: OUT('values'), outputErrors: OUT('errors'), outputValid: OUT('valid'), outputDirty: OUT('dirty'), outputSubmitting: OUT('sending') }, formProps || {}), { width: 420, height: 420 });
+        await js(`(function () { var wc = NexaTest.wc(${JSON.stringify(n)}); var f = document.createElement("div"); f.slot = "content"; f.id = ${JSON.stringify(frameId || 'frame')}; f.style.cssText = "display:flex;flex-direction:column;gap:6px;padding:8px"; wc.appendChild(f); return 1; })()`);
     };
-    const into = async (name) => { await js(`(function () { document.getElementById("frame").appendChild(NexaTest.item(${JSON.stringify(name)}).el); return 1; })()`); await settle(); await wait(30); await settle(); };
+    const into = async (name, frameId) => { await js(`(function () { document.getElementById(${JSON.stringify(frameId || 'frame')}).appendChild(NexaTest.item(${JSON.stringify(name)}).el); return 1; })()`); await settle(); await wait(30); await settle(); };
 
     await ok('Form: fields join by name; the form writes values / valid / dirty to its outputs, and errors appear as the user types', async () => {
         await build({ validateOn: 'change' });
@@ -177,6 +178,51 @@ withHarness({
         await typeInto('unnamed', 'x');
         const vals = await written('frm', 'outputValues');
         assert.ok(!('unnamed' in vals) && !('' in vals), 'a control without a name is not a field');
+    });
+
+    await ok('Form: every kind of control is a field: values by name, an error on a required one after a failed Send, Set values fills them all, Reset puts them back', async () => {
+        await build({ validateOn: 'submit' }, 'all', 'frame-all');
+        const O = { outputValues: OUT('all-values'), outputErrors: OUT('all-errors') };
+        const F = {
+            'a-check': ['checkbox', { formName: 'check', required: true, text: 'Agree' }],
+            'a-switch': ['switch', { formName: 'power', text: 'Power' }],
+            'a-radio': ['radio-group', { formName: 'mode', label: 'Mode', defaultValue: 'a' }],
+            'a-seg': ['segmented', { formName: 'shift', defaultValue: 'b' }],
+            'a-select': ['select', { formName: 'line', label: 'Line', required: true }],
+            'a-combo': ['combobox', { formName: 'product', label: 'Product', defaultValue: 'c' }],
+            'a-slider': ['slider', { formName: 'speed', label: 'Speed', defaultValue: 20 }],
+            'a-tags': ['tags-input', { formName: 'tags', label: 'Tags', required: true, defaultValue: [] }],
+            'a-pin': ['pin-input', { formName: 'pin', label: 'PIN', length: 4 }],
+            'a-rating': ['rating', { formName: 'stars', defaultValue: 2 }],
+            'a-date': ['datetime', { formName: 'when', label: 'When', required: true, timezoneMode: 'utc' }],
+            'a-range': ['daterange', { formName: 'period', label: 'Period', required: true, timezoneMode: 'utc' }]
+        };
+        for (const n of Object.keys(F)) { await mount(n, F[n][0], F[n][1], { width: 320, height: 64 }); await into(n, 'frame-all'); }
+        assert.ok(O);
+        const vals = await written('all', 'outputValues');
+        assert.deepStrictEqual(Object.keys(vals).sort(), ['check', 'line', 'mode', 'period', 'pin', 'power', 'product', 'shift', 'speed', 'stars', 'tags', 'when'], 'every control joined by its name');
+        assert.deepStrictEqual([vals.mode, vals.shift, vals.product, vals.speed, vals.stars, vals.power, vals.check], ['a', 'b', 'c', 20, 2, false, false], 'each shows its own default as the start of the form');
+        await js('NexaTest.wc("all").submit()'); await wait(80); await settle();
+        const inv = await events('all', 'invalidSubmit');
+        assert.deepStrictEqual(Object.keys(inv[0].errors).sort(), ['check', 'line', 'period', 'tags', 'when'], 'the required ones that are empty, and only those: ' + JSON.stringify(inv[0].errors));
+        assert.strictEqual(await errorOf('a-check'), 'Must be checked', 'a checkbox shows it');
+        assert.strictEqual(await errorOf('a-select'), 'Required', 'a select shows it');
+        assert.strictEqual(await errorOf('a-tags'), 'Required', 'tags show it');
+        assert.strictEqual(await errorOf('a-date'), 'Required', 'a date picker shows it');
+        assert.strictEqual(await errorOf('a-range'), 'Required', 'a date range shows it');
+        await js(`NexaTest.wc("all").setValues({ check: true, line: "a", tags: ["x", "y"], when: "2026-05-04T10:30:00.000Z", period: { start: "2026-05-01T00:00:00.000Z", end: "2026-05-31T23:59:59.999Z" }, mode: "b", speed: 55 })`);
+        await settle(); await wait(60); await settle();
+        const after = await written('all', 'outputValues');
+        assert.deepStrictEqual([after.check, after.line, after.tags, after.when, after.mode, after.speed], [true, 'a', ['x', 'y'], '2026-05-04T10:30:00.000Z', 'b', 55]);
+        assert.deepStrictEqual(after.period, { start: '2026-05-01T00:00:00.000Z', end: '2026-05-31T23:59:59.999Z' });
+        assert.strictEqual(await errorOf('a-date'), '', 'filled: no error');
+        assert.ok((await js(`${q('a-date', 'input')}.value`)).indexOf('2026-05-04') === 0, 'the date picker shows the date that was set');
+        await js('NexaTest.wc("all").submit()'); await wait(80); await settle();
+        assert.strictEqual((await events('all', 'submit')).length, 1, 'now valid: On Submit');
+        await js('NexaTest.wc("all").done({ reset: true })'); await settle(); await wait(60); await settle();
+        const reset = await written('all', 'outputValues');
+        assert.deepStrictEqual([reset.check, reset.line, reset.when, reset.mode, reset.speed], [true, 'a', '2026-05-04T10:30:00.000Z', 'b', 55], 'Done with reset: back to where the form started, which is the record that was loaded');
+        assert.deepStrictEqual(reset.period, { start: '2026-05-01T00:00:00.000Z', end: '2026-05-31T23:59:59.999Z' });
     });
 
     await ok('no JavaScript errors or warnings', async () => {

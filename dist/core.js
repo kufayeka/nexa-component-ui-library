@@ -211,7 +211,9 @@ export class UIElement extends NexaElement {
 /** The field around a control: label, the control, the helper / error line. */
 export function field(el, control, message) {
     const p = el.p || {};
-    const err = message || (p.invalid && p.errorText ? p.errorText : "");
+    // an error of the Form around the control (a ValueState control owns `vs`, a date picker `member`) shows where its own error would
+    const formError = (el.vs && el.vs.member && el.vs.member.error) || (el.member && el.member.error) || "";
+    const err = message || formError || (p.invalid && p.errorText ? p.errorText : "");
     const helper = err || p.helperText;
     return html`<div class="field ${p.label && p.labelPosition === "left" ? "left" : ""} ${err ? "invalid" : ""}" part="root">
         ${p.label ? html`<label class="label" part="label">${p.label}${p.required ? html`<span class="req" aria-hidden="true">*</span>` : nothing}</label>` : nothing}
@@ -292,8 +294,8 @@ export class ValueState {
     }
 }
 export const VALUE_EVENTS = {
-    change: { label: "On Change (the user changed it)", payload: { value: "any" } },
-    writeError: { label: "On Write Error", payload: { value: "any", error: "string" } }
+    change: { label: "On Change (the user changed it)", help: "The user chose a value (not when it came from a variable or a tag).", payload: { value: "any" } },
+    writeError: { label: "On Write Error", help: "Writing the value to its tag or variable failed.", payload: { value: "any", error: "string" } }
 };
 
 // ---- options (radio, select, segmented, combobox): a list, or from data ----------------------

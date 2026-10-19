@@ -48,9 +48,9 @@ export const form = defineUI({
         submit: { label: "On Submit (valid)", help: "The user sent the form and every rule is met. msg.payload = { values }. Send it somewhere (an API Call), then tell the form with Done or Set errors.", payload: { values: "object" } },
         invalidSubmit: { label: "On Invalid Submit", help: "The user tried to send the form and something is wrong.", payload: { errors: "object", values: "object" } },
         change: { label: "On Change (a field, after a pause)", help: "A field changed and the user paused. Use it for a check that needs the server, then Set errors.", payload: { name: "string", value: "any", values: "object", valid: "boolean", errors: "object" } },
-        validChange: { label: "On Valid Change", payload: { valid: "boolean" } },
-        dirtyChange: { label: "On Changed Change (the form differs from its start, or is back)", payload: { dirty: "boolean" } },
-        reset: { label: "On Reset", payload: { values: "object" } }
+        validChange: { label: "On Valid Change", help: "The form became valid, or stopped being valid (it does not fire at the start).", payload: { valid: "boolean" } },
+        dirtyChange: { label: "On Changed or Unchanged", help: "The form began to differ from where it started, or came back to it.", payload: { dirty: "boolean" } },
+        reset: { label: "On Reset", help: "The form was put back to where it started.", payload: { values: "object" } }
     },
     actions: {
         validate: { label: "Check every rule now", help: "Shows every error, as a failed Submit does, but sends nothing." },
@@ -140,7 +140,7 @@ export const form = defineUI({
         validate() { return this.engine.check(); }
         submit() { return this.engine.submit(); }
         reset() { this.engine.reset(); }
-        setValues(params) { this.engine.setValues(params && typeof params === "object" ? params : {}, params && params.asInitial === false ? { asInitial: false } : undefined); }
+        setValues(params) { this.engine.setValues(params && typeof params === "object" ? params : {}); }
         setErrors(params) { this.engine.setErrors(params && typeof params === "object" ? params : {}); }
         clearErrors(params) { this.engine.clearErrors(Array.isArray(params) ? params : params && Array.isArray(params.names) ? params.names : undefined); }
         focus(params) { this.engine.focus(typeof params === "string" ? params : params && params.name); }

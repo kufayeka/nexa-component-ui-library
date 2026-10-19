@@ -61,9 +61,11 @@ Grafana must allow embedding: `allow_embedding = true` in `grafana.ini`, and ano
 
 ### Form (`nexa-ui-form`)
 
+**The full guide and a cookbook of 15 recipes with real pictures and runnable examples: [docs/FORM.md](docs/FORM.md) (or [docs/FORM.html](docs/FORM.html), to open with a double click). Every property, event and action of the Form and of each control it holds: [docs/FORM_COMPONENTS.md](docs/FORM_COMPONENTS.md)** (made from the components' own definitions; `node scripts/make-form-docs.js` writes it again, and `test/docs-form.test.js` fails when it is out of date).
+
 A container that makes the controls inside it one form: it knows their values, which of them are wrong, whether the form can be sent and whether anything changed since it started.
 
-**Build it.** Drop a Form, then drop controls into its slot (its auto layout is a column). Give each control a **Name in the form** (Form tab of its inspector): `email`, or `owner.name` for an object. A control with no name is not part of the form. Every control joins: Input, Textarea, Number, Password, Checkbox, Switch, Radio, Segmented, Select, Combobox, Slider, Tags, Pin and Rating (Date Time and Date Range are not fields yet).
+**Build it.** Drop a Form, then drop controls into its slot (its auto layout is a column). Give each control a **Name in the form** (Form tab of its inspector): `email`, or `owner.name` for an object. A control with no name is not part of the form. Every control joins: Input, Textarea, Number, Password, Checkbox, Switch, Radio, Segmented, Select, Combobox, Slider, Tags, Pin, Rating, Date Time and Date Range.
 
 **Rules** (a control's own props, the Form tab): *Required* (and its message), *Shortest text*, *Max length* and *Pattern* (Data tab; inside a form they are rules), the Number's own *Minimum* / *Maximum*, and **Rule (JavaScript)**: the body of a function of `(value, values, form)`; return `true` (or nothing) when it is fine, `false` or a text (the message) when it is not. `values` is every field of the form by name, so a rule can compare fields: `return values.ok + values.reject === values.total || "Does not add up"`. A rule answers at once. What needs the server (is this order number taken?) is Logic's: **On Change** → API Call → the form's **Set errors** action.
 
@@ -816,6 +818,8 @@ export const chip = defineComponent({
 npm test                       # the plugin lint, then 63 headless-Chrome tests (build the dashboard first: npm run build there)
 npm run test:chart             # charts end to end: a real Node-RED, the charts driven by Logic, live tags, exports
 node test/tags-e2e.test.js     # tags end to end (~1 min): a real Node-RED, MQTT broker and Sparkplug edge
+node test/docs-form.test.js    # the Form docs are complete and up to date
+node scripts/make-form-cookbook.js   # makes the pictures and docs/examples/form-cookbook.nexa.json again, from real screens (a few minutes)
 node test/form-e2e.test.js     # the Form end to end (~30 s): a real Node-RED, the form wired with Logic (submit, server errors)
 ```
 

@@ -74,9 +74,9 @@ export const button = defineUI({
     },
     outputs: { value: { label: "Write on click", help: "Where the value goes on a click (a tag, a variable). Empty = nothing is written." } },
     events: {
-        click: { label: "On Click", payload: { value: "any" } },
-        press: { label: "On Press (pointer down)" },
-        release: { label: "On Release (pointer up)" }
+        click: { label: "On Click", help: "The button was clicked (not while it is disabled or loading).", payload: { value: "any" } },
+        press: { label: "On Press (pointer down)", help: "The pointer went down on the button." },
+        release: { label: "On Release (pointer up)", help: "The pointer came up." }
     },
     parts: { control: part("The button", "control"), text: part("Its text", "text") },
     view: class extends UIElement {
@@ -534,7 +534,7 @@ export const select = defineUI({
         multiple: { type: "boolean", default: false, group: "Behaviour", label: "Several at once (the value is an array)" },
         clearable: { type: "boolean", default: false, group: "Behaviour", label: "Clear button (×)" }
     }),
-    events: Object.assign({}, VALUE_EVENTS, { open: { label: "On Open" }, close: { label: "On Close" } }), parts: MENU_PARTS,
+    events: Object.assign({}, VALUE_EVENTS, { open: { label: "On Open", help: "The list opened." }, close: { label: "On Close", help: "The list closed." } }), parts: MENU_PARTS,
     view: class extends UIElement {
         static styles = [BASE_CSS, BOX_CSS, MENU_CSS];
         vs = new ValueState(this, { coerce: (v) => (this.p && this.p.multiple ? toArray(v) : (v === null || v === undefined ? "" : String(v))) });
@@ -577,7 +577,7 @@ export const combobox = defineUI({
         allowCustomValue: { type: "boolean", default: false, group: "Behaviour", label: "Any text (not only an option): Enter takes what is typed" },
         openOnClick: { type: "boolean", default: true, group: "Behaviour", label: "Open on a click" }
     }),
-    events: Object.assign({}, VALUE_EVENTS, { input: { label: "On Typing", payload: { text: "string" } } }), parts: MENU_PARTS,
+    events: Object.assign({}, VALUE_EVENTS, { input: { label: "On Typing", help: "The user typed in the box (the filter text, before a choice).", payload: { text: "string" } } }), parts: MENU_PARTS,
     view: class extends UIElement {
         static styles = [BASE_CSS, BOX_CSS, MENU_CSS];
         vs = new ValueState(this, { coerce: (v) => (v === null || v === undefined ? "" : String(v)) });
@@ -666,7 +666,7 @@ export const slider = defineUI({
         variant: variantProp([{ value: "neutral", label: "Neutral" }, { value: "brand", label: "Palette" }], "neutral"),
         size: sizeProp(), colorPalette: paletteProp(), disabled: disabledProp()
     }),
-    events: Object.assign({}, VALUE_EVENTS, { slide: { label: "On Slide (while dragging)", payload: { value: "number" } } }),
+    events: Object.assign({}, VALUE_EVENTS, { slide: { label: "On Slide (while dragging)", help: "The handle is moving; On Change comes only when it is let go.", payload: { value: "number" } } }),
     parts: Object.assign({}, FIELD_PARTS, { track: part("The track", "track"), thumb: part("The thumb", "thumb") }),
     view: class extends UIElement {
         static styles = [BASE_CSS, SLIDER_CSS];
@@ -803,7 +803,7 @@ export const pinInput = defineUI({
         variant: variantProp([{ value: "filled", label: "Filled" }, { value: "outline", label: "Outline" }], "filled"),
         size: sizeProp(), colorPalette: paletteProp(), radius: radiusProp("md"), disabled: disabledProp()
     }),
-    events: Object.assign({}, VALUE_EVENTS, { complete: { label: "On Complete (every box filled)", payload: { value: "string" } } }),
+    events: Object.assign({}, VALUE_EVENTS, { complete: { label: "On Complete (every box filled)", help: "Every box has a character: the code is complete.", payload: { value: "string" } } }),
     parts: Object.assign({}, FIELD_PARTS, { box: part("A box", "box") }),
     view: class extends UIElement {
         static styles = [BASE_CSS, TAGS_CSS];

@@ -1,0 +1,2851 @@
+{
+  "format": "nexa-project",
+  "version": 1,
+  "exportedAt": "2026-10-20T00:00:00.000Z",
+  "app": {
+    "name": "Form cookbook"
+  },
+  "counts": {
+    "screens": 13,
+    "templates": 0,
+    "folders": 0,
+    "flows": 0,
+    "variables": 0,
+    "sharedVariables": 0,
+    "types": 0,
+    "breakpoints": 0
+  },
+  "data": {
+    "screens": [
+      {
+        "id": "cb-login",
+        "name": "1. Login",
+        "path": "/c1-login",
+        "width": 760,
+        "height": 400,
+        "gridSize": 10,
+        "snap": false,
+        "treeVersion": 1,
+        "orphans": [],
+        "variables": [
+          {
+            "id": "v1",
+            "name": "formValid",
+            "type": "boolean",
+            "defaultValue": false
+          },
+          {
+            "id": "v2",
+            "name": "formDirty",
+            "type": "boolean",
+            "defaultValue": false
+          },
+          {
+            "id": "v3",
+            "name": "formSending",
+            "type": "boolean",
+            "defaultValue": false
+          },
+          {
+            "id": "v4",
+            "name": "welcome",
+            "type": "string",
+            "defaultValue": ""
+          }
+        ],
+        "components": [
+          {
+            "id": "FORM",
+            "type": "nexa-ui-form",
+            "x": 20,
+            "y": 20,
+            "w": 380,
+            "h": 320,
+            "slots": true,
+            "props": {
+              "changeDelay": 150,
+              "outputValid": "{formValid}",
+              "outputDirty": "{formDirty}",
+              "outputSubmitting": "{formSending}",
+              "validateOn": "blur"
+            },
+            "children": [
+              {
+                "id": "FORM-fields",
+                "type": "@frame",
+                "inSlot": "content",
+                "slotLabel": "Fields",
+                "x": 0,
+                "y": 0,
+                "w": 380,
+                "h": 320,
+                "style": {},
+                "layout": {
+                  "mode": "vertical",
+                  "padding": {
+                    "t": 12,
+                    "r": 12,
+                    "b": 12,
+                    "l": 12
+                  },
+                  "gap": 10
+                },
+                "children": [
+                  {
+                    "id": "user",
+                    "type": "nexa-ui-input",
+                    "x": 0,
+                    "y": 0,
+                    "w": 340,
+                    "h": 92,
+                    "props": {
+                      "formName": "username",
+                      "label": "User name",
+                      "required": true
+                    }
+                  },
+                  {
+                    "id": "pass",
+                    "type": "nexa-ui-password-input",
+                    "x": 0,
+                    "y": 0,
+                    "w": 340,
+                    "h": 92,
+                    "props": {
+                      "formName": "password",
+                      "label": "Password",
+                      "required": true
+                    }
+                  },
+                  {
+                    "id": "go",
+                    "type": "nexa-ui-button",
+                    "x": 0,
+                    "y": 0,
+                    "w": 150,
+                    "h": 40,
+                    "props": {
+                      "text": "Sign in",
+                      "formAction": "submit",
+                      "waitForValid": true
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "state",
+            "type": "nexa-ui-text",
+            "x": 420,
+            "y": 20,
+            "w": 330,
+            "h": 40,
+            "props": {
+              "text": "valid = {formValid}   changed = {formDirty}   sending = {formSending}"
+            }
+          },
+          {
+            "id": "welcome",
+            "type": "nexa-ui-text",
+            "x": 420,
+            "y": 70,
+            "w": 330,
+            "h": 40,
+            "props": {
+              "text": "{welcome}",
+              "fontWeight": 600
+            }
+          },
+          {
+            "id": "hint",
+            "type": "nexa-ui-text",
+            "x": 20,
+            "y": 350,
+            "w": 700,
+            "h": 30,
+            "props": {
+              "text": "Try the user name \"ann\" with the password \"secret\"."
+            }
+          }
+        ],
+        "logic": {
+          "nodes": [
+            {
+              "id": "e1",
+              "type": "ui-event",
+              "name": "On Submit",
+              "x": 30,
+              "y": 130,
+              "props": {
+                "compId": "FORM",
+                "event": "submit"
+              }
+            },
+            {
+              "id": "f1",
+              "type": "function",
+              "name": "Fake server: log in",
+              "x": 250,
+              "y": 130,
+              "props": {
+                "code": "return new Promise(function (resolve) {\n    setTimeout(function () {\n        var v = msg.payload.values;\n        msg.statusCode = (v.username === \"ann\" && v.password === \"secret\") ? 200 : 401;\n        resolve(msg);\n    }, 1500);\n});"
+              }
+            },
+            {
+              "id": "f2",
+              "type": "function",
+              "name": "Right password?",
+              "x": 500,
+              "y": 60,
+              "props": {
+                "code": "if (msg.statusCode !== 200) return null;\nvars.screen.set(\"welcome\", \"Welcome, \" + msg.payload.values.username + \"!\");\nmsg.payload = { reset: true };\nreturn msg;"
+              }
+            },
+            {
+              "id": "f3",
+              "type": "function",
+              "name": "Wrong password?",
+              "x": 500,
+              "y": 200,
+              "props": {
+                "code": "if (msg.statusCode === 200) return null;\nmsg.payload = { password: \"Wrong user name or password\" };\nreturn msg;"
+              }
+            },
+            {
+              "id": "u1",
+              "type": "ui-update",
+              "name": "Sending is over",
+              "x": 740,
+              "y": 60,
+              "props": {
+                "compId": "FORM",
+                "action": "done",
+                "config": {}
+              }
+            },
+            {
+              "id": "u2",
+              "type": "ui-update",
+              "name": "Set errors",
+              "x": 740,
+              "y": 200,
+              "props": {
+                "compId": "FORM",
+                "action": "setErrors",
+                "config": {}
+              }
+            }
+          ],
+          "wires": [
+            {
+              "id": "w1",
+              "from": "e1",
+              "to": "f1"
+            },
+            {
+              "id": "w2",
+              "from": "f1",
+              "to": "f2"
+            },
+            {
+              "id": "w3",
+              "from": "f1",
+              "to": "f3"
+            },
+            {
+              "id": "w4",
+              "from": "f2",
+              "to": "u1"
+            },
+            {
+              "id": "w5",
+              "from": "f3",
+              "to": "u2"
+            }
+          ]
+        }
+      },
+      {
+        "id": "cb-register",
+        "name": "2. Registration with a password strength bar",
+        "path": "/c2-register",
+        "width": 780,
+        "height": 470,
+        "gridSize": 10,
+        "snap": false,
+        "treeVersion": 1,
+        "orphans": [],
+        "variables": [
+          {
+            "id": "v1",
+            "name": "formValid",
+            "type": "boolean",
+            "defaultValue": false
+          },
+          {
+            "id": "v2",
+            "name": "formDirty",
+            "type": "boolean",
+            "defaultValue": false
+          },
+          {
+            "id": "v3",
+            "name": "formSending",
+            "type": "boolean",
+            "defaultValue": false
+          },
+          {
+            "id": "v4",
+            "name": "strength",
+            "type": "number",
+            "defaultValue": 0
+          },
+          {
+            "id": "v5",
+            "name": "welcome",
+            "type": "string",
+            "defaultValue": ""
+          }
+        ],
+        "components": [
+          {
+            "id": "FORM",
+            "type": "nexa-ui-form",
+            "x": 20,
+            "y": 20,
+            "w": 400,
+            "h": 420,
+            "slots": true,
+            "props": {
+              "changeDelay": 150,
+              "outputValid": "{formValid}",
+              "outputDirty": "{formDirty}",
+              "outputSubmitting": "{formSending}",
+              "validateOn": "change"
+            },
+            "children": [
+              {
+                "id": "FORM-fields",
+                "type": "@frame",
+                "inSlot": "content",
+                "slotLabel": "Fields",
+                "x": 0,
+                "y": 0,
+                "w": 400,
+                "h": 420,
+                "style": {},
+                "layout": {
+                  "mode": "vertical",
+                  "padding": {
+                    "t": 12,
+                    "r": 12,
+                    "b": 12,
+                    "l": 12
+                  },
+                  "gap": 10
+                },
+                "children": [
+                  {
+                    "id": "email",
+                    "type": "nexa-ui-input",
+                    "x": 0,
+                    "y": 0,
+                    "w": 360,
+                    "h": 92,
+                    "props": {
+                      "formName": "email",
+                      "label": "Email",
+                      "required": true,
+                      "pattern": "[^@ ]+@[^@ ]+",
+                      "patternMessage": "Not an email"
+                    }
+                  },
+                  {
+                    "id": "pass",
+                    "type": "nexa-ui-password-input",
+                    "x": 0,
+                    "y": 0,
+                    "w": 360,
+                    "h": 92,
+                    "props": {
+                      "formName": "password",
+                      "label": "Password",
+                      "required": true,
+                      "ruleCode": "var score = 0;\nif (value.length >= 8) score++;\nif (/[A-Z]/.test(value)) score++;\nif (/[0-9]/.test(value)) score++;\nif (/[^A-Za-z0-9]/.test(value)) score++;\nreturn score >= 3 || \"Use 8 or more characters with capitals, digits or a symbol\";"
+                    }
+                  },
+                  {
+                    "id": "confirm",
+                    "type": "nexa-ui-password-input",
+                    "x": 0,
+                    "y": 0,
+                    "w": 360,
+                    "h": 92,
+                    "props": {
+                      "formName": "confirm",
+                      "label": "Repeat the password",
+                      "required": true,
+                      "ruleCode": "return value === values.password || \"The passwords are not the same\";"
+                    }
+                  },
+                  {
+                    "id": "go",
+                    "type": "nexa-ui-button",
+                    "x": 0,
+                    "y": 0,
+                    "w": 150,
+                    "h": 40,
+                    "props": {
+                      "text": "Create account",
+                      "formAction": "submit",
+                      "waitForValid": true
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "bar",
+            "type": "nexa-ui-progress",
+            "x": 450,
+            "y": 20,
+            "w": 300,
+            "h": 50,
+            "props": {
+              "label": "Password strength",
+              "inputValue": "{strength}"
+            }
+          },
+          {
+            "id": "welcome",
+            "type": "nexa-ui-text",
+            "x": 450,
+            "y": 100,
+            "w": 300,
+            "h": 40,
+            "props": {
+              "text": "{welcome}",
+              "fontWeight": 600
+            }
+          }
+        ],
+        "logic": {
+          "nodes": [
+            {
+              "id": "e1",
+              "type": "ui-event",
+              "name": "On Change",
+              "x": 30,
+              "y": 60,
+              "props": {
+                "compId": "FORM",
+                "event": "change"
+              }
+            },
+            {
+              "id": "f1",
+              "type": "function",
+              "name": "Strength 0 to 100",
+              "x": 260,
+              "y": 60,
+              "props": {
+                "code": "if (msg.payload.name !== \"password\") return null;     // only the password field\nvar p = msg.payload.value || \"\", s = 0;\nif (p.length >= 8) s++;\nif (/[A-Z]/.test(p)) s++;\nif (/[0-9]/.test(p)) s++;\nif (/[^A-Za-z0-9]/.test(p)) s++;\nvars.screen.set(\"strength\", s * 25);\nreturn null;"
+              }
+            },
+            {
+              "id": "e2",
+              "type": "ui-event",
+              "name": "On Submit",
+              "x": 30,
+              "y": 200,
+              "props": {
+                "compId": "FORM",
+                "event": "submit"
+              }
+            },
+            {
+              "id": "f2",
+              "type": "function",
+              "name": "Fake server: create the account",
+              "x": 260,
+              "y": 200,
+              "props": {
+                "code": "return new Promise(function (resolve) {\n    setTimeout(function () {\n        vars.screen.set(\"welcome\", \"Account made for \" + msg.payload.values.email);\n        msg.payload = { reset: true };\n        resolve(msg);\n    }, 800);\n});"
+              }
+            },
+            {
+              "id": "u1",
+              "type": "ui-update",
+              "name": "Sending is over (clear)",
+              "x": 540,
+              "y": 200,
+              "props": {
+                "compId": "FORM",
+                "action": "done",
+                "config": {}
+              }
+            }
+          ],
+          "wires": [
+            {
+              "id": "w6",
+              "from": "e1",
+              "to": "f1"
+            },
+            {
+              "id": "w7",
+              "from": "e2",
+              "to": "f2"
+            },
+            {
+              "id": "w8",
+              "from": "f2",
+              "to": "u1"
+            }
+          ]
+        }
+      },
+      {
+        "id": "cb-production",
+        "name": "3. Production entry that adds up and checks the server",
+        "path": "/c3-production",
+        "width": 800,
+        "height": 600,
+        "gridSize": 10,
+        "snap": false,
+        "treeVersion": 1,
+        "orphans": [],
+        "variables": [
+          {
+            "id": "v1",
+            "name": "formValid",
+            "type": "boolean",
+            "defaultValue": false
+          },
+          {
+            "id": "v2",
+            "name": "formDirty",
+            "type": "boolean",
+            "defaultValue": false
+          },
+          {
+            "id": "v3",
+            "name": "formSending",
+            "type": "boolean",
+            "defaultValue": false
+          },
+          {
+            "id": "v4",
+            "name": "lastSaved",
+            "type": "string",
+            "defaultValue": "nothing yet"
+          }
+        ],
+        "components": [
+          {
+            "id": "FORM",
+            "type": "nexa-ui-form",
+            "x": 20,
+            "y": 20,
+            "w": 420,
+            "h": 540,
+            "slots": true,
+            "props": {
+              "changeDelay": 150,
+              "outputValid": "{formValid}",
+              "outputDirty": "{formDirty}",
+              "outputSubmitting": "{formSending}",
+              "validateOn": "change"
+            },
+            "children": [
+              {
+                "id": "FORM-fields",
+                "type": "@frame",
+                "inSlot": "content",
+                "slotLabel": "Fields",
+                "x": 0,
+                "y": 0,
+                "w": 420,
+                "h": 540,
+                "style": {},
+                "layout": {
+                  "mode": "vertical",
+                  "padding": {
+                    "t": 12,
+                    "r": 12,
+                    "b": 12,
+                    "l": 12
+                  },
+                  "gap": 10
+                },
+                "children": [
+                  {
+                    "id": "po",
+                    "type": "nexa-ui-input",
+                    "x": 0,
+                    "y": 0,
+                    "w": 380,
+                    "h": 92,
+                    "props": {
+                      "formName": "po",
+                      "label": "Order number",
+                      "required": true,
+                      "pattern": "PO-[0-9]+",
+                      "patternMessage": "Like PO-123",
+                      "helperText": "PO-100 is already used (the fake server says so)"
+                    }
+                  },
+                  {
+                    "id": "total",
+                    "type": "nexa-ui-number-input",
+                    "x": 0,
+                    "y": 0,
+                    "w": 200,
+                    "h": 92,
+                    "props": {
+                      "formName": "total",
+                      "label": "Total",
+                      "required": true,
+                      "min": 1,
+                      "ruleCode": "return values.ok + values.reject === value || \"OK + rejected must equal the total\";"
+                    }
+                  },
+                  {
+                    "id": "ok",
+                    "type": "nexa-ui-number-input",
+                    "x": 0,
+                    "y": 0,
+                    "w": 200,
+                    "h": 92,
+                    "props": {
+                      "formName": "ok",
+                      "label": "OK",
+                      "defaultValue": 0,
+                      "min": 0
+                    }
+                  },
+                  {
+                    "id": "reject",
+                    "type": "nexa-ui-number-input",
+                    "x": 0,
+                    "y": 0,
+                    "w": 200,
+                    "h": 92,
+                    "props": {
+                      "formName": "reject",
+                      "label": "Rejected",
+                      "defaultValue": 0,
+                      "min": 0
+                    }
+                  },
+                  {
+                    "id": "go",
+                    "type": "nexa-ui-button",
+                    "x": 0,
+                    "y": 0,
+                    "w": 150,
+                    "h": 40,
+                    "props": {
+                      "text": "Save",
+                      "formAction": "submit",
+                      "waitForValid": true
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "state",
+            "type": "nexa-ui-text",
+            "x": 460,
+            "y": 20,
+            "w": 330,
+            "h": 40,
+            "props": {
+              "text": "valid = {formValid}   changed = {formDirty}   sending = {formSending}"
+            }
+          },
+          {
+            "id": "saved",
+            "type": "nexa-ui-text",
+            "x": 460,
+            "y": 70,
+            "w": 330,
+            "h": 40,
+            "props": {
+              "text": "Saved: {lastSaved}",
+              "fontWeight": 600
+            }
+          }
+        ],
+        "logic": {
+          "nodes": [
+            {
+              "id": "e1",
+              "type": "ui-event",
+              "name": "On Change",
+              "x": 30,
+              "y": 40,
+              "props": {
+                "compId": "FORM",
+                "event": "change"
+              }
+            },
+            {
+              "id": "f1",
+              "type": "function",
+              "name": "Only the order number",
+              "x": 230,
+              "y": 40,
+              "props": {
+                "code": "if (msg.payload.name !== \"po\" || msg.payload.errors.po) return null;   // another field, or already wrong\nmsg.po = msg.payload.value;\nreturn msg;"
+              }
+            },
+            {
+              "id": "f2",
+              "type": "function",
+              "name": "Fake server: is it used?",
+              "x": 450,
+              "y": 40,
+              "props": {
+                "code": "return new Promise(function (resolve) {\n    setTimeout(function () {\n        msg.payload = { exists: msg.po === \"PO-100\" };\n        resolve(msg);\n    }, 500);\n});"
+              }
+            },
+            {
+              "id": "f3",
+              "type": "function",
+              "name": "Taken?",
+              "x": 690,
+              "y": 40,
+              "props": {
+                "code": "if (msg.payload.exists) return { payload: { po: \"Already used\" } };\nreturn null;"
+              }
+            },
+            {
+              "id": "u1",
+              "type": "ui-update",
+              "name": "Set errors",
+              "x": 880,
+              "y": 40,
+              "props": {
+                "compId": "FORM",
+                "action": "setErrors",
+                "config": {}
+              }
+            },
+            {
+              "id": "e2",
+              "type": "ui-event",
+              "name": "On Submit",
+              "x": 30,
+              "y": 190,
+              "props": {
+                "compId": "FORM",
+                "event": "submit"
+              }
+            },
+            {
+              "id": "f4",
+              "type": "function",
+              "name": "Fake server: save",
+              "x": 230,
+              "y": 190,
+              "props": {
+                "code": "return new Promise(function (resolve) {\n    setTimeout(function () {\n        var v = msg.payload.values;\n        msg.saved = v.po + \" (\" + v.ok + \" OK, \" + v.reject + \" rejected)\";\n        resolve(msg);\n    }, 800);\n});"
+              }
+            },
+            {
+              "id": "f5",
+              "type": "function",
+              "name": "Remember it",
+              "x": 450,
+              "y": 190,
+              "props": {
+                "code": "vars.screen.set(\"lastSaved\", msg.saved);\nmsg.payload = { reset: true };\nreturn msg;"
+              }
+            },
+            {
+              "id": "u2",
+              "type": "ui-update",
+              "name": "Sending is over (clear)",
+              "x": 690,
+              "y": 190,
+              "props": {
+                "compId": "FORM",
+                "action": "done",
+                "config": {}
+              }
+            }
+          ],
+          "wires": [
+            {
+              "id": "w9",
+              "from": "e1",
+              "to": "f1"
+            },
+            {
+              "id": "w10",
+              "from": "f1",
+              "to": "f2"
+            },
+            {
+              "id": "w11",
+              "from": "f2",
+              "to": "f3"
+            },
+            {
+              "id": "w12",
+              "from": "f3",
+              "to": "u1"
+            },
+            {
+              "id": "w13",
+              "from": "e2",
+              "to": "f4"
+            },
+            {
+              "id": "w14",
+              "from": "f4",
+              "to": "f5"
+            },
+            {
+              "id": "w15",
+              "from": "f5",
+              "to": "u2"
+            }
+          ]
+        }
+      },
+      {
+        "id": "cb-edit",
+        "name": "4. Edit a record",
+        "path": "/c4-edit",
+        "width": 800,
+        "height": 580,
+        "gridSize": 10,
+        "snap": false,
+        "treeVersion": 1,
+        "orphans": [],
+        "variables": [
+          {
+            "id": "v1",
+            "name": "formValid",
+            "type": "boolean",
+            "defaultValue": false
+          },
+          {
+            "id": "v2",
+            "name": "formDirty",
+            "type": "boolean",
+            "defaultValue": false
+          },
+          {
+            "id": "v3",
+            "name": "formSending",
+            "type": "boolean",
+            "defaultValue": false
+          }
+        ],
+        "components": [
+          {
+            "id": "FORM",
+            "type": "nexa-ui-form",
+            "x": 20,
+            "y": 20,
+            "w": 420,
+            "h": 520,
+            "slots": true,
+            "props": {
+              "changeDelay": 150,
+              "outputValid": "{formValid}",
+              "outputDirty": "{formDirty}",
+              "outputSubmitting": "{formSending}",
+              "validateOn": "change"
+            },
+            "children": [
+              {
+                "id": "FORM-fields",
+                "type": "@frame",
+                "inSlot": "content",
+                "slotLabel": "Fields",
+                "x": 0,
+                "y": 0,
+                "w": 420,
+                "h": 520,
+                "style": {},
+                "layout": {
+                  "mode": "vertical",
+                  "padding": {
+                    "t": 12,
+                    "r": 12,
+                    "b": 12,
+                    "l": 12
+                  },
+                  "gap": 10
+                },
+                "children": [
+                  {
+                    "id": "po",
+                    "type": "nexa-ui-input",
+                    "x": 0,
+                    "y": 0,
+                    "w": 380,
+                    "h": 92,
+                    "props": {
+                      "formName": "po",
+                      "label": "Order number",
+                      "required": true
+                    }
+                  },
+                  {
+                    "id": "total",
+                    "type": "nexa-ui-number-input",
+                    "x": 0,
+                    "y": 0,
+                    "w": 200,
+                    "h": 92,
+                    "props": {
+                      "formName": "total",
+                      "label": "Total",
+                      "required": true,
+                      "min": 1,
+                      "ruleCode": "return values.ok + values.reject === value || \"OK + rejected must equal the total\";"
+                    }
+                  },
+                  {
+                    "id": "ok",
+                    "type": "nexa-ui-number-input",
+                    "x": 0,
+                    "y": 0,
+                    "w": 200,
+                    "h": 92,
+                    "props": {
+                      "formName": "ok",
+                      "label": "OK",
+                      "defaultValue": 0,
+                      "min": 0
+                    }
+                  },
+                  {
+                    "id": "reject",
+                    "type": "nexa-ui-number-input",
+                    "x": 0,
+                    "y": 0,
+                    "w": 200,
+                    "h": 92,
+                    "props": {
+                      "formName": "reject",
+                      "label": "Rejected",
+                      "defaultValue": 0,
+                      "min": 0
+                    }
+                  },
+                  {
+                    "id": "undo",
+                    "type": "nexa-ui-button",
+                    "x": 0,
+                    "y": 0,
+                    "w": 150,
+                    "h": 40,
+                    "props": {
+                      "text": "Revert",
+                      "formAction": "reset",
+                      "variant": "outline"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "save",
+            "type": "nexa-ui-button",
+            "x": 460,
+            "y": 20,
+            "w": 170,
+            "h": 40,
+            "props": {
+              "text": "Save changes",
+              "disabled": {
+                "$bind": [
+                  {
+                    "src": "expr",
+                    "ref": "!{formDirty}"
+                  }
+                ],
+                "static": true
+              }
+            }
+          },
+          {
+            "id": "state",
+            "type": "nexa-ui-text",
+            "x": 460,
+            "y": 80,
+            "w": 330,
+            "h": 40,
+            "props": {
+              "text": "valid = {formValid}   changed = {formDirty}   sending = {formSending}"
+            }
+          }
+        ],
+        "logic": {
+          "nodes": [
+            {
+              "id": "e0",
+              "type": "onload",
+              "name": "On Load",
+              "x": 30,
+              "y": 40,
+              "props": {}
+            },
+            {
+              "id": "f1",
+              "type": "function",
+              "name": "Fake server: get order 7",
+              "x": 230,
+              "y": 40,
+              "props": {
+                "code": "return new Promise(function (resolve) {\n    setTimeout(function () {\n        msg.payload = { po: \"PO-7\", total: 10, ok: 8, reject: 2 };\n        resolve(msg);\n    }, 400);\n});"
+              }
+            },
+            {
+              "id": "u1",
+              "type": "ui-update",
+              "name": "Set values",
+              "x": 480,
+              "y": 40,
+              "props": {
+                "compId": "FORM",
+                "action": "setValues",
+                "config": {}
+              }
+            },
+            {
+              "id": "e1",
+              "type": "ui-event",
+              "name": "On Click: Save changes",
+              "x": 30,
+              "y": 170,
+              "props": {
+                "compId": "save",
+                "event": "click"
+              }
+            },
+            {
+              "id": "u2",
+              "type": "ui-update",
+              "name": "Send the form",
+              "x": 290,
+              "y": 170,
+              "props": {
+                "compId": "FORM",
+                "action": "submit",
+                "config": {}
+              }
+            },
+            {
+              "id": "e2",
+              "type": "ui-event",
+              "name": "On Submit",
+              "x": 30,
+              "y": 290,
+              "props": {
+                "compId": "FORM",
+                "event": "submit"
+              }
+            },
+            {
+              "id": "f2",
+              "type": "function",
+              "name": "Fake server: save order 7",
+              "x": 230,
+              "y": 290,
+              "props": {
+                "code": "return new Promise(function (resolve) {\n    setTimeout(function () {\n        msg.statusCode = 200;\n        resolve(msg);\n    }, 1500);\n});"
+              }
+            },
+            {
+              "id": "u3",
+              "type": "ui-update",
+              "name": "Sending is over",
+              "x": 490,
+              "y": 290,
+              "props": {
+                "compId": "FORM",
+                "action": "done",
+                "config": {}
+              }
+            }
+          ],
+          "wires": [
+            {
+              "id": "w16",
+              "from": "e0",
+              "to": "f1"
+            },
+            {
+              "id": "w17",
+              "from": "f1",
+              "to": "u1"
+            },
+            {
+              "id": "w18",
+              "from": "e1",
+              "to": "u2"
+            },
+            {
+              "id": "w19",
+              "from": "e2",
+              "to": "f2"
+            },
+            {
+              "id": "w20",
+              "from": "f2",
+              "to": "u3"
+            }
+          ]
+        }
+      },
+      {
+        "id": "cb-server-errors",
+        "name": "5. The server says no, field by field",
+        "path": "/c5-server-errors",
+        "width": 760,
+        "height": 470,
+        "gridSize": 10,
+        "snap": false,
+        "treeVersion": 1,
+        "orphans": [],
+        "variables": [
+          {
+            "id": "v1",
+            "name": "formValid",
+            "type": "boolean",
+            "defaultValue": false
+          },
+          {
+            "id": "v2",
+            "name": "formDirty",
+            "type": "boolean",
+            "defaultValue": false
+          },
+          {
+            "id": "v3",
+            "name": "formSending",
+            "type": "boolean",
+            "defaultValue": false
+          }
+        ],
+        "components": [
+          {
+            "id": "FORM",
+            "type": "nexa-ui-form",
+            "x": 20,
+            "y": 20,
+            "w": 420,
+            "h": 420,
+            "slots": true,
+            "props": {
+              "changeDelay": 150,
+              "outputValid": "{formValid}",
+              "outputDirty": "{formDirty}",
+              "outputSubmitting": "{formSending}",
+              "validateOn": "change",
+              "errorSummary": true,
+              "summaryTitle": "Please correct:"
+            },
+            "children": [
+              {
+                "id": "FORM-fields",
+                "type": "@frame",
+                "inSlot": "content",
+                "slotLabel": "Fields",
+                "x": 0,
+                "y": 0,
+                "w": 420,
+                "h": 420,
+                "style": {},
+                "layout": {
+                  "mode": "vertical",
+                  "padding": {
+                    "t": 12,
+                    "r": 12,
+                    "b": 12,
+                    "l": 12
+                  },
+                  "gap": 10
+                },
+                "children": [
+                  {
+                    "id": "po",
+                    "type": "nexa-ui-input",
+                    "x": 0,
+                    "y": 0,
+                    "w": 380,
+                    "h": 92,
+                    "props": {
+                      "formName": "po",
+                      "label": "Order number",
+                      "required": true
+                    }
+                  },
+                  {
+                    "id": "qty",
+                    "type": "nexa-ui-number-input",
+                    "x": 0,
+                    "y": 0,
+                    "w": 200,
+                    "h": 92,
+                    "props": {
+                      "formName": "qty",
+                      "label": "Quantity",
+                      "required": true,
+                      "min": 1
+                    }
+                  },
+                  {
+                    "id": "go",
+                    "type": "nexa-ui-button",
+                    "x": 0,
+                    "y": 0,
+                    "w": 150,
+                    "h": 40,
+                    "props": {
+                      "text": "Send",
+                      "formAction": "submit"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "state",
+            "type": "nexa-ui-text",
+            "x": 460,
+            "y": 20,
+            "w": 330,
+            "h": 40,
+            "props": {
+              "text": "valid = {formValid}   changed = {formDirty}   sending = {formSending}"
+            }
+          }
+        ],
+        "logic": {
+          "nodes": [
+            {
+              "id": "e1",
+              "type": "ui-event",
+              "name": "On Submit",
+              "x": 30,
+              "y": 90,
+              "props": {
+                "compId": "FORM",
+                "event": "submit"
+              }
+            },
+            {
+              "id": "f1",
+              "type": "function",
+              "name": "Fake server: says no",
+              "x": 240,
+              "y": 90,
+              "props": {
+                "code": "return new Promise(function (resolve) {\n    setTimeout(function () {\n        msg.statusCode = 422;\n        msg.payload = { errors: { po: \"Already used\", qty: \"Only 5 left\" } };\n        resolve(msg);\n    }, 700);\n});"
+              }
+            },
+            {
+              "id": "f2",
+              "type": "function",
+              "name": "Take the field messages",
+              "x": 480,
+              "y": 90,
+              "props": {
+                "code": "var body = msg.payload;\nif (body && body.errors) { msg.payload = body.errors; return msg; }\nmsg.payload = { _form: \"Something went wrong\" };    // not a field: ignored by the form\nreturn msg;"
+              }
+            },
+            {
+              "id": "u1",
+              "type": "ui-update",
+              "name": "Set errors",
+              "x": 730,
+              "y": 90,
+              "props": {
+                "compId": "FORM",
+                "action": "setErrors",
+                "config": {}
+              }
+            }
+          ],
+          "wires": [
+            {
+              "id": "w21",
+              "from": "e1",
+              "to": "f1"
+            },
+            {
+              "id": "w22",
+              "from": "f1",
+              "to": "f2"
+            },
+            {
+              "id": "w23",
+              "from": "f2",
+              "to": "u1"
+            }
+          ]
+        }
+      },
+      {
+        "id": "cb-conditional",
+        "name": "8. A field that is required only sometimes",
+        "path": "/c8-conditional",
+        "width": 600,
+        "height": 400,
+        "gridSize": 10,
+        "snap": false,
+        "treeVersion": 1,
+        "orphans": [],
+        "variables": [
+          {
+            "id": "v1",
+            "name": "formValid",
+            "type": "boolean",
+            "defaultValue": false
+          },
+          {
+            "id": "v2",
+            "name": "formDirty",
+            "type": "boolean",
+            "defaultValue": false
+          },
+          {
+            "id": "v3",
+            "name": "formSending",
+            "type": "boolean",
+            "defaultValue": false
+          },
+          {
+            "id": "v4",
+            "name": "result",
+            "type": "string",
+            "defaultValue": ""
+          }
+        ],
+        "components": [
+          {
+            "id": "FORM",
+            "type": "nexa-ui-form",
+            "x": 20,
+            "y": 20,
+            "w": 400,
+            "h": 320,
+            "slots": true,
+            "props": {
+              "changeDelay": 150,
+              "outputValid": "{formValid}",
+              "outputDirty": "{formDirty}",
+              "outputSubmitting": "{formSending}",
+              "validateOn": "change"
+            },
+            "children": [
+              {
+                "id": "FORM-fields",
+                "type": "@frame",
+                "inSlot": "content",
+                "slotLabel": "Fields",
+                "x": 0,
+                "y": 0,
+                "w": 400,
+                "h": 320,
+                "style": {},
+                "layout": {
+                  "mode": "vertical",
+                  "padding": {
+                    "t": 12,
+                    "r": 12,
+                    "b": 12,
+                    "l": 12
+                  },
+                  "gap": 10
+                },
+                "children": [
+                  {
+                    "id": "has",
+                    "type": "nexa-ui-checkbox",
+                    "x": 0,
+                    "y": 0,
+                    "w": 360,
+                    "h": 32,
+                    "props": {
+                      "formName": "hasOrder",
+                      "text": "This lot has an order"
+                    }
+                  },
+                  {
+                    "id": "po",
+                    "type": "nexa-ui-input",
+                    "x": 0,
+                    "y": 0,
+                    "w": 360,
+                    "h": 92,
+                    "props": {
+                      "formName": "po",
+                      "label": "Order number",
+                      "ruleCode": "return !values.hasOrder || !!value || \"Required when there is an order\";"
+                    }
+                  },
+                  {
+                    "id": "go",
+                    "type": "nexa-ui-button",
+                    "x": 0,
+                    "y": 0,
+                    "w": 150,
+                    "h": 40,
+                    "props": {
+                      "text": "Send",
+                      "formAction": "submit"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "result",
+            "type": "nexa-ui-text",
+            "x": 20,
+            "y": 350,
+            "w": 300,
+            "h": 40,
+            "props": {
+              "text": "{result}",
+              "fontWeight": 600
+            }
+          }
+        ],
+        "logic": {
+          "nodes": [
+            {
+              "id": "e1",
+              "type": "ui-event",
+              "name": "On Submit",
+              "x": 30,
+              "y": 60,
+              "props": {
+                "compId": "FORM",
+                "event": "submit"
+              }
+            },
+            {
+              "id": "f1",
+              "type": "function",
+              "name": "Say what was sent",
+              "x": 240,
+              "y": 60,
+              "props": {
+                "code": "var v = msg.payload.values;\nvars.screen.set(\"result\", v.hasOrder ? \"Sent with order \" + v.po : \"Sent without an order\");\nreturn msg;"
+              }
+            },
+            {
+              "id": "u1",
+              "type": "ui-update",
+              "name": "Sending is over",
+              "x": 500,
+              "y": 60,
+              "props": {
+                "compId": "FORM",
+                "action": "done",
+                "config": {}
+              }
+            }
+          ],
+          "wires": [
+            {
+              "id": "w24",
+              "from": "e1",
+              "to": "f1"
+            },
+            {
+              "id": "w25",
+              "from": "f1",
+              "to": "u1"
+            }
+          ]
+        }
+      },
+      {
+        "id": "cb-filter",
+        "name": "9. A report filter with a date range",
+        "path": "/c9-filter",
+        "width": 800,
+        "height": 420,
+        "gridSize": 10,
+        "snap": false,
+        "treeVersion": 1,
+        "orphans": [],
+        "variables": [
+          {
+            "id": "v1",
+            "name": "formValid",
+            "type": "boolean",
+            "defaultValue": false
+          },
+          {
+            "id": "v2",
+            "name": "formDirty",
+            "type": "boolean",
+            "defaultValue": false
+          },
+          {
+            "id": "v3",
+            "name": "formSending",
+            "type": "boolean",
+            "defaultValue": false
+          },
+          {
+            "id": "v4",
+            "name": "report",
+            "type": "string",
+            "defaultValue": ""
+          }
+        ],
+        "components": [
+          {
+            "id": "FORM",
+            "type": "nexa-ui-form",
+            "x": 20,
+            "y": 20,
+            "w": 400,
+            "h": 340,
+            "slots": true,
+            "props": {
+              "changeDelay": 150,
+              "outputValid": "{formValid}",
+              "outputDirty": "{formDirty}",
+              "outputSubmitting": "{formSending}",
+              "validateOn": "change"
+            },
+            "children": [
+              {
+                "id": "FORM-fields",
+                "type": "@frame",
+                "inSlot": "content",
+                "slotLabel": "Fields",
+                "x": 0,
+                "y": 0,
+                "w": 400,
+                "h": 340,
+                "style": {},
+                "layout": {
+                  "mode": "vertical",
+                  "padding": {
+                    "t": 12,
+                    "r": 12,
+                    "b": 12,
+                    "l": 12
+                  },
+                  "gap": 10
+                },
+                "children": [
+                  {
+                    "id": "period",
+                    "type": "nexa-ui-daterange",
+                    "x": 0,
+                    "y": 0,
+                    "w": 360,
+                    "h": 92,
+                    "props": {
+                      "formName": "period",
+                      "label": "Period",
+                      "required": true,
+                      "timezoneMode": "utc",
+                      "timeGranularity": "off"
+                    }
+                  },
+                  {
+                    "id": "line",
+                    "type": "nexa-ui-select",
+                    "x": 0,
+                    "y": 0,
+                    "w": 360,
+                    "h": 92,
+                    "props": {
+                      "formName": "line",
+                      "label": "Line",
+                      "required": true,
+                      "options": [
+                        {
+                          "value": "line1",
+                          "label": "Line 1"
+                        },
+                        {
+                          "value": "line2",
+                          "label": "Line 2"
+                        },
+                        {
+                          "value": "line3",
+                          "label": "Line 3"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "id": "go",
+                    "type": "nexa-ui-button",
+                    "x": 0,
+                    "y": 0,
+                    "w": 150,
+                    "h": 40,
+                    "props": {
+                      "text": "Show report",
+                      "formAction": "submit",
+                      "waitForValid": true
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "report",
+            "type": "nexa-ui-text",
+            "x": 440,
+            "y": 20,
+            "w": 340,
+            "h": 80,
+            "props": {
+              "text": "{report}",
+              "fontWeight": 600
+            }
+          }
+        ],
+        "logic": {
+          "nodes": [
+            {
+              "id": "e1",
+              "type": "ui-event",
+              "name": "On Submit",
+              "x": 30,
+              "y": 60,
+              "props": {
+                "compId": "FORM",
+                "event": "submit"
+              }
+            },
+            {
+              "id": "f1",
+              "type": "function",
+              "name": "Fake server: the report",
+              "x": 240,
+              "y": 60,
+              "props": {
+                "code": "return new Promise(function (resolve) {\n    setTimeout(function () {\n        var v = msg.payload.values;\n        vars.screen.set(\"report\", v.line + \": \" + v.period.start.slice(0, 10) + \" to \" + v.period.end.slice(0, 10) + \" - 124 batches\");\n        resolve(msg);\n    }, 600);\n});"
+              }
+            },
+            {
+              "id": "u1",
+              "type": "ui-update",
+              "name": "Sending is over",
+              "x": 530,
+              "y": 60,
+              "props": {
+                "compId": "FORM",
+                "action": "done",
+                "config": {}
+              }
+            }
+          ],
+          "wires": [
+            {
+              "id": "w26",
+              "from": "e1",
+              "to": "f1"
+            },
+            {
+              "id": "w27",
+              "from": "f1",
+              "to": "u1"
+            }
+          ]
+        }
+      },
+      {
+        "id": "cb-setpoints",
+        "name": "10. Setpoints applied together",
+        "path": "/c10-setpoints",
+        "width": 820,
+        "height": 470,
+        "gridSize": 10,
+        "snap": false,
+        "treeVersion": 1,
+        "orphans": [],
+        "variables": [
+          {
+            "id": "v1",
+            "name": "formValid",
+            "type": "boolean",
+            "defaultValue": false
+          },
+          {
+            "id": "v2",
+            "name": "formDirty",
+            "type": "boolean",
+            "defaultValue": false
+          },
+          {
+            "id": "v3",
+            "name": "formSending",
+            "type": "boolean",
+            "defaultValue": false
+          },
+          {
+            "id": "v4",
+            "name": "speedNow",
+            "type": "number",
+            "defaultValue": 800
+          },
+          {
+            "id": "v5",
+            "name": "tempNow",
+            "type": "number",
+            "defaultValue": 60
+          }
+        ],
+        "components": [
+          {
+            "id": "FORM",
+            "type": "nexa-ui-form",
+            "x": 20,
+            "y": 20,
+            "w": 400,
+            "h": 380,
+            "slots": true,
+            "props": {
+              "changeDelay": 150,
+              "outputValid": "{formValid}",
+              "outputDirty": "{formDirty}",
+              "outputSubmitting": "{formSending}",
+              "validateOn": "change"
+            },
+            "children": [
+              {
+                "id": "FORM-fields",
+                "type": "@frame",
+                "inSlot": "content",
+                "slotLabel": "Fields",
+                "x": 0,
+                "y": 0,
+                "w": 400,
+                "h": 380,
+                "style": {},
+                "layout": {
+                  "mode": "vertical",
+                  "padding": {
+                    "t": 12,
+                    "r": 12,
+                    "b": 12,
+                    "l": 12
+                  },
+                  "gap": 10
+                },
+                "children": [
+                  {
+                    "id": "speed",
+                    "type": "nexa-ui-number-input",
+                    "x": 0,
+                    "y": 0,
+                    "w": 300,
+                    "h": 92,
+                    "props": {
+                      "formName": "speed",
+                      "label": "Speed",
+                      "suffix": "rpm",
+                      "min": 0,
+                      "max": 1500,
+                      "step": 10,
+                      "required": true
+                    }
+                  },
+                  {
+                    "id": "temp",
+                    "type": "nexa-ui-number-input",
+                    "x": 0,
+                    "y": 0,
+                    "w": 300,
+                    "h": 92,
+                    "props": {
+                      "formName": "temp",
+                      "label": "Temperature",
+                      "suffix": "C",
+                      "min": 0,
+                      "max": 120,
+                      "required": true
+                    }
+                  },
+                  {
+                    "id": "apply",
+                    "type": "nexa-ui-button",
+                    "x": 0,
+                    "y": 0,
+                    "w": 150,
+                    "h": 40,
+                    "props": {
+                      "text": "Apply",
+                      "formAction": "submit",
+                      "waitForValid": true
+                    }
+                  },
+                  {
+                    "id": "revert",
+                    "type": "nexa-ui-button",
+                    "x": 0,
+                    "y": 0,
+                    "w": 150,
+                    "h": 40,
+                    "props": {
+                      "text": "Revert",
+                      "formAction": "reset",
+                      "variant": "outline"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "machine",
+            "type": "nexa-ui-text",
+            "x": 440,
+            "y": 20,
+            "w": 380,
+            "h": 80,
+            "props": {
+              "text": "Machine now: speed {speedNow} rpm, temp {tempNow} C",
+              "fontWeight": 600
+            }
+          },
+          {
+            "id": "state",
+            "type": "nexa-ui-text",
+            "x": 440,
+            "y": 120,
+            "w": 330,
+            "h": 40,
+            "props": {
+              "text": "valid = {formValid}   changed = {formDirty}   sending = {formSending}"
+            }
+          }
+        ],
+        "logic": {
+          "nodes": [
+            {
+              "id": "e0",
+              "type": "onload",
+              "name": "On Load",
+              "x": 30,
+              "y": 40,
+              "props": {}
+            },
+            {
+              "id": "f1",
+              "type": "function",
+              "name": "Read the machine (after a moment)",
+              "x": 230,
+              "y": 40,
+              "props": {
+                "code": "return new Promise(function (resolve) {\n    setTimeout(function () {\n        msg.payload = { speed: vars.screen.get(\"speedNow\"), temp: vars.screen.get(\"tempNow\") };\n        resolve(msg);\n    }, 500);\n});"
+              }
+            },
+            {
+              "id": "u1",
+              "type": "ui-update",
+              "name": "Set values",
+              "x": 470,
+              "y": 40,
+              "props": {
+                "compId": "FORM",
+                "action": "setValues",
+                "config": {}
+              }
+            },
+            {
+              "id": "e1",
+              "type": "ui-event",
+              "name": "On Submit",
+              "x": 30,
+              "y": 190,
+              "props": {
+                "compId": "FORM",
+                "event": "submit"
+              }
+            },
+            {
+              "id": "f2",
+              "type": "function",
+              "name": "Write the machine (both together)",
+              "x": 230,
+              "y": 190,
+              "props": {
+                "code": "return new Promise(function (resolve) {\n    setTimeout(function () {\n        var v = msg.payload.values;\n        vars.screen.set(\"speedNow\", v.speed);\n        vars.screen.set(\"tempNow\", v.temp);\n        resolve(msg);\n    }, 700);\n});"
+              }
+            },
+            {
+              "id": "u2",
+              "type": "ui-update",
+              "name": "Sending is over",
+              "x": 540,
+              "y": 190,
+              "props": {
+                "compId": "FORM",
+                "action": "done",
+                "config": {}
+              }
+            }
+          ],
+          "wires": [
+            {
+              "id": "w28",
+              "from": "e0",
+              "to": "f1"
+            },
+            {
+              "id": "w29",
+              "from": "f1",
+              "to": "u1"
+            },
+            {
+              "id": "w30",
+              "from": "e1",
+              "to": "f2"
+            },
+            {
+              "id": "w31",
+              "from": "f2",
+              "to": "u2"
+            }
+          ]
+        }
+      },
+      {
+        "id": "cb-check",
+        "name": "11. Show every problem now, without sending",
+        "path": "/c11-check",
+        "width": 640,
+        "height": 400,
+        "gridSize": 10,
+        "snap": false,
+        "treeVersion": 1,
+        "orphans": [],
+        "variables": [
+          {
+            "id": "v1",
+            "name": "formValid",
+            "type": "boolean",
+            "defaultValue": false
+          },
+          {
+            "id": "v2",
+            "name": "formDirty",
+            "type": "boolean",
+            "defaultValue": false
+          },
+          {
+            "id": "v3",
+            "name": "formSending",
+            "type": "boolean",
+            "defaultValue": false
+          }
+        ],
+        "components": [
+          {
+            "id": "FORM",
+            "type": "nexa-ui-form",
+            "x": 20,
+            "y": 20,
+            "w": 380,
+            "h": 330,
+            "slots": true,
+            "props": {
+              "changeDelay": 150,
+              "outputValid": "{formValid}",
+              "outputDirty": "{formDirty}",
+              "outputSubmitting": "{formSending}",
+              "validateOn": "submit"
+            },
+            "children": [
+              {
+                "id": "FORM-fields",
+                "type": "@frame",
+                "inSlot": "content",
+                "slotLabel": "Fields",
+                "x": 0,
+                "y": 0,
+                "w": 380,
+                "h": 330,
+                "style": {},
+                "layout": {
+                  "mode": "vertical",
+                  "padding": {
+                    "t": 12,
+                    "r": 12,
+                    "b": 12,
+                    "l": 12
+                  },
+                  "gap": 10
+                },
+                "children": [
+                  {
+                    "id": "po",
+                    "type": "nexa-ui-input",
+                    "x": 0,
+                    "y": 0,
+                    "w": 340,
+                    "h": 92,
+                    "props": {
+                      "formName": "po",
+                      "label": "Order number",
+                      "required": true
+                    }
+                  },
+                  {
+                    "id": "qty",
+                    "type": "nexa-ui-number-input",
+                    "x": 0,
+                    "y": 0,
+                    "w": 200,
+                    "h": 92,
+                    "props": {
+                      "formName": "qty",
+                      "label": "Quantity",
+                      "required": true,
+                      "min": 1
+                    }
+                  },
+                  {
+                    "id": "check",
+                    "type": "nexa-ui-button",
+                    "x": 0,
+                    "y": 0,
+                    "w": 150,
+                    "h": 40,
+                    "props": {
+                      "text": "Check",
+                      "variant": "outline"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "state",
+            "type": "nexa-ui-text",
+            "x": 420,
+            "y": 20,
+            "w": 330,
+            "h": 40,
+            "props": {
+              "text": "valid = {formValid}   changed = {formDirty}   sending = {formSending}"
+            }
+          }
+        ],
+        "logic": {
+          "nodes": [
+            {
+              "id": "e1",
+              "type": "ui-event",
+              "name": "On Click: Check",
+              "x": 30,
+              "y": 60,
+              "props": {
+                "compId": "check",
+                "event": "click"
+              }
+            },
+            {
+              "id": "u1",
+              "type": "ui-update",
+              "name": "Check every rule now",
+              "x": 270,
+              "y": 60,
+              "props": {
+                "compId": "FORM",
+                "action": "validate",
+                "config": {}
+              }
+            }
+          ],
+          "wires": [
+            {
+              "id": "w32",
+              "from": "e1",
+              "to": "u1"
+            }
+          ]
+        }
+      },
+      {
+        "id": "cb-focus",
+        "name": "12. Focus a field when the screen opens",
+        "path": "/c12-focus",
+        "width": 560,
+        "height": 330,
+        "gridSize": 10,
+        "snap": false,
+        "treeVersion": 1,
+        "orphans": [],
+        "variables": [
+          {
+            "id": "v1",
+            "name": "formValid",
+            "type": "boolean",
+            "defaultValue": false
+          },
+          {
+            "id": "v2",
+            "name": "formDirty",
+            "type": "boolean",
+            "defaultValue": false
+          },
+          {
+            "id": "v3",
+            "name": "formSending",
+            "type": "boolean",
+            "defaultValue": false
+          }
+        ],
+        "components": [
+          {
+            "id": "FORM",
+            "type": "nexa-ui-form",
+            "x": 20,
+            "y": 20,
+            "w": 380,
+            "h": 270,
+            "slots": true,
+            "props": {
+              "changeDelay": 150,
+              "outputValid": "{formValid}",
+              "outputDirty": "{formDirty}",
+              "outputSubmitting": "{formSending}",
+              "validateOn": "blur"
+            },
+            "children": [
+              {
+                "id": "FORM-fields",
+                "type": "@frame",
+                "inSlot": "content",
+                "slotLabel": "Fields",
+                "x": 0,
+                "y": 0,
+                "w": 380,
+                "h": 270,
+                "style": {},
+                "layout": {
+                  "mode": "vertical",
+                  "padding": {
+                    "t": 12,
+                    "r": 12,
+                    "b": 12,
+                    "l": 12
+                  },
+                  "gap": 10
+                },
+                "children": [
+                  {
+                    "id": "user",
+                    "type": "nexa-ui-input",
+                    "x": 0,
+                    "y": 0,
+                    "w": 340,
+                    "h": 92,
+                    "props": {
+                      "formName": "username",
+                      "label": "User name",
+                      "required": true
+                    }
+                  },
+                  {
+                    "id": "pass",
+                    "type": "nexa-ui-password-input",
+                    "x": 0,
+                    "y": 0,
+                    "w": 340,
+                    "h": 92,
+                    "props": {
+                      "formName": "password",
+                      "label": "Password",
+                      "required": true
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "logic": {
+          "nodes": [
+            {
+              "id": "e0",
+              "type": "onload",
+              "name": "On Load",
+              "x": 30,
+              "y": 60,
+              "props": {}
+            },
+            {
+              "id": "f1",
+              "type": "function",
+              "name": "Which field?",
+              "x": 230,
+              "y": 60,
+              "props": {
+                "code": "msg.payload = \"username\";\nreturn msg;"
+              }
+            },
+            {
+              "id": "u1",
+              "type": "ui-update",
+              "name": "Focus a field",
+              "x": 460,
+              "y": 60,
+              "props": {
+                "compId": "FORM",
+                "action": "focus",
+                "config": {}
+              }
+            }
+          ],
+          "wires": [
+            {
+              "id": "w33",
+              "from": "e0",
+              "to": "f1"
+            },
+            {
+              "id": "w34",
+              "from": "f1",
+              "to": "u1"
+            }
+          ]
+        }
+      },
+      {
+        "id": "cb-state",
+        "name": "13. Show the form's state",
+        "path": "/c13-state",
+        "width": 800,
+        "height": 360,
+        "gridSize": 10,
+        "snap": false,
+        "treeVersion": 1,
+        "orphans": [],
+        "variables": [
+          {
+            "id": "v1",
+            "name": "formValid",
+            "type": "boolean",
+            "defaultValue": false
+          },
+          {
+            "id": "v2",
+            "name": "formDirty",
+            "type": "boolean",
+            "defaultValue": false
+          },
+          {
+            "id": "v3",
+            "name": "formSending",
+            "type": "boolean",
+            "defaultValue": false
+          }
+        ],
+        "components": [
+          {
+            "id": "FORM",
+            "type": "nexa-ui-form",
+            "x": 20,
+            "y": 20,
+            "w": 380,
+            "h": 310,
+            "slots": true,
+            "props": {
+              "changeDelay": 150,
+              "outputValid": "{formValid}",
+              "outputDirty": "{formDirty}",
+              "outputSubmitting": "{formSending}",
+              "validateOn": "change"
+            },
+            "children": [
+              {
+                "id": "FORM-fields",
+                "type": "@frame",
+                "inSlot": "content",
+                "slotLabel": "Fields",
+                "x": 0,
+                "y": 0,
+                "w": 380,
+                "h": 310,
+                "style": {},
+                "layout": {
+                  "mode": "vertical",
+                  "padding": {
+                    "t": 12,
+                    "r": 12,
+                    "b": 12,
+                    "l": 12
+                  },
+                  "gap": 10
+                },
+                "children": [
+                  {
+                    "id": "name",
+                    "type": "nexa-ui-input",
+                    "x": 0,
+                    "y": 0,
+                    "w": 340,
+                    "h": 92,
+                    "props": {
+                      "formName": "name",
+                      "label": "Name",
+                      "required": true
+                    }
+                  },
+                  {
+                    "id": "mail",
+                    "type": "nexa-ui-input",
+                    "x": 0,
+                    "y": 0,
+                    "w": 340,
+                    "h": 92,
+                    "props": {
+                      "formName": "email",
+                      "label": "Email",
+                      "required": true,
+                      "pattern": "[^@ ]+@[^@ ]+",
+                      "patternMessage": "Not an email"
+                    }
+                  },
+                  {
+                    "id": "go",
+                    "type": "nexa-ui-button",
+                    "x": 0,
+                    "y": 0,
+                    "w": 150,
+                    "h": 40,
+                    "props": {
+                      "text": "Send",
+                      "formAction": "submit",
+                      "waitForValid": true
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "t1",
+            "type": "nexa-ui-text",
+            "x": 440,
+            "y": 30,
+            "w": 340,
+            "h": 36,
+            "props": {
+              "text": "Valid: {formValid}",
+              "fontWeight": 600
+            }
+          },
+          {
+            "id": "t2",
+            "type": "nexa-ui-text",
+            "x": 440,
+            "y": 70,
+            "w": 340,
+            "h": 36,
+            "props": {
+              "text": "Changed: {formDirty}",
+              "fontWeight": 600
+            }
+          },
+          {
+            "id": "t3",
+            "type": "nexa-ui-text",
+            "x": 440,
+            "y": 110,
+            "w": 340,
+            "h": 36,
+            "props": {
+              "text": "Sending: {formSending}",
+              "fontWeight": 600
+            }
+          }
+        ],
+        "logic": {
+          "nodes": [
+            {
+              "id": "e1",
+              "type": "ui-event",
+              "name": "On Submit",
+              "x": 30,
+              "y": 60,
+              "props": {
+                "compId": "FORM",
+                "event": "submit"
+              }
+            },
+            {
+              "id": "f1",
+              "type": "function",
+              "name": "Fake server",
+              "x": 240,
+              "y": 60,
+              "props": {
+                "code": "return new Promise(function (resolve) {\n    setTimeout(function () {\n        msg.statusCode = 200;\n        resolve(msg);\n    }, 1200);\n});"
+              }
+            },
+            {
+              "id": "u1",
+              "type": "ui-update",
+              "name": "Sending is over",
+              "x": 450,
+              "y": 60,
+              "props": {
+                "compId": "FORM",
+                "action": "done",
+                "config": {}
+              }
+            }
+          ],
+          "wires": [
+            {
+              "id": "w35",
+              "from": "e1",
+              "to": "f1"
+            },
+            {
+              "id": "w36",
+              "from": "f1",
+              "to": "u1"
+            }
+          ]
+        }
+      },
+      {
+        "id": "cb-two-forms",
+        "name": "14. Several forms on one screen",
+        "path": "/c14-two-forms",
+        "width": 880,
+        "height": 330,
+        "gridSize": 10,
+        "snap": false,
+        "treeVersion": 1,
+        "orphans": [],
+        "variables": [
+          {
+            "id": "v1",
+            "name": "aValid",
+            "type": "boolean",
+            "defaultValue": false
+          },
+          {
+            "id": "v2",
+            "name": "bValid",
+            "type": "boolean",
+            "defaultValue": false
+          }
+        ],
+        "components": [
+          {
+            "id": "A",
+            "type": "nexa-ui-form",
+            "x": 20,
+            "y": 40,
+            "w": 400,
+            "h": 200,
+            "slots": true,
+            "props": {
+              "changeDelay": 150,
+              "outputValid": "{aValid}",
+              "outputDirty": "",
+              "outputSubmitting": "",
+              "validateOn": "change"
+            },
+            "children": [
+              {
+                "id": "A-fields",
+                "type": "@frame",
+                "inSlot": "content",
+                "slotLabel": "Fields",
+                "x": 0,
+                "y": 0,
+                "w": 400,
+                "h": 200,
+                "style": {},
+                "layout": {
+                  "mode": "vertical",
+                  "padding": {
+                    "t": 12,
+                    "r": 12,
+                    "b": 12,
+                    "l": 12
+                  },
+                  "gap": 10
+                },
+                "children": [
+                  {
+                    "id": "an",
+                    "type": "nexa-ui-input",
+                    "x": 0,
+                    "y": 0,
+                    "w": 360,
+                    "h": 92,
+                    "props": {
+                      "formName": "name",
+                      "label": "Customer name",
+                      "required": true
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "B",
+            "type": "nexa-ui-form",
+            "x": 450,
+            "y": 40,
+            "w": 400,
+            "h": 200,
+            "slots": true,
+            "props": {
+              "changeDelay": 150,
+              "outputValid": "{bValid}",
+              "outputDirty": "",
+              "outputSubmitting": "",
+              "validateOn": "change"
+            },
+            "children": [
+              {
+                "id": "B-fields",
+                "type": "@frame",
+                "inSlot": "content",
+                "slotLabel": "Fields",
+                "x": 0,
+                "y": 0,
+                "w": 400,
+                "h": 200,
+                "style": {},
+                "layout": {
+                  "mode": "vertical",
+                  "padding": {
+                    "t": 12,
+                    "r": 12,
+                    "b": 12,
+                    "l": 12
+                  },
+                  "gap": 10
+                },
+                "children": [
+                  {
+                    "id": "bn",
+                    "type": "nexa-ui-input",
+                    "x": 0,
+                    "y": 0,
+                    "w": 360,
+                    "h": 92,
+                    "props": {
+                      "formName": "name",
+                      "label": "Supplier name",
+                      "required": true
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "ta",
+            "type": "nexa-ui-text",
+            "x": 20,
+            "y": 250,
+            "w": 400,
+            "h": 30,
+            "props": {
+              "text": "Customer form valid: {aValid}"
+            }
+          },
+          {
+            "id": "tb",
+            "type": "nexa-ui-text",
+            "x": 450,
+            "y": 250,
+            "w": 400,
+            "h": 30,
+            "props": {
+              "text": "Supplier form valid: {bValid}"
+            }
+          }
+        ],
+        "logic": {
+          "nodes": [],
+          "wires": []
+        }
+      },
+      {
+        "id": "cb-keep-or-clear",
+        "name": "15. Keep the data, or clear it",
+        "path": "/c15-keep-or-clear",
+        "width": 880,
+        "height": 330,
+        "gridSize": 10,
+        "snap": false,
+        "treeVersion": 1,
+        "orphans": [],
+        "variables": [],
+        "components": [
+          {
+            "id": "A",
+            "type": "nexa-ui-form",
+            "x": 20,
+            "y": 40,
+            "w": 400,
+            "h": 230,
+            "slots": true,
+            "props": {
+              "changeDelay": 150,
+              "outputValid": "",
+              "outputDirty": "",
+              "outputSubmitting": "",
+              "validateOn": "change"
+            },
+            "children": [
+              {
+                "id": "A-fields",
+                "type": "@frame",
+                "inSlot": "content",
+                "slotLabel": "Fields",
+                "x": 0,
+                "y": 0,
+                "w": 400,
+                "h": 230,
+                "style": {},
+                "layout": {
+                  "mode": "vertical",
+                  "padding": {
+                    "t": 12,
+                    "r": 12,
+                    "b": 12,
+                    "l": 12
+                  },
+                  "gap": 10
+                },
+                "children": [
+                  {
+                    "id": "an",
+                    "type": "nexa-ui-input",
+                    "x": 0,
+                    "y": 0,
+                    "w": 360,
+                    "h": 92,
+                    "props": {
+                      "formName": "note",
+                      "label": "Note (keep)",
+                      "required": true
+                    }
+                  },
+                  {
+                    "id": "ag",
+                    "type": "nexa-ui-button",
+                    "x": 0,
+                    "y": 0,
+                    "w": 150,
+                    "h": 40,
+                    "props": {
+                      "text": "Send (Done)",
+                      "formAction": "submit",
+                      "waitForValid": true
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "B",
+            "type": "nexa-ui-form",
+            "x": 450,
+            "y": 40,
+            "w": 400,
+            "h": 230,
+            "slots": true,
+            "props": {
+              "changeDelay": 150,
+              "outputValid": "",
+              "outputDirty": "",
+              "outputSubmitting": "",
+              "validateOn": "change"
+            },
+            "children": [
+              {
+                "id": "B-fields",
+                "type": "@frame",
+                "inSlot": "content",
+                "slotLabel": "Fields",
+                "x": 0,
+                "y": 0,
+                "w": 400,
+                "h": 230,
+                "style": {},
+                "layout": {
+                  "mode": "vertical",
+                  "padding": {
+                    "t": 12,
+                    "r": 12,
+                    "b": 12,
+                    "l": 12
+                  },
+                  "gap": 10
+                },
+                "children": [
+                  {
+                    "id": "bn",
+                    "type": "nexa-ui-input",
+                    "x": 0,
+                    "y": 0,
+                    "w": 360,
+                    "h": 92,
+                    "props": {
+                      "formName": "note",
+                      "label": "Note (clear)",
+                      "required": true
+                    }
+                  },
+                  {
+                    "id": "bg",
+                    "type": "nexa-ui-button",
+                    "x": 0,
+                    "y": 0,
+                    "w": 150,
+                    "h": 40,
+                    "props": {
+                      "text": "Send (Done + reset)",
+                      "formAction": "submit",
+                      "waitForValid": true
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "logic": {
+          "nodes": [
+            {
+              "id": "e1",
+              "type": "ui-event",
+              "name": "On Submit (keep)",
+              "x": 30,
+              "y": 40,
+              "props": {
+                "compId": "A",
+                "event": "submit"
+              }
+            },
+            {
+              "id": "f1",
+              "type": "function",
+              "name": "Fake server",
+              "x": 260,
+              "y": 40,
+              "props": {
+                "code": "return new Promise(function (resolve) {\n    setTimeout(function () {\n        msg.statusCode = 200;\n        resolve(msg);\n    }, 600);\n});"
+              }
+            },
+            {
+              "id": "u1",
+              "type": "ui-update",
+              "name": "Sending is over",
+              "x": 470,
+              "y": 40,
+              "props": {
+                "compId": "A",
+                "action": "done",
+                "config": {}
+              }
+            },
+            {
+              "id": "e2",
+              "type": "ui-event",
+              "name": "On Submit (clear)",
+              "x": 30,
+              "y": 170,
+              "props": {
+                "compId": "B",
+                "event": "submit"
+              }
+            },
+            {
+              "id": "f2",
+              "type": "function",
+              "name": "Fake server, then clear",
+              "x": 260,
+              "y": 170,
+              "props": {
+                "code": "return new Promise(function (resolve) {\n    setTimeout(function () {\n        msg.payload = { reset: true };\n        resolve(msg);\n    }, 600);\n});"
+              }
+            },
+            {
+              "id": "u2",
+              "type": "ui-update",
+              "name": "Sending is over (reset)",
+              "x": 520,
+              "y": 170,
+              "props": {
+                "compId": "B",
+                "action": "done",
+                "config": {}
+              }
+            }
+          ],
+          "wires": [
+            {
+              "id": "w37",
+              "from": "e1",
+              "to": "f1"
+            },
+            {
+              "id": "w38",
+              "from": "f1",
+              "to": "u1"
+            },
+            {
+              "id": "w39",
+              "from": "e2",
+              "to": "f2"
+            },
+            {
+              "id": "w40",
+              "from": "f2",
+              "to": "u2"
+            }
+          ]
+        }
+      }
+    ],
+    "templates": [],
+    "folders": [],
+    "flows": [],
+    "variables": [],
+    "sharedVariables": [],
+    "types": [],
+    "breakpoints": [],
+    "theme": null,
+    "kiosk": null,
+    "updates": null
+  }
+}
