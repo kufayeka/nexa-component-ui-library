@@ -287,6 +287,10 @@ nav.top { font-size: .9rem; margin-bottom: 12px; color: var(--muted); }
 <td>Puts a message on fields (the server refused an entry). It ends the sending. A message goes when that field is edited. <code>msg.payload</code>: <code>{ po: &quot;Already used&quot; }</code></td>
 </tr>
 <tr>
+<td>Mark fields as being checked (<code>setChecking</code>)</td>
+<td>Something that takes time (an API call) is checking these fields: each shows &quot;Checking...&quot;, the form is not valid and cannot be sent. It ends with Set errors (the answer was no) or Clear errors (it was fine) for the same field. <code>msg.payload</code>: <code>&quot;username&quot; or [&quot;username&quot;, &quot;email&quot;]</code></td>
+</tr>
+<tr>
 <td>Clear errors (<code>clearErrors</code>)</td>
 <td>Removes the messages put by Set errors. msg.payload may be a list of field names.</td>
 </tr>
@@ -322,7 +326,7 @@ nav.top { font-size: .9rem; margin-bottom: 12px; color: var(--muted); }
 <tr>
 <td>Pattern (regular expression) (<code>pattern</code>)</td>
 <td>text; default (empty)</td>
-<td>A regular expression the whole text must match. Inside a Form it is a rule shown when the form says (not at the first key).</td>
+<td>A regular expression the whole text must match. Inside a Form it is a rule shown when the form says (not at the first key). An empty field must match too: use <code>[0-9]*</code> instead of <code>[0-9]+</code> to let it stay empty.</td>
 </tr>
 <tr>
 <td>Pattern message (<code>patternMessage</code>)</td>
@@ -427,7 +431,7 @@ nav.top { font-size: .9rem; margin-bottom: 12px; color: var(--muted); }
 <tbody><tr>
 <td>Shortest text (<code>minLength</code>)</td>
 <td>number; default (empty)</td>
-<td>The shortest text allowed (inside a Form). Empty: no minimum. Counts characters.</td>
+<td>The shortest text allowed (inside a Form). Empty field (no minimum set): no rule. With a minimum, an empty field breaks it, so a form that starts empty starts invalid. Counts characters.</td>
 </tr>
 </tbody></table>
 <h3 id="events-logic-an-quoton-quot-node">Events (Logic: an &quot;On ...&quot; node)</h3>
@@ -493,7 +497,7 @@ nav.top { font-size: .9rem; margin-bottom: 12px; color: var(--muted); }
 <tr>
 <td>Pattern (regular expression) (<code>pattern</code>)</td>
 <td>text; default (empty)</td>
-<td>A regular expression the whole text must match. Inside a Form it is a rule shown when the form says (not at the first key).</td>
+<td>A regular expression the whole text must match. Inside a Form it is a rule shown when the form says (not at the first key). An empty field must match too: use <code>[0-9]*</code> instead of <code>[0-9]+</code> to let it stay empty.</td>
 </tr>
 <tr>
 <td>Pattern message (<code>patternMessage</code>)</td>
@@ -593,7 +597,7 @@ nav.top { font-size: .9rem; margin-bottom: 12px; color: var(--muted); }
 <tbody><tr>
 <td>Shortest text (<code>minLength</code>)</td>
 <td>number; default (empty)</td>
-<td>The shortest text allowed (inside a Form). Empty: no minimum. Counts characters.</td>
+<td>The shortest text allowed (inside a Form). Empty field (no minimum set): no rule. With a minimum, an empty field breaks it, so a form that starts empty starts invalid. Counts characters.</td>
 </tr>
 </tbody></table>
 <h3 id="events-logic-an-quoton-quot-node">Events (Logic: an &quot;On ...&quot; node)</h3>
@@ -669,7 +673,7 @@ nav.top { font-size: .9rem; margin-bottom: 12px; color: var(--muted); }
 <tr>
 <td>Minimum (<code>min</code>)</td>
 <td>number; default (empty)</td>
-<td>The smallest value. A typed number below it is refused (shown as an error; inside a Form it is the field&#39;s error).</td>
+<td>The smallest value. A typed number below it is refused (shown as an error; inside a Form it is the field&#39;s error). Inside a Form an empty number is below it too.</td>
 </tr>
 <tr>
 <td>Maximum (<code>max</code>)</td>
@@ -779,7 +783,7 @@ nav.top { font-size: .9rem; margin-bottom: 12px; color: var(--muted); }
 <tbody><tr>
 <td>Shortest text (<code>minLength</code>)</td>
 <td>number; default (empty)</td>
-<td>The shortest text allowed (inside a Form). Empty: no minimum. Counts characters.</td>
+<td>The shortest text allowed (inside a Form). Empty field (no minimum set): no rule. With a minimum, an empty field breaks it, so a form that starts empty starts invalid. Counts characters.</td>
 </tr>
 </tbody></table>
 <h3 id="number-format-tab">Number Format tab</h3>
@@ -955,7 +959,7 @@ nav.top { font-size: .9rem; margin-bottom: 12px; color: var(--muted); }
 <tbody><tr>
 <td>Shortest text (<code>minLength</code>)</td>
 <td>number; default (empty)</td>
-<td>The shortest text allowed (inside a Form). Empty: no minimum. Counts characters.</td>
+<td>The shortest text allowed (inside a Form). Empty field (no minimum set): no rule. With a minimum, an empty field breaks it, so a form that starts empty starts invalid. Counts characters.</td>
 </tr>
 </tbody></table>
 <h3 id="events-logic-an-quoton-quot-node">Events (Logic: an &quot;On ...&quot; node)</h3>

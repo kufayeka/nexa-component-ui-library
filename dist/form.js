@@ -109,7 +109,7 @@ export const button = defineUI({
 // Text fields: Input, Textarea, Number Input, Password Input (FieldController)
 // =================================================================================================
 const BOX_CSS = css`
-    .box { flex: 1 1 auto; min-height: 0; width: 100%; display: flex; align-items: center; gap: var(--gap); position: relative;
+    .box { flex: 1 1 auto; min-height: var(--h); width: 100%; display: flex; align-items: center; gap: var(--gap); position: relative;
         padding: 0 var(--px); background: var(--bg-subtle); color: var(--fg); border: none; border-bottom: 1px solid var(--bd-strong);
         border-radius: var(--r) var(--r) 0 0; overflow: hidden;
         transition: background-color var(--t) var(--ease), box-shadow var(--t) var(--ease), border-color var(--t) var(--ease); }
@@ -415,7 +415,7 @@ const CHOICE_CSS = css`
     .native:focus-visible + .dot { outline: 2px solid var(--ring); outline-offset: 1px; }
     .text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     /* segmented (Carbon's content switcher): outlined segments, the chosen one inverted */
-    .seg { flex: 1 1 auto; min-height: 0; display: flex; border: 1px solid var(--bd-strong); border-radius: var(--r); overflow: hidden; }
+    .seg { flex: 1 1 auto; min-height: var(--h); display: flex; border: 1px solid var(--bd-strong); border-radius: var(--r); overflow: hidden; }
     .seg .item { flex: 1 1 0; justify-content: center; color: var(--fg-muted); padding: 0 var(--px); transition: background-color var(--t) var(--ease), color var(--t) var(--ease); }
     .seg .item + .item { border-left: 1px solid var(--bd-strong); }
     .seg .item:hover:not(.disabled):not(.checked) { background: var(--bg-muted); color: var(--fg); }
@@ -634,7 +634,7 @@ export const combobox = defineUI({
 const SLIDER_CSS = css`
     .top { display: flex; align-items: flex-end; gap: var(--gap); }
     .top .label { flex: 1 1 auto; }
-    .row { flex: 1 1 auto; min-height: 0; display: flex; align-items: center; gap: var(--px); }
+    .row { flex: 1 1 auto; min-height: 24px; display: flex; align-items: center; gap: var(--px); }
     .out { flex: 0 0 auto; min-width: calc(var(--h) * 1.6); height: var(--h); max-height: 100%; padding: 0 8px; display: inline-flex; align-items: center; justify-content: center;
         background: var(--bg-subtle); border-bottom: 1px solid var(--bd-strong); border-radius: var(--r) var(--r) 0 0; color: var(--fg); }
     .root { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 4px; }
@@ -721,7 +721,7 @@ const TAGS_CSS = css`
     .tag button .icon svg { width: 12px; height: 12px; }
     .tag-edit { width: 80px; border: none; outline: none; font: inherit; background: transparent; color: inherit; }
     .tags input.entry { flex: 1 1 60px; min-width: 60px; height: 24px; }
-    .pins { flex: 1 1 auto; min-height: 0; display: flex; gap: var(--gap); }
+    .pins { flex: 1 1 auto; min-height: var(--h); display: flex; gap: var(--gap); }
     .pin { flex: 1 1 0; min-width: 0; height: 100%; max-width: var(--h); text-align: center; border: none; border-bottom: 1px solid var(--bd-strong);
         border-radius: var(--r) var(--r) 0 0; background: var(--bg-subtle); font-family: var(--mono); font-size: 1.15em; color: var(--fg); outline: none;
         transition: box-shadow var(--t) var(--ease), background-color var(--t) var(--ease); }
@@ -730,7 +730,7 @@ const TAGS_CSS = css`
     :host([data-variant="outline"]) .pin { background: var(--bg); border: 1px solid var(--bd-strong); border-radius: var(--r); }
     .pin[data-invalid], .field.invalid .pin { box-shadow: inset 0 0 0 2px var(--err-bd); border-bottom-color: transparent; }
     .pin::placeholder { color: var(--fg-subtle); }
-    .stars { flex: 1 1 auto; min-height: 0; display: flex; align-items: center; gap: 4px; }
+    .stars { flex: 1 1 auto; min-height: 24px; display: flex; align-items: center; gap: 4px; }
     .star { position: relative; width: calc(var(--icon) * 1.5); height: calc(var(--icon) * 1.5); cursor: pointer; color: var(--cp-solid); outline: none; }
     .star:focus-visible { outline: 2px solid var(--ring); border-radius: 2px; }
     .star .half { position: absolute; inset: 0; overflow: hidden; width: 50%; }

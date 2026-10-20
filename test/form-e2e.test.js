@@ -31,6 +31,7 @@ const FORM = {
             field('po', 'input', 300, 64, { formName: 'po', label: 'Order number', required: true, helperText: 'Like PO-123' }),
             field('pw', 'password-input', 300, 64, { formName: 'password', label: 'Password', ruleCode: "return value.length >= 8 || 'At least 8 characters'" }),
             field('qty', 'number-input', 200, 64, { formName: 'qty', label: 'Quantity', min: 1, defaultValue: 1 }),
+            field('nick', 'input', 300, 92, { formName: 'nick', label: 'Nick name', helperText: 'Checked by Zod, then by the server' }),
             field('agree', 'checkbox', 240, 32, { formName: 'agree', text: 'I checked the order', required: true }),
             field('send', 'button', 140, 40, { text: 'Send', formAction: 'submit', waitForValid: true })
         ]
@@ -52,9 +53,21 @@ const LOGIC = {
         { id: 'u1', type: 'ui-update', compId: 'FORM', action: 'done', config: {} },
         { id: 'e2', type: 'ui-event', compId: 'FORM', event: 'change' },
         { id: 'f2', type: 'function', code: "var p = msg.payload; if (p.name === 'po' && p.value === 'TAKEN') { msg.payload = { po: 'Already used' }; return msg; } return null;" },
-        { id: 'u2', type: 'ui-update', compId: 'FORM', action: 'setErrors', config: {} }
+        { id: 'u2', type: 'ui-update', compId: 'FORM', action: 'setErrors', config: {} },
+        // the nick name: On Change -> Validate (Zod). A bad one goes straight to Set errors; a good one is marked as being checked and a (pretend) server answers
+        { id: 'e3', type: 'ui-event', compId: 'FORM', event: 'change' },
+        { id: 'f3', type: 'function', code: "if (msg.payload.name !== 'nick') return null; msg.payload = { nick: msg.payload.value }; return msg;" },
+        { id: 'v3', type: 'validate', schema: 'return z.object({ nick: z.string().min(3, "Nick: at least 3 letters").regex(/^[a-z]+$/, "Nick: lower case letters only") });' },
+        { id: 'u3', type: 'ui-update', compId: 'FORM', action: 'setErrors', config: {} },
+        { id: 'f4', type: 'function', code: "msg.payload = 'nick'; return msg;" },
+        { id: 'u4', type: 'ui-update', compId: 'FORM', action: 'setChecking', config: {} },
+        { id: 'f5', type: 'function', outputs: 2, code: "var nick = msg.payload.nick; return new Promise(function (resolve) { setTimeout(function () { resolve(nick === 'taken' ? [null, { payload: { nick: 'Nick: already used' } }] : [{ payload: ['nick'] }, null]); }, 900); });" },
+        { id: 'u5', type: 'ui-update', compId: 'FORM', action: 'clearErrors', config: {} },
+        { id: 'u6', type: 'ui-update', compId: 'FORM', action: 'setErrors', config: {} }
     ],
-    wires: [{ id: 'w1', from: 'e1', to: 'f1' }, { id: 'w2', from: 'f1', to: 'u1' }, { id: 'w3', from: 'e2', to: 'f2' }, { id: 'w4', from: 'f2', to: 'u2' }]
+    wires: [{ id: 'w1', from: 'e1', to: 'f1' }, { id: 'w2', from: 'f1', to: 'u1' }, { id: 'w3', from: 'e2', to: 'f2' }, { id: 'w4', from: 'f2', to: 'u2' },
+        { id: 'w5', from: 'e3', to: 'f3' }, { id: 'w6', from: 'f3', to: 'v3' }, { id: 'w7', from: 'v3', to: 'u3', fromPort: 1 }, { id: 'w8', from: 'v3', to: 'f4', fromPort: 0 }, { id: 'w9', from: 'f4', to: 'u4' },
+        { id: 'w10', from: 'v3', to: 'f5', fromPort: 0 }, { id: 'w11', from: 'f5', to: 'u5', fromPort: 0 }, { id: 'w12', from: 'f5', to: 'u6', fromPort: 1 }]
 };
 
 function writeFlows() {
@@ -134,6 +147,20 @@ const portFree = (port) => new Promise((resolve) => { const t = net.createServer
             await wait(300);
             check('typing in that field clears the message; valid again', (await errorOf('po')) === '' && (await stateText()).indexOf('valid=true') === 0, [await errorOf('po'), await stateText()]);
 
+            // the nick name: Validate (Zod) at once, then "Checking...", then the answer of the pretend server
+            const helperOf = (id) => js(`(function () { var h = ${R(id)}.querySelector(".helper"); return h ? h.textContent.trim() : ""; })()`);
+            await typeInto('nick', 'ab');
+            check('Validate (Zod): a nick name that is too short is refused at once, on the field', (await errorOf('nick')) === 'Nick: at least 3 letters', await errorOf('nick'));
+            await typeInto('nick', 'Ann1');
+            check('... and the schema\'s second rule (lower case letters) too', (await errorOf('nick')) === 'Nick: lower case letters only', await errorOf('nick'));
+            await typeInto('nick', 'taken');
+            check('a good one goes on: the field says "Checking..." and the form cannot be sent', (await helperOf('nick')) === 'Checking\u2026' && (await sendBtn()).disabled === true && (await stateText()).indexOf('valid=false') === 0, [await helperOf('nick'), await sendBtn(), await stateText()]);
+            await wait(1300);
+            check('the pretend server says it is taken: the message replaces "Checking..."', (await errorOf('nick')) === 'Nick: already used', await errorOf('nick'));
+            await typeInto('nick', 'ann');
+            await wait(1300);
+            check('a free one: the check ends, the helper is back and the form is valid again', (await errorOf('nick')) === '' && (await helperOf('nick')) === 'Checked by Zod, then by the server' && (await stateText()).indexOf('valid=true') === 0 && (await sendBtn()).disabled === false, [await errorOf('nick'), await helperOf('nick'), await stateText(), await sendBtn()]);
+
             // send: On Submit -> Function (300 ms) -> Update (Done)
             if (process.env.SHOTS_DIR) {
                 fs.mkdirSync(process.env.SHOTS_DIR, { recursive: true });
@@ -144,7 +171,7 @@ const portFree = (port) => new Promise((resolve) => { const t = net.createServer
             const during = await sendBtn();
             check('Send: while the server works the button shows it (busy) and the form says sending', during.busy === 'true' && (await stateText()).indexOf('sending=true') !== -1, [during, await stateText()]);
             const submitted = await js('window.__submitted');
-            check('On Submit gave Logic the values of every field, by name', submitted && JSON.stringify(submitted.values) === JSON.stringify({ po: 'PO-2', password: 'long-enough-1', qty: 3, agree: true }), submitted);
+            check('On Submit gave Logic the values of every field, by name', submitted && JSON.stringify(submitted.values) === JSON.stringify({ po: 'PO-2', password: 'long-enough-1', qty: 3, nick: 'ann', agree: true }), submitted);
             await wait(1000);
             check('Update (Done): sending is over and what was sent is where the form starts from (not changed)', (await stateText()) === 'valid=true changed=false sending=false' && (await sendBtn()).busy === 'false', [await stateText(), await sendBtn()]);
             check('... the Function on On Submit wrote a field into a screen variable; the Save changes button is off again', (await js(`${R('last')}.querySelector("p").textContent.trim()`)) === 'last=PO-2' && (await save2()) === true, [await js(`${R('last')}.querySelector("p").textContent.trim()`), await save2()]);

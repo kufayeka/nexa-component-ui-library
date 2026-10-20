@@ -93,6 +93,63 @@ withHarness({
         assert.deepStrictEqual((await events('frm', 'validChange')).map((e) => e.valid), [true], 'On Valid Change: once, when it became valid');
     });
 
+    await ok('Form: a form that STARTS empty starts invalid when a field has a shortest text or a pattern: the Send button that waits is off at the first render', async () => {
+        await build({ validateOn: 'change' }, 'first', 'frame-first');
+        await mount('fs-user', 'input', { formName: 'user', label: 'User', minLength: 3 }, { width: 300, height: 90 });
+        await mount('fs-code', 'input', { formName: 'code', label: 'Code', pattern: '[0-9]+', patternMessage: 'Digits only' }, { width: 300, height: 90 });
+        await mount('fs-qty', 'number-input', { formName: 'qty', label: 'Qty', min: 1 }, { width: 300, height: 90 });
+        await mount('fs-send', 'button', { text: 'Send', formAction: 'submit', waitForValid: true }, { width: 120, height: 40 });
+        for (const n of ['fs-user', 'fs-code', 'fs-qty', 'fs-send']) await into(n, 'frame-first');
+        assert.strictEqual(await written('first', 'outputValid'), false, 'not valid at the first moment');
+        assert.strictEqual(await js(`${q('fs-send', '.btn')}.disabled`), true, 'so the Send button is off');
+        assert.strictEqual(await errorOf('fs-user'), '', 'and no error is shown before the user touches anything');
+        await typeInto('fs-user', 'ab');
+        assert.strictEqual(await errorOf('fs-user'), 'At least 3 characters');
+        await typeInto('fs-user', 'abc'); await typeInto('fs-code', '12'); await typeInto('fs-qty', '2');
+        assert.strictEqual(await js(`${q('fs-send', '.btn')}.disabled`), false, 'every rule met: the button is on');
+        await typeInto('fs-code', '');
+        assert.strictEqual(await js(`${q('fs-send', '.btn')}.disabled`), true, 'emptied again: the pattern is broken and the button is off');
+    });
+
+    await ok('A helper or an error line never squeezes the control: its box keeps its height when the message appears (an Input, a Number, a Select, a Date Time)', async () => {
+        const heightOf = (n, sel) => js(`Math.round(${q(n, sel)}.getBoundingClientRect().height)`);
+        const cases = [['sq-in', 'input', '.box', {}], ['sq-num', 'number-input', '.box', {}], ['sq-sel', 'select', '.box', { required: true }], ['sq-dt', 'datetime', '.box', {}]];
+        for (const [n, id, sel, extra] of cases) {
+            await mount(n, id, Object.assign({ label: 'Label', helperText: 'A helper', formName: n }, extra), { width: 300, height: 90 });
+            const before = await heightOf(n, sel);
+            await js(`NexaTest.setProps(${JSON.stringify(n)}, { invalid: true, errorText: "Something is wrong here" })`); await settle();
+            assert.strictEqual(await heightOf(n, sel), before, n + ': the box is the same height with an error as with a helper');
+            assert.ok(before >= 40, n + ': the box has its own size (' + before + ')');
+            await js(`NexaTest.setProps(${JSON.stringify(n)}, { invalid: false, errorText: "", helperText: "" })`); await settle();
+            assert.ok((await heightOf(n, sel)) >= 40, n + ': and without any line');
+        }
+        await mount('sq-small', 'input', { label: 'Label', helperText: 'A helper', formName: 'sq-small' }, { width: 300, height: 64 });
+        assert.ok((await heightOf('sq-small', '.box')) >= 40, 'in a box as small as 64 px the control still has 40');
+    });
+
+    await ok('Form: Mark fields as being checked: the field says "Checking...", the form is not valid and the Send button waits, until Set errors or Clear errors ends it', async () => {
+        await build({ validateOn: 'change' }, 'chk', 'frame-chk');
+        await mount('ck-user', 'input', { formName: 'username', label: 'User name', helperText: 'Pick one' }, { width: 300, height: 90 });
+        await mount('ck-send', 'button', { text: 'Send', formAction: 'submit', waitForValid: true }, { width: 120, height: 40 });
+        for (const n of ['ck-user', 'ck-send']) await into(n, 'frame-chk');
+        await typeInto('ck-user', 'ann');
+        const helper = () => js(`(function () { var h = ${root('ck-user')}.querySelector(".helper"); return h ? h.textContent.trim() : ""; })()`);
+        assert.strictEqual(await helper(), 'Pick one');
+        assert.strictEqual(await js(`${q('ck-send', '.btn')}.disabled`), false);
+        await js('NexaTest.wc("chk").setChecking("username")'); await settle();
+        assert.strictEqual(await helper(), 'Checking…', 'the line says it is being checked');
+        assert.strictEqual(await written('chk', 'outputValid'), false, 'the form is not valid');
+        assert.strictEqual(await js(`${q('ck-send', '.btn')}.disabled`), true, 'so the Send button waits');
+        await key('Enter'); await wait(60); await settle();
+        assert.deepStrictEqual(await events('chk', 'submit'), [], 'Enter does not send it either');
+        await js('NexaTest.wc("chk").clearErrors(["username"])'); await settle();
+        assert.strictEqual(await helper(), 'Pick one', 'the check was fine: the helper is back');
+        assert.strictEqual(await js(`${q('ck-send', '.btn')}.disabled`), false, 'and the button is on');
+        await js('NexaTest.wc("chk").setChecking(["username"])'); await settle();
+        await js('NexaTest.wc("chk").setErrors({ username: "Already used" })'); await settle();
+        assert.strictEqual(await errorOf('ck-user'), 'Already used', 'the answer was no: the message replaces "Checking..."');
+    });
+
     await ok('Form: Enter sends it (On Submit with the values, sending on, a second Enter is ignored); Done ends it and the form is clean again', async () => {
         assert.deepStrictEqual(await events('frm', 'submit'), []);
         await js(`(function () { var i = ${q('f-email', 'input')}; i.focus(); return 1; })()`);

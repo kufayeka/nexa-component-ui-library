@@ -23,7 +23,7 @@ const NOTES = {
     requiredMessage: 'The text shown when a required field is empty. Empty: "Required" ("Must be checked" for a Checkbox or Switch).',
     ruleCode: 'A rule of your own, in JavaScript: the body of a function of `(value, values, form)`. Return `true` (or nothing) when the value is fine; return `false` or a text (the message) when it is not. `values` is every field of the form by name, so a rule can compare fields. It runs on every change, at once: it cannot wait for a server (do that with Logic: On Change, API Call, Set errors). A mistake in the code shows as the field\'s error, so it is never silently ignored.',
     ruleMessage: 'The message when the rule returns `false` (a rule that returns a text uses that text). Empty: "Not valid".',
-    minLength: 'The shortest text allowed (inside a Form). Empty: no minimum. Counts characters.',
+    minLength: 'The shortest text allowed (inside a Form). Empty field (no minimum set): no rule. With a minimum, an empty field breaks it, so a form that starts empty starts invalid. Counts characters.',
     changeDebounce: 'On Change fires while the user types, once they pause this long (milliseconds). 0: on every keystroke. The written value (On Commit) is separate and fires on Enter or when the field is left.',
 
     // Style
@@ -89,10 +89,10 @@ const NOTES = {
     clickValue: 'The value written (and sent with On Click) when the button is clicked: true, false, a number, text or JSON.',
     align: 'Where the text sits: left, center or right.',
     step: 'How much the arrow keys (and the ± buttons) change the value.',
-    min: 'The smallest value. A typed number below it is refused (shown as an error; inside a Form it is the field\'s error).',
+    min: 'The smallest value. A typed number below it is refused (shown as an error; inside a Form it is the field\'s error). Inside a Form an empty number is below it too.',
     max: 'The largest value. A typed number above it is refused.',
     maxLength: 'The longest text. The box refuses more characters; inside a Form it is also a rule.',
-    pattern: 'A regular expression the whole text must match. Inside a Form it is a rule shown when the form says (not at the first key).',
+    pattern: 'A regular expression the whole text must match. Inside a Form it is a rule shown when the form says (not at the first key). An empty field must match too: use `[0-9]*` instead of `[0-9]+` to let it stay empty.',
     patternMessage: 'The message when the text does not match Pattern.',
     decimals: 'How many decimals are shown and written. -1: as the value comes (no rounding).',
     decimalSeparator: 'The mark between the whole part and the decimals. A single "." or "," typed is always read as the decimal point.',

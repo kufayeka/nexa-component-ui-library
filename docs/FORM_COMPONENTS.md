@@ -91,6 +91,7 @@ A container that makes the controls inside it one form. It knows their values, w
 | Reset (`reset`) | Every field goes back to where the form started; errors are forgotten. |
 | Set values (`setValues`) | Fills fields by name: load a record to edit. It is where the form starts from, so it is not a change. `msg.payload`: `{ po: "PO-1", owner: { name: "Ann" } }` |
 | Set errors (`setErrors`) | Puts a message on fields (the server refused an entry). It ends the sending. A message goes when that field is edited. `msg.payload`: `{ po: "Already used" }` |
+| Mark fields as being checked (`setChecking`) | Something that takes time (an API call) is checking these fields: each shows "Checking...", the form is not valid and cannot be sent. It ends with Set errors (the answer was no) or Clear errors (it was fine) for the same field. `msg.payload`: `"username" or ["username", "email"]` |
 | Clear errors (`clearErrors`) | Removes the messages put by Set errors. msg.payload may be a list of field names. |
 | Focus a field (`focus`) | The field named in msg.payload (or { name }); without one, the first field with an error. `msg.payload`: `"po"` |
 | Sending is over (`done`) | Not sending any more, and what is entered is where the form starts from. msg.payload { reset: true } empties the form too. `msg.payload`: `{ reset: true }` |
@@ -112,7 +113,7 @@ A one-line text box.
 | Property | Kind and default | What it is for |
 | --- | --- | --- |
 | Max length (`maxLength`) | number; default (empty) | The longest text. The box refuses more characters; inside a Form it is also a rule. |
-| Pattern (regular expression) (`pattern`) | text; default (empty) | A regular expression the whole text must match. Inside a Form it is a rule shown when the form says (not at the first key). |
+| Pattern (regular expression) (`pattern`) | text; default (empty) | A regular expression the whole text must match. Inside a Form it is a rule shown when the form says (not at the first key). An empty field must match too: use `[0-9]*` instead of `[0-9]+` to let it stay empty. |
 | Pattern message (`patternMessage`) | text; default (empty) | The message when the text does not match Pattern. |
 
 ### Display tab
@@ -142,7 +143,7 @@ A one-line text box.
 
 | Property | Kind and default | What it is for |
 | --- | --- | --- |
-| Shortest text (`minLength`) | number; default (empty) | The shortest text allowed (inside a Form). Empty: no minimum. Counts characters. |
+| Shortest text (`minLength`) | number; default (empty) | The shortest text allowed (inside a Form). Empty field (no minimum set): no rule. With a minimum, an empty field breaks it, so a form that starts empty starts invalid. Counts characters. |
 
 ### Events (Logic: an "On ..." node)
 
@@ -172,7 +173,7 @@ A text box of several lines. Enter makes a new line; Ctrl+Enter writes it.
 | Property | Kind and default | What it is for |
 | --- | --- | --- |
 | Max length (`maxLength`) | number; default (empty) | The longest text. With Character count it shows "12 / 80". |
-| Pattern (regular expression) (`pattern`) | text; default (empty) | A regular expression the whole text must match. Inside a Form it is a rule shown when the form says (not at the first key). |
+| Pattern (regular expression) (`pattern`) | text; default (empty) | A regular expression the whole text must match. Inside a Form it is a rule shown when the form says (not at the first key). An empty field must match too: use `[0-9]*` instead of `[0-9]+` to let it stay empty. |
 | Pattern message (`patternMessage`) | text; default (empty) | The message when the text does not match Pattern. |
 
 ### Display tab
@@ -201,7 +202,7 @@ A text box of several lines. Enter makes a new line; Ctrl+Enter writes it.
 
 | Property | Kind and default | What it is for |
 | --- | --- | --- |
-| Shortest text (`minLength`) | number; default (empty) | The shortest text allowed (inside a Form). Empty: no minimum. Counts characters. |
+| Shortest text (`minLength`) | number; default (empty) | The shortest text allowed (inside a Form). Empty field (no minimum set): no rule. With a minimum, an empty field breaks it, so a form that starts empty starts invalid. Counts characters. |
 
 ### Events (Logic: an "On ..." node)
 
@@ -233,7 +234,7 @@ A number box with − and + buttons, limits, decimals and thousands separators.
 | Decimal separator (`decimalSeparator`) | a choice: `.`, `,`; default `.` | The mark between the whole part and the decimals. A single "." or "," typed is always read as the decimal point. |
 | Thousands separator (`thousandsSeparator`) | a choice: ``, `,`, `.`, ` `, `'`; default (empty) | The mark between groups of three digits: none, comma, dot, space or apostrophe. |
 | Group thousands while typing (`groupWhileTyping`) | on / off; default `true` | Puts the thousands separator in as the user types. Off: only when the field is left. |
-| Minimum (`min`) | number; default (empty) | The smallest value. A typed number below it is refused (shown as an error; inside a Form it is the field's error). |
+| Minimum (`min`) | number; default (empty) | The smallest value. A typed number below it is refused (shown as an error; inside a Form it is the field's error). Inside a Form an empty number is below it too. |
 | Maximum (`max`) | number; default (empty) | The largest value. A typed number above it is refused. |
 | Default value (unbound) (`defaultValue`) | text; default (empty) | The number the field starts with when nothing is bound (a number, or empty). |
 
@@ -264,7 +265,7 @@ A number box with − and + buttons, limits, decimals and thousands separators.
 
 | Property | Kind and default | What it is for |
 | --- | --- | --- |
-| Shortest text (`minLength`) | number; default (empty) | The shortest text allowed (inside a Form). Empty: no minimum. Counts characters. |
+| Shortest text (`minLength`) | number; default (empty) | The shortest text allowed (inside a Form). Empty field (no minimum set): no rule. With a minimum, an empty field breaks it, so a form that starts empty starts invalid. Counts characters. |
 
 ### Number Format tab
 
@@ -328,7 +329,7 @@ A text box that hides what is typed, with an eye button to show it.
 
 | Property | Kind and default | What it is for |
 | --- | --- | --- |
-| Shortest text (`minLength`) | number; default (empty) | The shortest text allowed (inside a Form). Empty: no minimum. Counts characters. |
+| Shortest text (`minLength`) | number; default (empty) | The shortest text allowed (inside a Form). Empty field (no minimum set): no rule. With a minimum, an empty field breaks it, so a form that starts empty starts invalid. Counts characters. |
 
 ### Events (Logic: an "On ..." node)
 

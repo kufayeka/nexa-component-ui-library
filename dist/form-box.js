@@ -58,6 +58,7 @@ export const form = defineUI({
         reset: { label: "Reset", help: "Every field goes back to where the form started; errors are forgotten." },
         setValues: { label: "Set values", help: "Fills fields by name: load a record to edit. It is where the form starts from, so it is not a change.", example: "{ po: \"PO-1\", owner: { name: \"Ann\" } }" },
         setErrors: { label: "Set errors", help: "Puts a message on fields (the server refused an entry). It ends the sending. A message goes when that field is edited.", example: "{ po: \"Already used\" }" },
+        setChecking: { label: "Mark fields as being checked", help: "Something that takes time (an API call) is checking these fields: each shows \"Checking...\", the form is not valid and cannot be sent. It ends with Set errors (the answer was no) or Clear errors (it was fine) for the same field.", example: "\"username\" or [\"username\", \"email\"]" },
         clearErrors: { label: "Clear errors", help: "Removes the messages put by Set errors. msg.payload may be a list of field names." },
         focus: { label: "Focus a field", help: "The field named in msg.payload (or { name }); without one, the first field with an error.", example: "\"po\"" },
         done: { label: "Sending is over", help: "Not sending any more, and what is entered is where the form starts from. msg.payload { reset: true } empties the form too.", example: "{ reset: true }" }
@@ -142,6 +143,7 @@ export const form = defineUI({
         reset() { this.engine.reset(); }
         setValues(params) { this.engine.setValues(params && typeof params === "object" ? params : {}); }
         setErrors(params) { this.engine.setErrors(params && typeof params === "object" ? params : {}); }
+        setChecking(params) { this.engine.setChecking(typeof params === "string" ? params : Array.isArray(params) ? params : params && Array.isArray(params.names) ? params.names : params && params.name ? params.name : []); }
         clearErrors(params) { this.engine.clearErrors(Array.isArray(params) ? params : params && Array.isArray(params.names) ? params.names : undefined); }
         focus(params) { this.engine.focus(typeof params === "string" ? params : params && params.name); }
         done(params) { this.engine.done(params && typeof params === "object" ? params : undefined); }

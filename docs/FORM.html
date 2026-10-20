@@ -133,7 +133,7 @@ nav.top { font-size: .9rem; margin-bottom: 12px; color: var(--muted); }
 <tr>
 <td>Shortest text</td>
 <td>Form tab (<code>minLength</code>) of a text field</td>
-<td>At least that many characters</td>
+<td>At least that many characters (empty fails)</td>
 </tr>
 <tr>
 <td>Max length</td>
@@ -143,12 +143,12 @@ nav.top { font-size: .9rem; margin-bottom: 12px; color: var(--muted); }
 <tr>
 <td>Pattern</td>
 <td>Data tab (<code>pattern</code>, <code>patternMessage</code>)</td>
-<td>The whole text matches a regular expression</td>
+<td>The whole text matches a regular expression (empty fails unless the pattern accepts nothing)</td>
 </tr>
 <tr>
 <td>Minimum / Maximum</td>
 <td>Data tab of a Number</td>
-<td>The number is not outside them. Text that is not a number is refused at once</td>
+<td>The number is not outside them (an empty number is below the minimum). Text that is not a number is refused at once</td>
 </tr>
 <tr>
 <td>Rule (JavaScript)</td>
@@ -166,7 +166,7 @@ nav.top { font-size: .9rem; margin-bottom: 12px; color: var(--muted); }
 <pre><code class="language-js">// at least 8 characters, an upper case letter and a digit
 return (value.length &gt;= 8 &amp;&amp; /[A-Z]/.test(value) &amp;&amp; /[0-9]/.test(value)) || &quot;8+ characters, a capital and a digit&quot;;
 </code></pre>
-<p>An empty field that is not required passes the length and pattern rules (there is nothing to measure). A rule in JavaScript always runs; test for empty yourself when it matters.</p>
+<p><strong>An empty field breaks a rule that asks for something</strong>: a <em>Shortest text</em>, a <em>Pattern</em> (unless the pattern accepts nothing, like <code>[0-9]*</code>) and a number&#39;s <em>Minimum</em>. So a form that starts empty starts <strong>invalid</strong>, and a Send button that waits for the form is off from the first moment. A field that may stay empty simply has none of those rules (the <em>Max length</em> is never broken by nothing). A rule in JavaScript always runs; test for empty yourself when it matters.</p>
 <hr>
 <h2 id="when-an-error-shows">When an error shows</h2>
 <p>The form&#39;s <strong>Show errors</strong> setting (Behaviour tab):</p>
@@ -334,6 +334,7 @@ return (value.length &gt;= 8 &amp;&amp; /[A-Z]/.test(value) &amp;&amp; /[0-9]/.t
 <li><strong>Enter sends the form</strong> from a one-line field; in a Textarea it is Ctrl+Enter. Turn it off with <em>Enter in a field sends the form</em>.</li>
 <li><strong>A password stays in its field</strong> inside a form (outside one it empties after it is written). The form holds the value until you send it. Remember it is in <code>values</code>: do not write <code>values</code> to a variable that is shown or saved if it has a password.</li>
 <li><strong>Where &quot;the start&quot; is.</strong> The form starts from each control&#39;s <em>Default value</em>. <em>Set values</em> and <em>Sending is over</em> move the start to what is in the form. <em>Reset</em> goes back to the start; <em>Changed</em> is true while anything differs from it.</li>
+<li><strong>A control keeps its size.</strong> A helper text or an error line has its own row under the control: the control is never squeezed when it appears, and the box of the component grows to hold the label, the control and the line if the height you gave it is too small. In a Form the row is always kept, so an error that appears moves nothing.</li>
 <li><strong>A disabled or hidden field still counts.</strong> Its rules still apply, so a field you hide and leave empty keeps a required form invalid. To make a field required only sometimes, use a rule in JavaScript instead of <em>Required</em> (<a href="#8-a-field-that-is-required-only-sometimes">recipe 8</a>).</li>
 <li><strong>The server is Logic&#39;s job.</strong> A rule cannot wait for an answer. On Change → your server call → Set errors does it (<a href="#3-production-entry-that-adds-up-and-checks-the-server">recipe 3</a>).</li>
 <li><strong>At On Load, values may not be there yet.</strong> A variable or a tag may not have its value in the first moment of a page. Read it after a moment (<a href="#10-setpoints-applied-together">recipe 10</a>).</li>
@@ -634,7 +635,7 @@ vars.screen.set(&quot;report&quot;, v.line + &quot;: &quot; + v.period.start.sli
 <p><strong>Wire.</strong></p>
 <p><img src="images/form/setpoints-logic.png" alt="The Logic of the setpoints screen"></p>
 <ul>
-<li><strong>On Load</strong> → read the machine <strong>after a moment</strong> → <strong>Update · Form · Set values</strong>. A variable or a tag may not have its value in the first instant of a page, so the read waits a little (here half a second).</li>
+<li><strong>On Load</strong> → read the machine <strong>after a moment</strong> → <strong>Update · Form · Set values</strong>. A variable or a tag may not have its value in the first instant of a page, so the read waits a little (here a second).</li>
 <li><strong>On Submit · Form</strong> → write the machine → <strong>Update · Form · Done</strong>.</li>
 </ul>
 <pre><code class="language-js">// Read the machine (after a moment)   - with real tags:

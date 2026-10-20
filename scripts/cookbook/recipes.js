@@ -392,7 +392,7 @@ RECIPES.push({
     logic: {
         nodes: [
             node('e0', 'onload', 'On Load', 30, 40),
-            fn('f1', 'Read the machine (after a moment)', SERVER(500, 'msg.payload = { speed: vars.screen.get("speedNow"), temp: vars.screen.get("tempNow") };'), 230, 40),
+            fn('f1', 'Read the machine (after a moment)', SERVER(900, 'msg.payload = { speed: vars.screen.get("speedNow"), temp: vars.screen.get("tempNow") };'), 230, 40),
             update('u1', 'FORM', 'setValues', 'Set values', 470, 40),
             onEvent('e1', 'FORM', 'submit', 'On Submit', 30, 190),
             fn('f2', 'Write the machine (both together)', SERVER(700, 'var v = msg.payload.values;\nvars.screen.set("speedNow", v.speed);\nvars.screen.set("tempNow", v.temp);'), 230, 190),
@@ -402,7 +402,7 @@ RECIPES.push({
     },
     inspect: [{ name: 'inspector-limits', comp: 'speed', group: '@Data', row: 'max' }],
     async scenario(p) {
-        await p.wait(1500);
+        await p.wait(2600);
         p.expect('the form shows what the machine has', [await p.valueOf('speed'), await p.valueOf('temp')].join('/'), '800/60');
         await p.shot('loaded');
         await p.typeInto('speed', '1200');

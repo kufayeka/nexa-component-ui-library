@@ -202,7 +202,25 @@ export class UIElement extends NexaElement {
         if (p.variant) this.setAttribute("data-variant", p.variant); else this.removeAttribute("data-variant");
         applySemantic(this);
         applyPalette(this, p.colorPalette || this.constructor.palette || "primary");
+        this._growBox();
         if (p.radius !== undefined && p.radius !== "" && isFinite(Number(p.radius))) this.style.setProperty("--r", Number(p.radius) + "px");
+    }
+    /**
+     * A field (a label, a control, a helper line) needs a height of its own: the control keeps its size and the label and the helper line each have a row. When the box
+     * the user gave it is smaller than that, the box is made as tall as the field needs (its min-height), so the control is not squeezed and the helper line is not cut.
+     * Grow only: the box keeps what the user set whenever it is already big enough.
+     */
+    _growBox() {
+        const root = this.renderRoot, f = root && root.querySelector ? root.querySelector(".field") : null;
+        const box = this.closest ? this.closest("[data-id]") : null;
+        if (!f || !box || this.isEditor === undefined) return;
+        if (this._growing) return;
+        this._growing = true;
+        try {
+            box.style.minHeight = "";
+            const need = f.scrollHeight, have = f.clientHeight;
+            if (need > have + 1) box.style.minHeight = Math.ceil(box.getBoundingClientRect().height + (need - have)) + "px";
+        } finally { this._growing = false; }
     }
     /** Fire a Logic event unless this is the editor's canvas. */
     fire(name, payload) { if (!this.isEditor) this.emit(name, payload || {}); }
@@ -211,13 +229,17 @@ export class UIElement extends NexaElement {
 /** The field around a control: label, the control, the helper / error line. */
 export function field(el, control, message) {
     const p = el.p || {};
-    // an error of the Form around the control (a ValueState control owns `vs`, a date picker `member`) shows where its own error would
-    const formError = (el.vs && el.vs.member && el.vs.member.error) || (el.member && el.member.error) || "";
+    // the Form around the control (a ValueState control owns `vs`, a text field `field`, a date picker `member`): its error shows where the control's own would, and while
+    // something is checking the value ("is this name taken?") the line says so
+    const member = (el.vs && el.vs.member) || (el.field && el.field.member) || el.member || null;
+    const formError = (member && member.error) || "";
     const err = message || formError || (p.invalid && p.errorText ? p.errorText : "");
-    const helper = err || p.helperText;
+    const helper = err || (member && member.checking ? "Checking…" : p.helperText);
+    // the place of the line is kept while a control can show one (a helper text, an error, a name in a Form): an error that appears then pushes nothing
+    const reserve = !!(p.formName || p.helperText || p.invalid || p.errorText);
     return html`<div class="field ${p.label && p.labelPosition === "left" ? "left" : ""} ${err ? "invalid" : ""}" part="root">
         ${p.label ? html`<label class="label" part="label">${p.label}${p.required ? html`<span class="req" aria-hidden="true">*</span>` : nothing}</label>` : nothing}
-        <div class="body">${control}${helper ? html`<div class="helper ${err ? "error" : ""}" part="helper">${helper}</div>` : nothing}</div>
+        <div class="body">${control}${helper || reserve ? html`<div class="helper ${err ? "error" : ""}" part="helper">${helper || "\u00a0"}</div>` : nothing}</div>
     </div>`;
 }
 

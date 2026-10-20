@@ -65,10 +65,10 @@ A rule belongs to a control. The Form runs all of a control's rules on every cha
 | Rule | Where | What it checks |
 | --- | --- | --- |
 | Required | Field tab (`required`), message in the Form tab | Not empty. A Checkbox or Switch: must be **on** |
-| Shortest text | Form tab (`minLength`) of a text field | At least that many characters |
+| Shortest text | Form tab (`minLength`) of a text field | At least that many characters (empty fails) |
 | Max length | Data tab (`maxLength`) | At most that many characters |
-| Pattern | Data tab (`pattern`, `patternMessage`) | The whole text matches a regular expression |
-| Minimum / Maximum | Data tab of a Number | The number is not outside them. Text that is not a number is refused at once |
+| Pattern | Data tab (`pattern`, `patternMessage`) | The whole text matches a regular expression (empty fails unless the pattern accepts nothing) |
+| Minimum / Maximum | Data tab of a Number | The number is not outside them (an empty number is below the minimum). Text that is not a number is refused at once |
 | Rule (JavaScript) | Form tab (`ruleCode`, `ruleMessage`) | Whatever you write |
 
 **A rule in JavaScript** is the body of a function of `(value, values, form)`:
@@ -83,7 +83,7 @@ A rule belongs to a control. The Form runs all of a control's rules on every cha
 return (value.length >= 8 && /[A-Z]/.test(value) && /[0-9]/.test(value)) || "8+ characters, a capital and a digit";
 ```
 
-An empty field that is not required passes the length and pattern rules (there is nothing to measure). A rule in JavaScript always runs; test for empty yourself when it matters.
+**An empty field breaks a rule that asks for something**: a *Shortest text*, a *Pattern* (unless the pattern accepts nothing, like `[0-9]*`) and a number's *Minimum*. So a form that starts empty starts **invalid**, and a Send button that waits for the form is off from the first moment. A field that may stay empty simply has none of those rules (the *Max length* is never broken by nothing). A rule in JavaScript always runs; test for empty yourself when it matters.
 
 ---
 
@@ -157,6 +157,7 @@ They are written when they change, not on every key. A Text can show them (`Vali
 - **Enter sends the form** from a one-line field; in a Textarea it is Ctrl+Enter. Turn it off with *Enter in a field sends the form*.
 - **A password stays in its field** inside a form (outside one it empties after it is written). The form holds the value until you send it. Remember it is in `values`: do not write `values` to a variable that is shown or saved if it has a password.
 - **Where "the start" is.** The form starts from each control's *Default value*. *Set values* and *Sending is over* move the start to what is in the form. *Reset* goes back to the start; *Changed* is true while anything differs from it.
+- **A control keeps its size.** A helper text or an error line has its own row under the control: the control is never squeezed when it appears, and the box of the component grows to hold the label, the control and the line if the height you gave it is too small. In a Form the row is always kept, so an error that appears moves nothing.
 - **A disabled or hidden field still counts.** Its rules still apply, so a field you hide and leave empty keeps a required form invalid. To make a field required only sometimes, use a rule in JavaScript instead of *Required* ([recipe 8](#8-a-field-that-is-required-only-sometimes)).
 - **The server is Logic's job.** A rule cannot wait for an answer. On Change → your server call → Set errors does it ([recipe 3](#3-production-entry-that-adds-up-and-checks-the-server)).
 - **At On Load, values may not be there yet.** A variable or a tag may not have its value in the first moment of a page. Read it after a moment ([recipe 10](#10-setpoints-applied-together)).
@@ -437,7 +438,7 @@ Controls that are bound to a tag write as soon as the user presses Enter, one by
 
 ![The Logic of the setpoints screen](images/form/setpoints-logic.png)
 
-- **On Load** → read the machine **after a moment** → **Update · Form · Set values**. A variable or a tag may not have its value in the first instant of a page, so the read waits a little (here half a second).
+- **On Load** → read the machine **after a moment** → **Update · Form · Set values**. A variable or a tag may not have its value in the first instant of a page, so the read waits a little (here a second).
 - **On Submit · Form** → write the machine → **Update · Form · Done**.
 
 ```js

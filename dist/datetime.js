@@ -164,7 +164,7 @@ function formatDateTemplate(date, format, isUtc) {
 
 const DATETIME_CSS = css`
     .box {
-        flex: 1 1 auto; min-height: 0; width: 100%; display: flex; align-items: center; gap: var(--gap); position: relative;
+        flex: 1 1 auto; min-height: var(--h); width: 100%; display: flex; align-items: center; gap: var(--gap); position: relative;
         padding: 0 var(--px); background: var(--bg-subtle); color: var(--fg); border: none; border-bottom: 1px solid var(--bd-strong);
         border-radius: var(--r) var(--r) 0 0; box-sizing: border-box;
         transition: background-color var(--t) var(--ease), box-shadow var(--t) var(--ease), border-color var(--t) var(--ease);
@@ -848,7 +848,7 @@ const PRESETS = [
 
 const DATERANGE_CSS = css`
     .box {
-        flex: 1 1 auto; min-height: 0; width: 100%; display: flex; align-items: center; gap: var(--gap); position: relative;
+        flex: 1 1 auto; min-height: var(--h); width: 100%; display: flex; align-items: center; gap: var(--gap); position: relative;
         padding: 0 var(--px); background: var(--bg-subtle); color: var(--fg); border: none; border-bottom: 1px solid var(--bd-strong);
         border-radius: var(--r) var(--r) 0 0; box-sizing: border-box; cursor: pointer; user-select: none;
         transition: background-color var(--t) var(--ease), box-shadow var(--t) var(--ease), border-color var(--t) var(--ease);
