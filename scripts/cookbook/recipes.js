@@ -1,7 +1,7 @@
 'use strict';
 // The Form cookbook as real screens. Each recipe is one Nexa screen: its controls, its variables, its Logic (nodes with their positions and wires) and a scenario, the
 // clicks and keystrokes of a user, with the moments to photograph. scripts/make-form-cookbook.js runs every screen in a real Node-RED and a real browser, takes the
-// pictures of docs/FORM.md from what actually happens, and writes docs/examples/form-cookbook.json, a project you can import and try.
+// pictures of the manual (docs/form/15-cookbook.md) from what actually happens, and writes docs/examples/form-cookbook.json, a project you can import and try.
 //
 // There is no real server here. A Function node named "Fake server ..." answers after a pause, the way an API Call would: in your own screen, put an API Call there.
 
@@ -31,7 +31,7 @@ const node = (id, type, name, x, y, props) => ({ id, type, name, x, y, props: pr
 const onEvent = (id, comp, event, name, x, y) => node(id, 'ui-event', name, x, y, { compId: comp, event });
 const update = (id, comp, action, name, x, y) => node(id, 'ui-update', name, x, y, { compId: comp, action, config: {} });
 const fn = (id, name, code, x, y) => node(id, 'function', name, x, y, { code });
-const wires = (pairs) => pairs.map((p) => ({ id: 'w' + (++wireCount), from: p[0], to: p[1] }));
+const wires = (pairs) => pairs.map((p) => ({ id: 'w' + (++wireCount), from: p[0], to: p[1], fromPort: p[2] || 0 }));
 
 // a pause before the answer, the way a server takes its time
 const SERVER = (ms, body) => 'return new Promise(function (resolve) {\n    setTimeout(function () {\n' + body.split('\n').map((l) => '        ' + l).join('\n') + '\n        resolve(msg);\n    }, ' + ms + ');\n});';
@@ -306,9 +306,9 @@ RECIPES.push({
     }
 });
 
-// 8. A field that is required only sometimes
+// 6. A field that is required only sometimes
 RECIPES.push({
-    id: 'conditional', number: 8, title: 'A field that is required only sometimes', path: '/c8-conditional', width: 600, height: 400,
+    id: 'conditional', number: 6, title: 'A field that is required only sometimes', path: '/c6-conditional', width: 600, height: 400,
     variables: stdVars().concat([{ id: 'v4', name: 'result', type: 'string', defaultValue: '' }]),
     components: [
         form('FORM', 20, 20, 400, 320, { validateOn: 'change' }, [
@@ -342,9 +342,9 @@ RECIPES.push({
     }
 });
 
-// 9. A report filter with a date range
+// 7. A report filter with a date range
 RECIPES.push({
-    id: 'filter', number: 9, title: 'A report filter with a date range', path: '/c9-filter', width: 800, height: 420,
+    id: 'filter', number: 7, title: 'A report filter with a date range', path: '/c7-filter', width: 800, height: 420,
     variables: stdVars().concat([{ id: 'v4', name: 'report', type: 'string', defaultValue: '' }]),
     components: [
         form('FORM', 20, 20, 400, 340, { validateOn: 'change' }, [
@@ -375,9 +375,9 @@ RECIPES.push({
     }
 });
 
-// 10. Setpoints applied together
+// 8. Setpoints applied together
 RECIPES.push({
-    id: 'setpoints', number: 10, title: 'Setpoints applied together', path: '/c10-setpoints', width: 820, height: 470,
+    id: 'setpoints', number: 8, title: 'Setpoints applied together', path: '/c8-setpoints', width: 820, height: 470,
     variables: stdVars().concat([{ id: 'v4', name: 'speedNow', type: 'number', defaultValue: 800 }, { id: 'v5', name: 'tempNow', type: 'number', defaultValue: 60 }]),
     components: [
         form('FORM', 20, 20, 400, 380, { validateOn: 'change' }, [
@@ -430,9 +430,9 @@ RECIPES.push({
     }
 });
 
-// 11. Show every problem now, without sending
+// 9. Show every problem now, without sending
 RECIPES.push({
-    id: 'check', number: 11, title: 'Show every problem now, without sending', path: '/c11-check', width: 640, height: 400,
+    id: 'check', number: 9, title: 'Show every problem now, without sending', path: '/c9-check', width: 640, height: 400,
     variables: stdVars(),
     components: [
         form('FORM', 20, 20, 380, 330, { validateOn: 'submit' }, [
@@ -460,9 +460,9 @@ RECIPES.push({
     }
 });
 
-// 12. Focus a field when the screen opens
+// 10. Focus a field when the screen opens
 RECIPES.push({
-    id: 'focus', number: 12, title: 'Focus a field when the screen opens', path: '/c12-focus', width: 560, height: 330,
+    id: 'focus', number: 10, title: 'Focus a field when the screen opens', path: '/c10-focus', width: 560, height: 330,
     variables: stdVars(),
     components: [
         form('FORM', 20, 20, 380, 270, { validateOn: 'blur' }, [
@@ -486,9 +486,9 @@ RECIPES.push({
     }
 });
 
-// 13. Show the form's state
+// 11. Show the form's state
 RECIPES.push({
-    id: 'state', number: 13, title: "Show the form's state", path: '/c13-state', width: 800, height: 360,
+    id: 'state', number: 11, title: "Show the form's state", path: '/c11-state', width: 800, height: 360,
     variables: stdVars(),
     components: [
         form('FORM', 20, 20, 380, 310, { validateOn: 'change' }, [
@@ -526,9 +526,9 @@ RECIPES.push({
     }
 });
 
-// 14. Several forms on one screen
+// 12. Several forms on one screen
 RECIPES.push({
-    id: 'two-forms', number: 14, title: 'Several forms on one screen', path: '/c14-two-forms', width: 880, height: 330,
+    id: 'two-forms', number: 12, title: 'Several forms on one screen', path: '/c12-two-forms', width: 880, height: 330,
     variables: [{ id: 'v1', name: 'aValid', type: 'boolean', defaultValue: false }, { id: 'v2', name: 'bValid', type: 'boolean', defaultValue: false }],
     components: [
         form('A', 20, 40, 400, 200, { validateOn: 'change', outputValid: '{aValid}', outputDirty: '', outputSubmitting: '' }, [
@@ -552,9 +552,9 @@ RECIPES.push({
     }
 });
 
-// 15. Keep the data, or clear it
+// 13. Keep the data, or clear it
 RECIPES.push({
-    id: 'keep-or-clear', number: 15, title: 'Keep the data, or clear it', path: '/c15-keep-or-clear', width: 880, height: 330,
+    id: 'keep-or-clear', number: 13, title: 'Keep the data, or clear it', path: '/c13-keep-or-clear', width: 880, height: 330,
     variables: [],
     components: [
         form('A', 20, 40, 400, 230, { validateOn: 'change', outputValid: '', outputDirty: '', outputSubmitting: '' }, [
@@ -589,6 +589,125 @@ RECIPES.push({
         p.expect('the first form keeps what was typed', await p.valueOf('an'), 'Checked the valve');
         p.expect('the second form is cleared', await p.valueOf('bn'), '');
         await p.shot('after-send');
+    }
+});
+
+
+// 14. Is this user name free? (rules on the control, Zod, the server, and "Checking...")
+RECIPES.push({
+    id: 'username', number: 14, title: 'Is this user name free?', path: '/c14-username', width: 800, height: 520,
+    variables: stdVars().concat([{ id: 'v4', name: 'formValues', type: 'object', defaultValue: {} }]),
+    components: [
+        form('FORM', 20, 20, 420, 300, { validateOn: 'change', outputValues: '{formValues}' }, [
+            ui('user', 'input', 380, 92, { formName: 'username', label: 'User name', required: true, minLength: 3, pattern: '[a-z]+', patternMessage: 'Lower case letters only', helperText: '3 to 12 lower case letters' }),
+            send('go', 'Create the account')
+        ]),
+        stateNote('state', 460, 20)
+    ],
+    logic: {
+        nodes: [
+            onEvent('e1', 'FORM', 'change', 'On Change', 30, 40),
+            fn('f1', 'Only the user name', 'if (msg.payload.name !== "username") return null;\nmsg.payload = { username: msg.payload.value };\nreturn msg;', 220, 40),
+            node('v1', 'validate', 'Zod: what a rule cannot say', 440, 40, { schema: 'return z.object({\n    username: z.string()\n        .max(12, "At most 12 letters")\n        .refine(function (v) { return ["admin", "root", "system"].indexOf(v) === -1; }, "That name is reserved")\n});' }),
+            update('u1', 'FORM', 'setErrors', 'Set errors', 700, 20),
+            fn('f2', 'Say it is being checked', 'msg.payload = "username";\nreturn msg;', 700, 100),
+            update('u2', 'FORM', 'setChecking', 'Mark as being checked', 930, 100),
+            node('f3', 'function', 'Fake server: is it taken?', 700, 180, { outputs: 2, code: SERVER(1800, 'var name = msg.payload.username;\n// an answer about a name the user has already changed is dropped\nif ((vars.screen.get("formValues") || {}).username !== name) { resolve(null); return; }\nresolve(name === "yeka" || name === "ann" ? [null, { payload: { username: "Already taken" } }] : [{ payload: ["username"] }, null]);').replace('        resolve(msg);\n', '') }),
+            update('u3', 'FORM', 'clearErrors', 'Clear errors', 960, 160),
+            update('u4', 'FORM', 'setErrors', 'Set errors (taken)', 960, 230),
+            onEvent('e2', 'FORM', 'submit', 'On Submit', 30, 330),
+            fn('f4', 'Fake server: create it', SERVER(1200, 'msg.payload = { reset: true };'), 250, 330),
+            update('u5', 'FORM', 'done', 'Sending is over', 500, 330)
+        ],
+        wires: wires([['e1', 'f1'], ['f1', 'v1'], ['v1', 'u1', 1], ['v1', 'f2', 0], ['f2', 'u2'], ['v1', 'f3', 0], ['f3', 'u3', 0], ['f3', 'u4', 1], ['e2', 'f4'], ['f4', 'u5']])
+    },
+    inspect: [{ name: 'inspector-rules', comp: 'user', group: '@Form', row: 'minLength' }],
+    dialogs: [{ name: 'dialog-validate', node: 'v1' }],
+    async scenario(p) {
+        p.expect('the Create button waits: the form starts empty', await p.disabled('go'), true);
+        await p.shot('empty');
+        await p.typeInto('user', 'ab');
+        await p.wait(400);
+        p.expect('too short: the rule of the control answers at once', await p.errorOf('user'), 'At least 3 characters');
+        await p.shot('too-short');
+        await p.typeInto('user', 'root');
+        await p.wait(700);
+        p.expect('Zod refuses a reserved name', await p.errorOf('user'), 'That name is reserved');
+        await p.shot('reserved');
+        await p.typeInto('user', 'yeka');
+        await p.wait(500);
+        p.expect('a good name goes to the server: the field says it is being checked', await p.helperOf('user'), 'Checking\u2026');
+        p.expect('and the form cannot be sent meanwhile', await p.disabled('go'), true);
+        await p.shot('checking');
+        await p.wait(2200);
+        p.expect('the server says it is taken', await p.errorOf('user'), 'Already taken');
+        await p.shot('taken');
+        await p.typeInto('user', 'budi');
+        await p.wait(500);
+        p.expect('another name: checking again', await p.helperOf('user'), 'Checking\u2026');
+        await p.wait(2400);
+        p.expect('free: no error, the helper is back, the button is on', [await p.errorOf('user'), await p.helperOf('user'), await p.disabled('go')].join(' | '), ' | 3 to 12 lower case letters | false');
+        await p.shot('free');
+        await p.click(p.btn('go'));
+        await p.wait(300);
+        await p.shot('sending');
+        await p.wait(1700);
+        p.expect('created: the form is empty again', await p.valueOf('user'), '');
+    }
+});
+
+// 15. The whole form checked by one Zod schema when it is sent
+const GATE_SCHEMA = 'return z.object({\n    email: z.string().email("Not an email"),\n    password: z.string().min(8, "At least 8 characters").regex(/[A-Z]/, "Needs a capital letter").regex(/[0-9]/, "Needs a digit"),\n    confirm: z.string(),\n    age: z.number({ invalid_type_error: "Age is required" }).int("Whole years only").min(18, "Must be 18 or older")\n}).refine(function (v) { return v.password === v.confirm; }, { message: "The passwords are not the same", path: ["confirm"] });';
+RECIPES.push({
+    id: 'gate', number: 15, title: 'One Zod schema for the whole form', path: '/c15-gate', width: 800, height: 700,
+    variables: stdVars().concat([{ id: 'v4', name: 'welcome', type: 'string', defaultValue: '' }]),
+    components: [
+        form('FORM', 20, 20, 420, 600, { validateOn: 'submit', errorSummary: true }, [
+            ui('email', 'input', 380, 92, { formName: 'email', label: 'Email', required: true }),
+            ui('pass', 'password-input', 380, 92, { formName: 'password', label: 'Password', required: true }),
+            ui('confirm', 'password-input', 380, 92, { formName: 'confirm', label: 'Repeat the password', required: true }),
+            ui('age', 'number-input', 200, 92, { formName: 'age', label: 'Age', required: true }),
+            ui('go', 'button', 170, 40, { text: 'Register', formAction: 'submit' })
+        ]),
+        stateNote('state', 460, 20),
+        at(ui('welcome', 'text', 330, 40, { text: '{welcome}', fontWeight: 600 }), 460, 70)
+    ],
+    logic: {
+        nodes: [
+            onEvent('e1', 'FORM', 'submit', 'On Submit', 30, 60),
+            node('v1', 'validate', 'Zod: the whole form', 240, 60, { property: 'payload.values', schema: GATE_SCHEMA }),
+            update('u1', 'FORM', 'setErrors', 'Set errors', 520, 20),
+            fn('f1', 'Fake server: register', SERVER(1200, 'vars.screen.set("welcome", "Registered " + msg.payload.values.email);\nmsg.payload = { reset: true };'), 520, 110),
+            update('u2', 'FORM', 'done', 'Sending is over', 760, 110)
+        ],
+        wires: wires([['e1', 'v1'], ['v1', 'u1', 1], ['v1', 'f1', 0], ['f1', 'u2']])
+    },
+    inspect: [],
+    dialogs: [{ name: 'dialog-validate', node: 'v1' }],
+    async scenario(p) {
+        await p.shot('empty');
+        await p.typeInto('email', 'ann');
+        await p.typeInto('pass', 'abcdefgh');
+        await p.typeInto('confirm', 'abcdefgi');
+        await p.typeInto('age', '17');
+        await p.click(p.btn('go'));
+        await p.wait(500);
+        p.expect('Zod found every mistake at once: the email', await p.errorOf('email'), 'Not an email');
+        p.expect('the password (the first message of the field)', await p.errorOf('pass'), 'Needs a capital letter');
+        p.expect('the age', await p.errorOf('age'), 'Must be 18 or older');
+        p.expect('and the second password, from a rule about both', await p.errorOf('confirm'), 'The passwords are not the same');
+        p.expect('and the list above the form names them', await p.summary(), /email: Not an email.*password: Needs a capital letter/);
+        await p.shot('everything-wrong');
+        await p.typeInto('email', 'ann@plant.co');
+        await p.typeInto('pass', 'Abcdefg1');
+        await p.typeInto('confirm', 'Abcdefg1');
+        await p.typeInto('age', '30');
+        await p.click(p.btn('go'));
+        await p.wait(300);
+        await p.shot('sending');
+        await p.wait(1700);
+        p.expect('registered', await p.textOf('welcome'), 'Registered ann@plant.co');
+        await p.shot('registered');
     }
 });
 

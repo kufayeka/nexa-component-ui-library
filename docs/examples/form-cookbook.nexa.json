@@ -6,7 +6,7 @@
     "name": "Form cookbook"
   },
   "counts": {
-    "screens": 13,
+    "screens": 15,
     "templates": 0,
     "folders": 0,
     "flows": 0,
@@ -241,27 +241,32 @@
             {
               "id": "w1",
               "from": "e1",
-              "to": "f1"
+              "to": "f1",
+              "fromPort": 0
             },
             {
               "id": "w2",
               "from": "f1",
-              "to": "f2"
+              "to": "f2",
+              "fromPort": 0
             },
             {
               "id": "w3",
               "from": "f1",
-              "to": "f3"
+              "to": "f3",
+              "fromPort": 0
             },
             {
               "id": "w4",
               "from": "f2",
-              "to": "u1"
+              "to": "u1",
+              "fromPort": 0
             },
             {
               "id": "w5",
               "from": "f3",
-              "to": "u2"
+              "to": "u2",
+              "fromPort": 0
             }
           ]
         }
@@ -492,17 +497,20 @@
             {
               "id": "w6",
               "from": "e1",
-              "to": "f1"
+              "to": "f1",
+              "fromPort": 0
             },
             {
               "id": "w7",
               "from": "e2",
-              "to": "f2"
+              "to": "f2",
+              "fromPort": 0
             },
             {
               "id": "w8",
               "from": "f2",
-              "to": "u1"
+              "to": "u1",
+              "fromPort": 0
             }
           ]
         }
@@ -784,37 +792,44 @@
             {
               "id": "w9",
               "from": "e1",
-              "to": "f1"
+              "to": "f1",
+              "fromPort": 0
             },
             {
               "id": "w10",
               "from": "f1",
-              "to": "f2"
+              "to": "f2",
+              "fromPort": 0
             },
             {
               "id": "w11",
               "from": "f2",
-              "to": "f3"
+              "to": "f3",
+              "fromPort": 0
             },
             {
               "id": "w12",
               "from": "f3",
-              "to": "u1"
+              "to": "u1",
+              "fromPort": 0
             },
             {
               "id": "w13",
               "from": "e2",
-              "to": "f4"
+              "to": "f4",
+              "fromPort": 0
             },
             {
               "id": "w14",
               "from": "f4",
-              "to": "f5"
+              "to": "f5",
+              "fromPort": 0
             },
             {
               "id": "w15",
               "from": "f5",
-              "to": "u2"
+              "to": "u2",
+              "fromPort": 0
             }
           ]
         }
@@ -1085,27 +1100,32 @@
             {
               "id": "w16",
               "from": "e0",
-              "to": "f1"
+              "to": "f1",
+              "fromPort": 0
             },
             {
               "id": "w17",
               "from": "f1",
-              "to": "u1"
+              "to": "u1",
+              "fromPort": 0
             },
             {
               "id": "w18",
               "from": "e1",
-              "to": "u2"
+              "to": "u2",
+              "fromPort": 0
             },
             {
               "id": "w19",
               "from": "e2",
-              "to": "f2"
+              "to": "f2",
+              "fromPort": 0
             },
             {
               "id": "w20",
               "from": "f2",
-              "to": "u3"
+              "to": "u3",
+              "fromPort": 0
             }
           ]
         }
@@ -1285,25 +1305,28 @@
             {
               "id": "w21",
               "from": "e1",
-              "to": "f1"
+              "to": "f1",
+              "fromPort": 0
             },
             {
               "id": "w22",
               "from": "f1",
-              "to": "f2"
+              "to": "f2",
+              "fromPort": 0
             },
             {
               "id": "w23",
               "from": "f2",
-              "to": "u1"
+              "to": "u1",
+              "fromPort": 0
             }
           ]
         }
       },
       {
         "id": "cb-conditional",
-        "name": "8. A field that is required only sometimes",
-        "path": "/c8-conditional",
+        "name": "6. A field that is required only sometimes",
+        "path": "/c6-conditional",
         "width": 600,
         "height": 400,
         "gridSize": 10,
@@ -1468,20 +1491,22 @@
             {
               "id": "w24",
               "from": "e1",
-              "to": "f1"
+              "to": "f1",
+              "fromPort": 0
             },
             {
               "id": "w25",
               "from": "f1",
-              "to": "u1"
+              "to": "u1",
+              "fromPort": 0
             }
           ]
         }
       },
       {
         "id": "cb-filter",
-        "name": "9. A report filter with a date range",
-        "path": "/c9-filter",
+        "name": "7. A report filter with a date range",
+        "path": "/c7-filter",
         "width": 800,
         "height": 420,
         "gridSize": 10,
@@ -1664,20 +1689,22 @@
             {
               "id": "w26",
               "from": "e1",
-              "to": "f1"
+              "to": "f1",
+              "fromPort": 0
             },
             {
               "id": "w27",
               "from": "f1",
-              "to": "u1"
+              "to": "u1",
+              "fromPort": 0
             }
           ]
         }
       },
       {
         "id": "cb-setpoints",
-        "name": "10. Setpoints applied together",
-        "path": "/c10-setpoints",
+        "name": "8. Setpoints applied together",
+        "path": "/c8-setpoints",
         "width": 820,
         "height": 470,
         "gridSize": 10,
@@ -1858,7 +1885,7 @@
               "x": 230,
               "y": 40,
               "props": {
-                "code": "return new Promise(function (resolve) {\n    setTimeout(function () {\n        msg.payload = { speed: vars.screen.get(\"speedNow\"), temp: vars.screen.get(\"tempNow\") };\n        resolve(msg);\n    }, 500);\n});"
+                "code": "return new Promise(function (resolve) {\n    setTimeout(function () {\n        msg.payload = { speed: vars.screen.get(\"speedNow\"), temp: vars.screen.get(\"tempNow\") };\n        resolve(msg);\n    }, 900);\n});"
               }
             },
             {
@@ -1911,30 +1938,34 @@
             {
               "id": "w28",
               "from": "e0",
-              "to": "f1"
+              "to": "f1",
+              "fromPort": 0
             },
             {
               "id": "w29",
               "from": "f1",
-              "to": "u1"
+              "to": "u1",
+              "fromPort": 0
             },
             {
               "id": "w30",
               "from": "e1",
-              "to": "f2"
+              "to": "f2",
+              "fromPort": 0
             },
             {
               "id": "w31",
               "from": "f2",
-              "to": "u2"
+              "to": "u2",
+              "fromPort": 0
             }
           ]
         }
       },
       {
         "id": "cb-check",
-        "name": "11. Show every problem now, without sending",
-        "path": "/c11-check",
+        "name": "9. Show every problem now, without sending",
+        "path": "/c9-check",
         "width": 640,
         "height": 400,
         "gridSize": 10,
@@ -2084,15 +2115,16 @@
             {
               "id": "w32",
               "from": "e1",
-              "to": "u1"
+              "to": "u1",
+              "fromPort": 0
             }
           ]
         }
       },
       {
         "id": "cb-focus",
-        "name": "12. Focus a field when the screen opens",
-        "path": "/c12-focus",
+        "name": "10. Focus a field when the screen opens",
+        "path": "/c10-focus",
         "width": 560,
         "height": 330,
         "gridSize": 10,
@@ -2225,20 +2257,22 @@
             {
               "id": "w33",
               "from": "e0",
-              "to": "f1"
+              "to": "f1",
+              "fromPort": 0
             },
             {
               "id": "w34",
               "from": "f1",
-              "to": "u1"
+              "to": "u1",
+              "fromPort": 0
             }
           ]
         }
       },
       {
         "id": "cb-state",
-        "name": "13. Show the form's state",
-        "path": "/c13-state",
+        "name": "11. Show the form's state",
+        "path": "/c11-state",
         "width": 800,
         "height": 360,
         "gridSize": 10,
@@ -2425,20 +2459,22 @@
             {
               "id": "w35",
               "from": "e1",
-              "to": "f1"
+              "to": "f1",
+              "fromPort": 0
             },
             {
               "id": "w36",
               "from": "f1",
-              "to": "u1"
+              "to": "u1",
+              "fromPort": 0
             }
           ]
         }
       },
       {
         "id": "cb-two-forms",
-        "name": "14. Several forms on one screen",
-        "path": "/c14-two-forms",
+        "name": "12. Several forms on one screen",
+        "path": "/c12-two-forms",
         "width": 880,
         "height": 330,
         "gridSize": 10,
@@ -2598,8 +2634,8 @@
       },
       {
         "id": "cb-keep-or-clear",
-        "name": "15. Keep the data, or clear it",
-        "path": "/c15-keep-or-clear",
+        "name": "13. Keep the data, or clear it",
+        "path": "/c13-keep-or-clear",
         "width": 880,
         "height": 330,
         "gridSize": 10,
@@ -2816,22 +2852,601 @@
             {
               "id": "w37",
               "from": "e1",
-              "to": "f1"
+              "to": "f1",
+              "fromPort": 0
             },
             {
               "id": "w38",
               "from": "f1",
-              "to": "u1"
+              "to": "u1",
+              "fromPort": 0
             },
             {
               "id": "w39",
               "from": "e2",
-              "to": "f2"
+              "to": "f2",
+              "fromPort": 0
             },
             {
               "id": "w40",
               "from": "f2",
-              "to": "u2"
+              "to": "u2",
+              "fromPort": 0
+            }
+          ]
+        }
+      },
+      {
+        "id": "cb-username",
+        "name": "14. Is this user name free?",
+        "path": "/c14-username",
+        "width": 800,
+        "height": 520,
+        "gridSize": 10,
+        "snap": false,
+        "treeVersion": 1,
+        "orphans": [],
+        "variables": [
+          {
+            "id": "v1",
+            "name": "formValid",
+            "type": "boolean",
+            "defaultValue": false
+          },
+          {
+            "id": "v2",
+            "name": "formDirty",
+            "type": "boolean",
+            "defaultValue": false
+          },
+          {
+            "id": "v3",
+            "name": "formSending",
+            "type": "boolean",
+            "defaultValue": false
+          },
+          {
+            "id": "v4",
+            "name": "formValues",
+            "type": "object",
+            "defaultValue": {}
+          }
+        ],
+        "components": [
+          {
+            "id": "FORM",
+            "type": "nexa-ui-form",
+            "x": 20,
+            "y": 20,
+            "w": 420,
+            "h": 300,
+            "slots": true,
+            "props": {
+              "changeDelay": 150,
+              "outputValid": "{formValid}",
+              "outputDirty": "{formDirty}",
+              "outputSubmitting": "{formSending}",
+              "validateOn": "change",
+              "outputValues": "{formValues}"
+            },
+            "children": [
+              {
+                "id": "FORM-fields",
+                "type": "@frame",
+                "inSlot": "content",
+                "slotLabel": "Fields",
+                "x": 0,
+                "y": 0,
+                "w": 420,
+                "h": 300,
+                "style": {},
+                "layout": {
+                  "mode": "vertical",
+                  "padding": {
+                    "t": 12,
+                    "r": 12,
+                    "b": 12,
+                    "l": 12
+                  },
+                  "gap": 10
+                },
+                "children": [
+                  {
+                    "id": "user",
+                    "type": "nexa-ui-input",
+                    "x": 0,
+                    "y": 0,
+                    "w": 380,
+                    "h": 92,
+                    "props": {
+                      "formName": "username",
+                      "label": "User name",
+                      "required": true,
+                      "minLength": 3,
+                      "pattern": "[a-z]+",
+                      "patternMessage": "Lower case letters only",
+                      "helperText": "3 to 12 lower case letters"
+                    }
+                  },
+                  {
+                    "id": "go",
+                    "type": "nexa-ui-button",
+                    "x": 0,
+                    "y": 0,
+                    "w": 150,
+                    "h": 40,
+                    "props": {
+                      "text": "Create the account",
+                      "formAction": "submit",
+                      "waitForValid": true
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "state",
+            "type": "nexa-ui-text",
+            "x": 460,
+            "y": 20,
+            "w": 330,
+            "h": 40,
+            "props": {
+              "text": "valid = {formValid}   changed = {formDirty}   sending = {formSending}"
+            }
+          }
+        ],
+        "logic": {
+          "nodes": [
+            {
+              "id": "e1",
+              "type": "ui-event",
+              "name": "On Change",
+              "x": 30,
+              "y": 40,
+              "props": {
+                "compId": "FORM",
+                "event": "change"
+              }
+            },
+            {
+              "id": "f1",
+              "type": "function",
+              "name": "Only the user name",
+              "x": 220,
+              "y": 40,
+              "props": {
+                "code": "if (msg.payload.name !== \"username\") return null;\nmsg.payload = { username: msg.payload.value };\nreturn msg;"
+              }
+            },
+            {
+              "id": "v1",
+              "type": "validate",
+              "name": "Zod: what a rule cannot say",
+              "x": 440,
+              "y": 40,
+              "props": {
+                "schema": "return z.object({\n    username: z.string()\n        .max(12, \"At most 12 letters\")\n        .refine(function (v) { return [\"admin\", \"root\", \"system\"].indexOf(v) === -1; }, \"That name is reserved\")\n});"
+              }
+            },
+            {
+              "id": "u1",
+              "type": "ui-update",
+              "name": "Set errors",
+              "x": 700,
+              "y": 20,
+              "props": {
+                "compId": "FORM",
+                "action": "setErrors",
+                "config": {}
+              }
+            },
+            {
+              "id": "f2",
+              "type": "function",
+              "name": "Say it is being checked",
+              "x": 700,
+              "y": 100,
+              "props": {
+                "code": "msg.payload = \"username\";\nreturn msg;"
+              }
+            },
+            {
+              "id": "u2",
+              "type": "ui-update",
+              "name": "Mark as being checked",
+              "x": 930,
+              "y": 100,
+              "props": {
+                "compId": "FORM",
+                "action": "setChecking",
+                "config": {}
+              }
+            },
+            {
+              "id": "f3",
+              "type": "function",
+              "name": "Fake server: is it taken?",
+              "x": 700,
+              "y": 180,
+              "props": {
+                "outputs": 2,
+                "code": "return new Promise(function (resolve) {\n    setTimeout(function () {\n        var name = msg.payload.username;\n        // an answer about a name the user has already changed is dropped\n        if ((vars.screen.get(\"formValues\") || {}).username !== name) { resolve(null); return; }\n        resolve(name === \"yeka\" || name === \"ann\" ? [null, { payload: { username: \"Already taken\" } }] : [{ payload: [\"username\"] }, null]);\n    }, 1800);\n});"
+              }
+            },
+            {
+              "id": "u3",
+              "type": "ui-update",
+              "name": "Clear errors",
+              "x": 960,
+              "y": 160,
+              "props": {
+                "compId": "FORM",
+                "action": "clearErrors",
+                "config": {}
+              }
+            },
+            {
+              "id": "u4",
+              "type": "ui-update",
+              "name": "Set errors (taken)",
+              "x": 960,
+              "y": 230,
+              "props": {
+                "compId": "FORM",
+                "action": "setErrors",
+                "config": {}
+              }
+            },
+            {
+              "id": "e2",
+              "type": "ui-event",
+              "name": "On Submit",
+              "x": 30,
+              "y": 330,
+              "props": {
+                "compId": "FORM",
+                "event": "submit"
+              }
+            },
+            {
+              "id": "f4",
+              "type": "function",
+              "name": "Fake server: create it",
+              "x": 250,
+              "y": 330,
+              "props": {
+                "code": "return new Promise(function (resolve) {\n    setTimeout(function () {\n        msg.payload = { reset: true };\n        resolve(msg);\n    }, 1200);\n});"
+              }
+            },
+            {
+              "id": "u5",
+              "type": "ui-update",
+              "name": "Sending is over",
+              "x": 500,
+              "y": 330,
+              "props": {
+                "compId": "FORM",
+                "action": "done",
+                "config": {}
+              }
+            }
+          ],
+          "wires": [
+            {
+              "id": "w41",
+              "from": "e1",
+              "to": "f1",
+              "fromPort": 0
+            },
+            {
+              "id": "w42",
+              "from": "f1",
+              "to": "v1",
+              "fromPort": 0
+            },
+            {
+              "id": "w43",
+              "from": "v1",
+              "to": "u1",
+              "fromPort": 1
+            },
+            {
+              "id": "w44",
+              "from": "v1",
+              "to": "f2",
+              "fromPort": 0
+            },
+            {
+              "id": "w45",
+              "from": "f2",
+              "to": "u2",
+              "fromPort": 0
+            },
+            {
+              "id": "w46",
+              "from": "v1",
+              "to": "f3",
+              "fromPort": 0
+            },
+            {
+              "id": "w47",
+              "from": "f3",
+              "to": "u3",
+              "fromPort": 0
+            },
+            {
+              "id": "w48",
+              "from": "f3",
+              "to": "u4",
+              "fromPort": 1
+            },
+            {
+              "id": "w49",
+              "from": "e2",
+              "to": "f4",
+              "fromPort": 0
+            },
+            {
+              "id": "w50",
+              "from": "f4",
+              "to": "u5",
+              "fromPort": 0
+            }
+          ]
+        }
+      },
+      {
+        "id": "cb-gate",
+        "name": "15. One Zod schema for the whole form",
+        "path": "/c15-gate",
+        "width": 800,
+        "height": 700,
+        "gridSize": 10,
+        "snap": false,
+        "treeVersion": 1,
+        "orphans": [],
+        "variables": [
+          {
+            "id": "v1",
+            "name": "formValid",
+            "type": "boolean",
+            "defaultValue": false
+          },
+          {
+            "id": "v2",
+            "name": "formDirty",
+            "type": "boolean",
+            "defaultValue": false
+          },
+          {
+            "id": "v3",
+            "name": "formSending",
+            "type": "boolean",
+            "defaultValue": false
+          },
+          {
+            "id": "v4",
+            "name": "welcome",
+            "type": "string",
+            "defaultValue": ""
+          }
+        ],
+        "components": [
+          {
+            "id": "FORM",
+            "type": "nexa-ui-form",
+            "x": 20,
+            "y": 20,
+            "w": 420,
+            "h": 600,
+            "slots": true,
+            "props": {
+              "changeDelay": 150,
+              "outputValid": "{formValid}",
+              "outputDirty": "{formDirty}",
+              "outputSubmitting": "{formSending}",
+              "validateOn": "submit",
+              "errorSummary": true
+            },
+            "children": [
+              {
+                "id": "FORM-fields",
+                "type": "@frame",
+                "inSlot": "content",
+                "slotLabel": "Fields",
+                "x": 0,
+                "y": 0,
+                "w": 420,
+                "h": 600,
+                "style": {},
+                "layout": {
+                  "mode": "vertical",
+                  "padding": {
+                    "t": 12,
+                    "r": 12,
+                    "b": 12,
+                    "l": 12
+                  },
+                  "gap": 10
+                },
+                "children": [
+                  {
+                    "id": "email",
+                    "type": "nexa-ui-input",
+                    "x": 0,
+                    "y": 0,
+                    "w": 380,
+                    "h": 92,
+                    "props": {
+                      "formName": "email",
+                      "label": "Email",
+                      "required": true
+                    }
+                  },
+                  {
+                    "id": "pass",
+                    "type": "nexa-ui-password-input",
+                    "x": 0,
+                    "y": 0,
+                    "w": 380,
+                    "h": 92,
+                    "props": {
+                      "formName": "password",
+                      "label": "Password",
+                      "required": true
+                    }
+                  },
+                  {
+                    "id": "confirm",
+                    "type": "nexa-ui-password-input",
+                    "x": 0,
+                    "y": 0,
+                    "w": 380,
+                    "h": 92,
+                    "props": {
+                      "formName": "confirm",
+                      "label": "Repeat the password",
+                      "required": true
+                    }
+                  },
+                  {
+                    "id": "age",
+                    "type": "nexa-ui-number-input",
+                    "x": 0,
+                    "y": 0,
+                    "w": 200,
+                    "h": 92,
+                    "props": {
+                      "formName": "age",
+                      "label": "Age",
+                      "required": true
+                    }
+                  },
+                  {
+                    "id": "go",
+                    "type": "nexa-ui-button",
+                    "x": 0,
+                    "y": 0,
+                    "w": 170,
+                    "h": 40,
+                    "props": {
+                      "text": "Register",
+                      "formAction": "submit"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "state",
+            "type": "nexa-ui-text",
+            "x": 460,
+            "y": 20,
+            "w": 330,
+            "h": 40,
+            "props": {
+              "text": "valid = {formValid}   changed = {formDirty}   sending = {formSending}"
+            }
+          },
+          {
+            "id": "welcome",
+            "type": "nexa-ui-text",
+            "x": 460,
+            "y": 70,
+            "w": 330,
+            "h": 40,
+            "props": {
+              "text": "{welcome}",
+              "fontWeight": 600
+            }
+          }
+        ],
+        "logic": {
+          "nodes": [
+            {
+              "id": "e1",
+              "type": "ui-event",
+              "name": "On Submit",
+              "x": 30,
+              "y": 60,
+              "props": {
+                "compId": "FORM",
+                "event": "submit"
+              }
+            },
+            {
+              "id": "v1",
+              "type": "validate",
+              "name": "Zod: the whole form",
+              "x": 240,
+              "y": 60,
+              "props": {
+                "property": "payload.values",
+                "schema": "return z.object({\n    email: z.string().email(\"Not an email\"),\n    password: z.string().min(8, \"At least 8 characters\").regex(/[A-Z]/, \"Needs a capital letter\").regex(/[0-9]/, \"Needs a digit\"),\n    confirm: z.string(),\n    age: z.number({ invalid_type_error: \"Age is required\" }).int(\"Whole years only\").min(18, \"Must be 18 or older\")\n}).refine(function (v) { return v.password === v.confirm; }, { message: \"The passwords are not the same\", path: [\"confirm\"] });"
+              }
+            },
+            {
+              "id": "u1",
+              "type": "ui-update",
+              "name": "Set errors",
+              "x": 520,
+              "y": 20,
+              "props": {
+                "compId": "FORM",
+                "action": "setErrors",
+                "config": {}
+              }
+            },
+            {
+              "id": "f1",
+              "type": "function",
+              "name": "Fake server: register",
+              "x": 520,
+              "y": 110,
+              "props": {
+                "code": "return new Promise(function (resolve) {\n    setTimeout(function () {\n        vars.screen.set(\"welcome\", \"Registered \" + msg.payload.values.email);\n        msg.payload = { reset: true };\n        resolve(msg);\n    }, 1200);\n});"
+              }
+            },
+            {
+              "id": "u2",
+              "type": "ui-update",
+              "name": "Sending is over",
+              "x": 760,
+              "y": 110,
+              "props": {
+                "compId": "FORM",
+                "action": "done",
+                "config": {}
+              }
+            }
+          ],
+          "wires": [
+            {
+              "id": "w51",
+              "from": "e1",
+              "to": "v1",
+              "fromPort": 0
+            },
+            {
+              "id": "w52",
+              "from": "v1",
+              "to": "u1",
+              "fromPort": 1
+            },
+            {
+              "id": "w53",
+              "from": "v1",
+              "to": "f1",
+              "fromPort": 0
+            },
+            {
+              "id": "w54",
+              "from": "f1",
+              "to": "u2",
+              "fromPort": 0
             }
           ]
         }

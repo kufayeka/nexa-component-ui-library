@@ -61,7 +61,7 @@ Grafana must allow embedding: `allow_embedding = true` in `grafana.ini`, and ano
 
 ### Form (`nexa-ui-form`)
 
-**The full guide and a cookbook of 15 recipes with real pictures and runnable examples: [docs/FORM.md](docs/FORM.md) (or [docs/FORM.html](docs/FORM.html), to open with a double click). Every property, event and action of the Form and of each control it holds: [docs/FORM_COMPONENTS.md](docs/FORM_COMPONENTS.md)** (made from the components' own definitions; `node scripts/make-form-docs.js` writes it again, and `test/docs-form.test.js` fails when it is out of date).
+**The manual: [docs/form/](docs/form/README.md).** Sixteen chapters and a reference appendix, with a table of contents: what a form is, every setting of the Form and of each control that can be in it, rules, errors and state, buttons and sending, wiring with Logic, the Validate node and Zod, a cookbook of 15 worked examples with real pictures (the same screens are in `docs/examples/form-cookbook.nexa.json`, for the Import button of the Screens tab), and a chapter on what to do when something does not work. `test/docs-form.test.js` fails when a chapter is missing from the contents, a picture is missing or unused, or a property, event or action of a form control is not named in the manual; `node scripts/make-form-cookbook.js` makes the pictures and the example project again.
 
 A container that makes the controls inside it one form: it knows their values, which of them are wrong, whether the form can be sent and whether anything changed since it started.
 
@@ -818,7 +818,7 @@ export const chip = defineComponent({
 npm test                       # the plugin lint, then 63 headless-Chrome tests (build the dashboard first: npm run build there)
 npm run test:chart             # charts end to end: a real Node-RED, the charts driven by Logic, live tags, exports
 node test/tags-e2e.test.js     # tags end to end (~1 min): a real Node-RED, MQTT broker and Sparkplug edge
-node test/docs-form.test.js    # the Form docs are complete and up to date
+node test/docs-form.test.js    # the Form manual is complete: contents, pictures, example project, every property named
 node scripts/make-form-cookbook.js   # makes the pictures and docs/examples/form-cookbook.nexa.json again, from real screens (a few minutes)
 node test/form-e2e.test.js     # the Form end to end (~30 s): a real Node-RED, the form wired with Logic (submit, server errors)
 ```

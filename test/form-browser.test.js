@@ -150,6 +150,41 @@ withHarness({
         assert.strictEqual(await errorOf('ck-user'), 'Already used', 'the answer was no: the message replaces "Checking..."');
     });
 
+    await ok('Date Time: a format with the name of the month is written as it says (the tokens are replaced in one pass, not one after another)', async () => {
+        const text = async (n) => js(`${q(n, 'input')}.value`);
+        await mount('fm1', 'datetime', { defaultValue: '2026-05-04T14:30:15.123Z', format: 'MMMM D, YYYY h:mm A' }, { width: 300, height: 64 });
+        assert.strictEqual(await text('fm1'), 'May 4, 2026 2:30 PM');
+        await mount('fm2', 'datetime', { defaultValue: '2026-05-04T14:30:15.123Z', format: 'D MMM YY, HH:mm:ss.SSS a' }, { width: 300, height: 64 });
+        assert.strictEqual(await text('fm2'), '4 May 26, 14:30:15.123 pm');
+        await mount('fm3', 'datetime', { defaultValue: '2026-05-04T14:30:15.123Z' }, { width: 300, height: 64 });
+        assert.strictEqual(await text('fm3'), '2026-05-04 14:30:15', 'the default format is as it was');
+    });
+
+    await ok('Pin Input in a form: the value is the code only while it is complete; deleting a digit makes it empty again', async () => {
+        await build({ validateOn: 'change' }, 'pin', 'frame-pin');
+        await js(`(function () { if (!window.__origSlot) { window.__origSlot = NexaTest.slot; NexaTest.slot = function (o) { if (!window.__frame) return window.__origSlot(o); var el = document.createElement("div"); el.className = "nexa-test-slot"; if (o && o.width) el.style.width = o.width + "px"; if (o && o.height) el.style.height = o.height + "px"; document.getElementById(window.__frame).appendChild(el); return el; }; } window.__frame = "frame-pin"; return 1; })()`);
+        await mount('pn', 'pin-input', { formName: 'pin', required: true, length: 4 }, { width: 300, height: 90 });
+        await js('window.__frame = null; true');
+        await js(`${q('pn', 'input.pin')}.focus()`);
+        await type('1'); await type('2'); await type('3'); await settle(); await wait(40);
+        assert.deepStrictEqual([(await written('pin', 'outputValues')).pin, await written('pin', 'outputValid')], ['', false], 'three of four: not a code yet');
+        await type('4'); await settle(); await wait(40);
+        assert.deepStrictEqual([(await written('pin', 'outputValues')).pin, await written('pin', 'outputValid')], ['1234', true], 'complete: the code');
+        await key('Backspace'); await settle(); await wait(40);
+        assert.deepStrictEqual([(await written('pin', 'outputValues')).pin, await written('pin', 'outputValid')], ['', false], 'a digit deleted: not a code again');
+    });
+
+    await ok('A control inside a frame inside the slot of the Form is still a field of that form (the form finds its fields by where they are, however deep)', async () => {
+        await build({ validateOn: 'change' }, 'deep', 'frame-deep');
+        await js(`(function () { var outer = document.getElementById("frame-deep"); var inner = document.createElement("div"); inner.id = "frame-deep-inner"; var inner2 = document.createElement("div"); inner2.id = "frame-deep-inner2"; inner.appendChild(inner2); outer.appendChild(inner); window.__frame = "frame-deep-inner2"; if (!window.__origSlot) { window.__origSlot = NexaTest.slot; NexaTest.slot = function (o) { if (!window.__frame) return window.__origSlot(o); var el = document.createElement("div"); el.className = "nexa-test-slot"; if (o && o.width) el.style.width = o.width + "px"; if (o && o.height) el.style.height = o.height + "px"; document.getElementById(window.__frame).appendChild(el); return el; }; } return 1; })()`);
+        await mount('dp-user', 'input', { formName: 'user', label: 'User', required: true }, { width: 300, height: 90 });
+        await js('window.__frame = null; true');
+        await wait(40); await settle();
+        const vals = await written('deep', 'outputValues');
+        assert.deepStrictEqual(vals, { user: '' }, 'the field two frames down is in the form');
+        assert.strictEqual(await written('deep', 'outputValid'), false, 'and its required rule counts');
+    });
+
     await ok('Form: Enter sends it (On Submit with the values, sending on, a second Enter is ignored); Done ends it and the form is clean again', async () => {
         assert.deepStrictEqual(await events('frm', 'submit'), []);
         await js(`(function () { var i = ${q('f-email', 'input')}; i.focus(); return 1; })()`);

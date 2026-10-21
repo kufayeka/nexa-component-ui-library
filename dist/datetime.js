@@ -153,13 +153,11 @@ function formatDateTemplate(date, format, isUtc) {
         "Z": tzOffset
     };
 
-    let res = format || "YYYY-MM-DD HH:mm:ss";
-    // Sort keys descending so YYYY matches before YY, MMMM before MMM before MM before M, etc.
+    // One pass over the template, longest token first (YYYY before YY, MMMM before MMM before MM before M ...). Replacing token after token would let a later token
+    // change the text an earlier one had put in: the month name "May" would become "5ay".
     const keys = Object.keys(map).sort((a, b) => b.length - a.length);
-    for (const k of keys) {
-        res = res.split(k).join(map[k]);
-    }
-    return res;
+    const tokens = new RegExp(keys.join("|"), "g");
+    return String(format || "YYYY-MM-DD HH:mm:ss").replace(tokens, (token) => map[token]);
 }
 
 const DATETIME_CSS = css`

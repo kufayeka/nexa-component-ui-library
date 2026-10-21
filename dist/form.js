@@ -821,6 +821,10 @@ export const pinInput = defineUI({
                     const code = this.chars.join("");
                     if (this.chars.length === len && this.chars.every((c) => c !== "" && c !== undefined)) {
                         if (this._done !== code) { this._done = code; this.chars = null; this.vs.set(code); this.fire("complete", { value: code }); }
+                    } else if (this._done !== null && this._done !== undefined) {
+                        // a code that was complete is not any more (a digit was deleted): the value is empty again, so a form never holds a code that is no longer on the screen
+                        this._done = null;
+                        this.vs.set("");
                     } else this._done = null;
                     this.requestUpdate();
                 }

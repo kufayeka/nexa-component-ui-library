@@ -1,5 +1,5 @@
 'use strict';
-// Makes the pictures and the example project of the Form cookbook (docs/FORM.md) from what REALLY happens:
+// Makes the pictures and the example project of the Form cookbook (docs/form/15-cookbook.md) from what REALLY happens:
 //   - an isolated Node-RED (its own userDir in the temp folder, ports 1899 / 1898; never your data/) runs the screens of scripts/cookbook/recipes.js;
 //   - for each recipe a headless Chrome opens the screen as a user would see it and does what the recipe says (types, clicks), photographing the moments;
 //   - in the editor, a picture of the screen as it is designed, of its Logic (the wires), and of the inspector where the recipe says a setting matters;
@@ -62,6 +62,7 @@ async function runRecipe(recipe) {
                 await wait(200);
             },
             // what the user reads on the screen, to check it is what the cookbook says before it is photographed
+            helperOf: (id) => js(`(function () { var h = ${R(id)}.querySelector(".helper"); return h ? h.textContent.trim() : ""; })()`),
             errorOf: (id) => js(`(function () { var h = ${R(id)}.querySelector(".helper.error"); return h ? h.textContent.trim() : ""; })()`),
             textOf: (id, sel) => js(`(function () { var e = ${R(id)}.querySelector(${JSON.stringify(sel || 'p, .lbl, .val')}); return e ? e.textContent.replace(/\\s+/g, " ").trim() : ""; })()`),
             valueOf: (id) => js(`${R(id)}.querySelector("input").value`),
@@ -152,6 +153,19 @@ async function runEditor() {
                 await wait(700);
                 if (ok === 'no row' || ok === 'no tree') console.log('  note: inspector shot ' + recipe.id + '/' + item.name + ': ' + ok);
                 await clip(recipe.id + '-' + item.name, await sidebar());
+            }
+            // the dialog of a Logic node, as it opens on a double click
+            for (const d of recipe.dialogs || []) {
+                await js('window.__nexaEditorState.canvasTabs.activateTab("logic"); true');
+                await wait(500);
+                await js(`(function () { var s = window.__nexaEditorApi.state.screens.find(function (x) { return x.id === ${JSON.stringify(id)}; }); var n = s.logic.nodes.find(function (x) { return x.id === ${JSON.stringify(d.node)}; }); window.__nexaEditor.openLogicNodeDialog(n); return true; })()`);
+                await wait(1000);
+                const box = await js(`(function () { var r = document.querySelector(".nx-dialog").getBoundingClientRect(); return { x: r.left, y: r.top, width: r.width, height: r.height }; })()`);
+                await clip(recipe.id + '-' + d.name, box);
+                await js(`(function () { var b = Array.from(document.querySelectorAll(".nx-dialog-foot button")).find(function (x) { return x.textContent.trim() === "Cancel"; }); b.click(); return true; })()`);
+                await wait(400);
+                await js('window.__nexaEditorState.canvasTabs.activateTab("ui"); true');
+                await wait(300);
             }
             console.log('  editor: ' + recipe.id);
         }
