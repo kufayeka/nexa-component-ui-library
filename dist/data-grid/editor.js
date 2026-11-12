@@ -6,7 +6,7 @@
 //
 // The grid in the preview is the component itself, mounted the way the editor's canvas mounts it, so what the dialog shows is what the page shows. Its
 // selection reaches this dialog as the DOM event "nexa-selection", a value the user types as "nexa-cell-edit".
-import { defineInspectorWidget, html } from "../../../nexa-sdk/nexa-component-sdk.js";
+import { defineInspectorWidget, openDialog, renderFields, normalizeProp, html } from "../../../nexa-sdk/nexa-component-sdk.js";
 import { sizeOf, addressOf, rangeLabel } from "./address.js";
 import { parseColRules, parseRowRules, colSizes, rowSizes, rowSizeAt, setColSize, setRowSize } from "./sizes.js";
 import { parseRules, parseCells, mergesFromProps, rangedFromProps } from "./sheet.js";
@@ -41,10 +41,8 @@ export function designOf(p) {
 
 /** The Edit grid button of the inspector: open the dialog, and put the changed props in the component on Apply. */
 export function openGridEditor(p, api) {
-    const K = window.NexaKit;
-    if (!K) return;
     const start = designOf(p);
-    K.openDialog({
+    openDialog({
         title: "Edit grid",
         width: 1360,
         content: html`<nexa-data-grid-editor .props=${start} style="display:block;height:min(620px, 70vh)"></nexa-data-grid-editor>`,
@@ -79,19 +77,19 @@ const STYLE = `
 nexa-data-grid-editor { display: block; height: 100%; min-height: 320px; }
 nexa-data-grid-editor .dge { display: grid; grid-template-columns: minmax(0, 1fr) 390px; gap: 8px; height: 100%; min-height: 0; }
 nexa-data-grid-editor .dge-main { display: flex; flex-direction: column; gap: 6px; min-height: 0; min-width: 0; }
-nexa-data-grid-editor .dge-bar { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; padding: 6px; border: 1px solid var(--nx-border, #c6c6c6); background: var(--nx-bg, #fff); }
+nexa-data-grid-editor .dge-bar { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; padding: 6px; border: 1px solid var(--knx-border, #c6c6c6); background: var(--knx-bg, #fff); }
 nexa-data-grid-editor .dge-grp { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
-nexa-data-grid-editor .dge-grp > .dge-t { font-size: 11px; color: var(--nx-text-muted, #6f6f6f); margin-right: 2px; }
-nexa-data-grid-editor .dge-grp .nx-btn { padding: 3px 9px; }
-nexa-data-grid-editor .dge-grp .nx-btn.on { background: var(--nx-selected, #d0e2ff); }
-nexa-data-grid-editor .dge-grp nx-select, nexa-data-grid-editor .dge-grp nx-number, nexa-data-grid-editor .dge-grp nx-color { width: 120px; }
-nexa-data-grid-editor .dge-grp nx-number { width: 70px; }
-nexa-data-grid-editor .dge-prev { flex: 1 1 auto; min-height: 220px; position: relative; border: 1px solid var(--nx-border, #c6c6c6); background: var(--nx-bg, #fff); }
+nexa-data-grid-editor .dge-grp > .dge-t { font-size: 11px; color: var(--knx-text-muted, #6f6f6f); margin-right: 2px; }
+nexa-data-grid-editor .dge-grp .knx-btn { padding: 3px 9px; }
+nexa-data-grid-editor .dge-grp .knx-btn.on { background: var(--knx-bg-selected, #d0e2ff); }
+nexa-data-grid-editor .dge-grp knx-select, nexa-data-grid-editor .dge-grp knx-number, nexa-data-grid-editor .dge-grp knx-color { width: 120px; }
+nexa-data-grid-editor .dge-grp knx-number { width: 70px; }
+nexa-data-grid-editor .dge-prev { flex: 1 1 auto; min-height: 220px; position: relative; border: 1px solid var(--knx-border, #c6c6c6); background: var(--knx-bg, #fff); }
 nexa-data-grid-editor .dge-prev > * { position: absolute; inset: 0; }
 nexa-data-grid-editor .dge-sheet { font-size: 12px; font-weight: 600; margin-right: 4px; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-nexa-data-grid-editor .dge-status { font-size: 12px; color: var(--nx-text, #161616); min-height: 18px; display: flex; gap: 12px; flex-wrap: wrap; }
-nexa-data-grid-editor .dge-status .dge-note { color: var(--nx-warn, #8e6a00); }
-nexa-data-grid-editor .dge-side { min-height: 0; min-width: 0; border: 1px solid var(--nx-border, #c6c6c6); background: var(--nx-bg, #fff); overflow: hidden; display: flex; flex-direction: column; }
+nexa-data-grid-editor .dge-status { font-size: 12px; color: var(--knx-text, #161616); min-height: 18px; display: flex; gap: 12px; flex-wrap: wrap; }
+nexa-data-grid-editor .dge-status .dge-note { color: var(--knx-warn, #8e6a00); }
+nexa-data-grid-editor .dge-side { min-height: 0; min-width: 0; border: 1px solid var(--knx-border, #c6c6c6); background: var(--knx-bg, #fff); overflow: hidden; display: flex; flex-direction: column; }
 nexa-data-grid-editor .dge-form { flex: 1 1 auto; min-height: 0; overflow: hidden; }
 `;
 
@@ -205,21 +203,21 @@ defineInspectorWidget("nexa-data-grid-editor", ({ KitElement, html: h, nothing }
 
     // ---- the tree and the properties: the kit's own, as the editor's Properties ---------------------------------------------------
     _buildMeta() {
-        const K = window.NexaKit, d = def();
-        if (!K || !d || !d.nexa) return null;
+        const d = def();
+        if (!d || !d.nexa) return null;
         const props = {}, order = [];
         const group = (g) => { if (order.indexOf(g) === -1) order.push(g); return g; };
         // the selection: the type and the style of the selected cells, one row each; a change makes a rule over the selection
         SEL_KEYS.forEach((k) => {
             const f = RULE_SCHEMA[k];
             const vw = f.visibleWhen;
-            props["sel_" + k] = K.normalizeProp("sel_" + k, Object.assign({}, f, {
+            props["sel_" + k] = normalizeProp("sel_" + k, Object.assign({}, f, {
                 group: group("Selection"), section: f.section, bindable: false, noReset: true,
                 visibleWhen: vw ? (p) => vw({ type: p.sel_type }) : undefined, enabledWhen: (p) => !!p.__hasSelection
             }));
         });
-        props.sel_width = K.normalizeProp("sel_width", { type: "number", label: "Column width", default: "", min: 24, unit: "px", group: group("Selection"), section: "Size", bindable: false, noReset: true, enabledWhen: (p) => !!p.__hasSelection });
-        props.sel_height = K.normalizeProp("sel_height", { type: "number", label: "Row height", default: "", min: 16, unit: "px", group: group("Selection"), section: "Size", bindable: false, noReset: true, enabledWhen: (p) => !!p.__hasSelection });
+        props.sel_width = normalizeProp("sel_width", { type: "number", label: "Column width", default: "", min: 24, unit: "px", group: group("Selection"), section: "Size", bindable: false, noReset: true, enabledWhen: (p) => !!p.__hasSelection });
+        props.sel_height = normalizeProp("sel_height", { type: "number", label: "Row height", default: "", min: 16, unit: "px", group: group("Selection"), section: "Size", bindable: false, noReset: true, enabledWhen: (p) => !!p.__hasSelection });
         // the sheet's own settings and its lists (SHEET_PROPS), and the settings of the whole grid (from the component's definition): the same fields, the same help
         const take = (k, g) => { const f = SHEET_PROPS[k] || d.nexa.props[k]; if (f) props[k] = Object.assign({}, f, { hidden: false, group: group(g), section: undefined }); };
         ["name", "visible", "mode", "rows", "cols", "viewArea", "freezeRows", "freezeCols", "showHeaders", "showGridLines"].forEach((k) => take(k, "Sheet"));
@@ -258,11 +256,10 @@ defineInspectorWidget("nexa-data-grid-editor", ({ KitElement, html: h, nothing }
 
     _mountForm() {
         const host = this.querySelector(".dge-form");
-        const K = window.NexaKit;
-        if (!host || !K || this._form) return;
+        if (!host || this._form) return;
         this._meta = this._buildMeta();
         if (!this._meta) return;
-        this._form = K.renderInspector(host, {
+        this._form = renderFields(host, {
             meta: this._meta, props: () => this._values(), persistKey: "nexa-data-grid-design", fallbacks: false,
             set: (k, v) => this._setProp(k, v)
         });
@@ -314,9 +311,9 @@ defineInspectorWidget("nexa-data-grid-editor", ({ KitElement, html: h, nothing }
     // Ctrl+Z / Ctrl+Y (Ctrl+Shift+Z) while this dialog is the top one, except where the user is typing: there the field's own undo is the right one
     _onKeys(e) {
         if (!(e.ctrlKey || e.metaKey)) return;
-        const mine = this.closest(".nx-dialog-backdrop");
+        const mine = this.closest(".knx-dialog-backdrop");
         if (!mine) return;
-        for (let n = mine.nextElementSibling; n; n = n.nextElementSibling) if (n.classList.contains("nx-dialog-backdrop")) return;     // another dialog is on top
+        for (let n = mine.nextElementSibling; n; n = n.nextElementSibling) if (n.classList.contains("knx-dialog-backdrop")) return;     // another dialog is on top
         const origin = e.composedPath ? e.composedPath()[0] : e.target;
         if (origin && origin.matches && origin.matches("input, textarea, select, [data-edit]")) return;
         const k = String(e.key).toLowerCase();
@@ -486,7 +483,7 @@ defineInspectorWidget("nexa-data-grid-editor", ({ KitElement, html: h, nothing }
 
     // ---- drawing ---------------------------------------------------------------------------------------------------------
     _btn(label, title, on, extra) {
-        return h`<button type="button" class="nx-btn ${extra && extra.on ? "on" : ""}" title=${title} ?disabled=${!this._range} @click=${on}>${label}</button>`;
+        return h`<button type="button" class="knx-btn ${extra && extra.on ? "on" : ""}" title=${title} ?disabled=${!this._range} @click=${on}>${label}</button>`;
     }
 
     _toolbar() {
@@ -495,8 +492,8 @@ defineInspectorWidget("nexa-data-grid-editor", ({ KitElement, html: h, nothing }
         const align = (v, label, title) => this._btn(label, title, () => this._applySelection("align", v), { on: common.align === v });
         return h`<div class="dge-bar">
             <div class="dge-grp"><span class="dge-t">History</span>
-                <button type="button" class="nx-btn" title="Undo (Ctrl+Z)" ?disabled=${!this._past.length} @click=${() => this._undo()}>Undo</button>
-                <button type="button" class="nx-btn" title="Redo (Ctrl+Y)" ?disabled=${!this._future.length} @click=${() => this._redo()}>Redo</button></div>
+                <button type="button" class="knx-btn" title="Undo (Ctrl+Z)" ?disabled=${!this._past.length} @click=${() => this._undo()}>Undo</button>
+                <button type="button" class="knx-btn" title="Redo (Ctrl+Y)" ?disabled=${!this._future.length} @click=${() => this._redo()}>Redo</button></div>
             <div class="dge-grp"><span class="dge-t">Cells</span>
                 ${this._btn("Merge", "One box over the selected cells", () => this._merge())}
                 ${this._btn("Unmerge", "Take the merges in the selection apart", () => this._unmerge())}</div>
@@ -507,15 +504,15 @@ defineInspectorWidget("nexa-data-grid-editor", ({ KitElement, html: h, nothing }
                 ${align("left", "Left", "Align left")}${align("center", "Centre", "Align in the middle")}${align("right", "Right", "Align right")}</div>
             <div class="dge-grp"><span class="dge-t">Sheets</span>
                 <span class="dge-sheet" title="The sheet being edited">${this._doc.sheets[this._doc.active].name} (${this._doc.active + 1} / ${this._doc.sheets.length})</span>
-                <button type="button" class="nx-btn" title="A new empty sheet after this one" @click=${() => this._addSheet()}>Add</button>
-                <button type="button" class="nx-btn" title="A copy of this sheet" @click=${() => this._copySheet()}>Copy</button>
-                <button type="button" class="nx-btn" title="Take this sheet away" ?disabled=${this._doc.sheets.length <= 1} @click=${() => this._removeSheet()}>Delete</button>
-                <button type="button" class="nx-btn" title="Move the tab to the left" ?disabled=${this._doc.active === 0} @click=${() => this._moveSheet(-1)}>◀</button>
-                <button type="button" class="nx-btn" title="Move the tab to the right" ?disabled=${this._doc.active >= this._doc.sheets.length - 1} @click=${() => this._moveSheet(1)}>▶</button></div>
+                <button type="button" class="knx-btn" title="A new empty sheet after this one" @click=${() => this._addSheet()}>Add</button>
+                <button type="button" class="knx-btn" title="A copy of this sheet" @click=${() => this._copySheet()}>Copy</button>
+                <button type="button" class="knx-btn" title="Take this sheet away" ?disabled=${this._doc.sheets.length <= 1} @click=${() => this._removeSheet()}>Delete</button>
+                <button type="button" class="knx-btn" title="Move the tab to the left" ?disabled=${this._doc.active === 0} @click=${() => this._moveSheet(-1)}>◀</button>
+                <button type="button" class="knx-btn" title="Move the tab to the right" ?disabled=${this._doc.active >= this._doc.sheets.length - 1} @click=${() => this._moveSheet(1)}>▶</button></div>
             <div class="dge-grp"><span class="dge-t">Excel</span>
-                <button type="button" class="nx-btn" title="Download every sheet as an Excel file (.xlsx)" @click=${() => this._exportXlsx()}>Export .xlsx</button>
-                <nx-select .options=${IMPORT_MODES} .value=${this._importMode} title="What an imported file brings" @nx-change=${(e) => { this._importMode = e.detail.value; }}></nx-select>
-                <button type="button" class="nx-btn" title="Read an Excel file (Undo takes it back)" @click=${() => this.querySelector("[data-import]").click()}>Import .xlsx…</button>
+                <button type="button" class="knx-btn" title="Download every sheet as an Excel file (.xlsx)" @click=${() => this._exportXlsx()}>Export .xlsx</button>
+                <knx-select .options=${IMPORT_MODES} .value=${this._importMode} title="What an imported file brings" @knx-change=${(e) => { this._importMode = e.detail.value; }}></knx-select>
+                <button type="button" class="knx-btn" title="Read an Excel file (Undo takes it back)" @click=${() => this.querySelector("[data-import]").click()}>Import .xlsx…</button>
                 <input type="file" data-import accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden @change=${(e) => { const f = e.target.files && e.target.files[0]; e.target.value = ""; this._import(f); }}></div>
             <div class="dge-grp"><span class="dge-t">Sort</span>
                 ${this._btn("A→Z", "Sort the selected rows by the first column of the selection, ascending (the typed cells move)", () => this._sortSelection("asc"))}
@@ -523,16 +520,16 @@ defineInspectorWidget("nexa-data-grid-editor", ({ KitElement, html: h, nothing }
             <div class="dge-grp"><span class="dge-t">Freeze</span>
                 ${this._btn("Rows to here", "Keep the rows down to the selection's last row in place", () => this._freezeTo("rows"))}
                 ${this._btn("Columns to here", "Keep the columns up to the selection's last column in place", () => this._freezeTo("cols"))}
-                <button type="button" class="nx-btn" ?disabled=${!(d.freezeRows || d.freezeCols)} @click=${() => this._freezeTo("none")}>Unfreeze</button></div>
+                <button type="button" class="knx-btn" ?disabled=${!(d.freezeRows || d.freezeCols)} @click=${() => this._freezeTo("none")}>Unfreeze</button></div>
             <div class="dge-grp"><span class="dge-t">Lock</span>
                 ${this._btn("Lock", "These cells cannot be edited (the page's editable mode)", () => this._lock(true))}
                 ${this._btn("Open", "These cells can be edited, also in a locked range", () => this._lock(false))}
                 ${this._btn("Reset", "Back to what no rule says", () => this._resetLock())}</div>
             <div class="dge-grp"><span class="dge-t">Borders</span>
-                <nx-select .options=${BORDER_STYLES} .value=${this._bstyle} @nx-change=${(e) => { this._bstyle = e.detail.value; }}></nx-select>
-                <nx-number min="1" max="6" step="1" .value=${this._bwidth} allow-empty="false" @nx-change=${(e) => { this._bwidth = e.detail.value; }}></nx-number>
-                <nx-select .options=${BORDER_COLORS} .value=${this._bcolor} @nx-change=${(e) => { this._bcolor = e.detail.value; }}></nx-select>
-                ${this._bcolor === "custom" ? h`<nx-color .value=${this._bcustom} @nx-change=${(e) => { this._bcustom = e.detail.value || "#161616"; }}></nx-color>` : nothing}</div>
+                <knx-select .options=${BORDER_STYLES} .value=${this._bstyle} @knx-change=${(e) => { this._bstyle = e.detail.value; }}></knx-select>
+                <knx-number min="1" max="6" step="1" .value=${this._bwidth} allow-empty="false" @knx-change=${(e) => { this._bwidth = e.detail.value; }}></knx-number>
+                <knx-select .options=${BORDER_COLORS} .value=${this._bcolor} @knx-change=${(e) => { this._bcolor = e.detail.value; }}></knx-select>
+                ${this._bcolor === "custom" ? h`<knx-color .value=${this._bcustom} @knx-change=${(e) => { this._bcustom = e.detail.value || "#161616"; }}></knx-color>` : nothing}</div>
             <div class="dge-grp">
                 ${this._btn("All", "Every line in the selection and around it", () => this._border("all"))}
                 ${this._btn("Outer", "Only the box around the selection", () => this._border("outer"))}

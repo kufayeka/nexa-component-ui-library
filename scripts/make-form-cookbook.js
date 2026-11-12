@@ -143,12 +143,12 @@ async function runEditor() {
                 await makeTall();
                 await js(`window.__nexaEditor.selectOnly(${JSON.stringify(item.comp)}); window.__nexaEditorState.sidebarTabs.activateTab("properties"); true`);
                 await wait(700);
-                await js(`(function () { var pane = window.__nexaEditorState.propertiesPane.get(0), t = pane.querySelector("nx-tree"); if (t && t.setAllCollapsed) t.setAllCollapsed(true); return 1; })()`);
+                await js(`(function () { var pane = window.__nexaEditorState.propertiesPane.get(0), t = pane.querySelector("knx-tree"); if (t && t.setAllCollapsed) t.setAllCollapsed(true); return 1; })()`);
                 await wait(250);
-                const ok = await js(`(function () { var pane = window.__nexaEditorState.propertiesPane.get(0), t = pane.querySelector("nx-tree"); if (!t) return "no tree";
+                const ok = await js(`(function () { var pane = window.__nexaEditorState.propertiesPane.get(0), t = pane.querySelector("knx-tree"); if (!t) return "no tree";
                     if (t.reveal) t.reveal(${JSON.stringify(item.row)});
-                    var row = Array.from(pane.querySelectorAll(".nx-tree-row")).find(function (r) { return r.dataset.id === ${JSON.stringify(item.row)}; });
-                    if (!row) { var g = Array.from(pane.querySelectorAll(".nx-tree-row")).find(function (r) { return r.dataset.id === ${JSON.stringify(item.group)}; }); if (g) g.click(); return g ? "group only" : "no row"; }
+                    var row = Array.from(pane.querySelectorAll(".knx-tree-row")).find(function (r) { return r.dataset.id === ${JSON.stringify(item.row)}; });
+                    if (!row) { var g = Array.from(pane.querySelectorAll(".knx-tree-row")).find(function (r) { return r.dataset.id === ${JSON.stringify(item.group)}; }); if (g) g.click(); return g ? "group only" : "no row"; }
                     row.click(); return "row"; })()`);
                 await wait(700);
                 if (ok === 'no row' || ok === 'no tree') console.log('  note: inspector shot ' + recipe.id + '/' + item.name + ': ' + ok);
@@ -160,9 +160,9 @@ async function runEditor() {
                 await wait(500);
                 await js(`(function () { var s = window.__nexaEditorApi.state.screens.find(function (x) { return x.id === ${JSON.stringify(id)}; }); var n = s.logic.nodes.find(function (x) { return x.id === ${JSON.stringify(d.node)}; }); window.__nexaEditor.openLogicNodeDialog(n); return true; })()`);
                 await wait(1000);
-                const box = await js(`(function () { var r = document.querySelector(".nx-dialog").getBoundingClientRect(); return { x: r.left, y: r.top, width: r.width, height: r.height }; })()`);
+                const box = await js(`(function () { var r = document.querySelector(".knx-dialog").getBoundingClientRect(); return { x: r.left, y: r.top, width: r.width, height: r.height }; })()`);
                 await clip(recipe.id + '-' + d.name, box);
-                await js(`(function () { var b = Array.from(document.querySelectorAll(".nx-dialog-foot button")).find(function (x) { return x.textContent.trim() === "Cancel"; }); b.click(); return true; })()`);
+                await js(`(function () { var b = Array.from(document.querySelectorAll(".knx-dialog-foot button")).find(function (x) { return x.textContent.trim() === "Cancel"; }); b.click(); return true; })()`);
                 await wait(400);
                 await js('window.__nexaEditorState.canvasTabs.activateTab("ui"); true');
                 await wait(300);

@@ -394,7 +394,7 @@ withHarness({
             await settle(); await wait(300);
         };
         const sets = async () => Object.fromEntries(await js('window.__sets'));
-        const foot = async (label) => { await clickAt(`Array.from(document.querySelectorAll(".nx-dialog-foot button")).filter(function (b) { return b.textContent.trim() === ${JSON.stringify(label)}; })[0]`); await wait(120); };
+        const foot = async (label) => { await clickAt(`Array.from(document.querySelectorAll(".knx-dialog-foot button")).filter(function (b) { return b.textContent.trim() === ${JSON.stringify(label)}; })[0]`); await wait(120); };
         const drag = async (from, to) => {
             const a = await js(`(function () { var b = ${from}.getBoundingClientRect(); return { x: b.left + 20, y: b.top + b.height / 2 }; })()`);
             const b = await js(`(function () { var b = ${to}.getBoundingClientRect(); return { x: b.left + 20, y: b.top + b.height / 2 }; })()`);
@@ -593,7 +593,7 @@ withHarness({
         await clickAt(`Array.from(document.querySelectorAll("nexa-data-grid-editor button")).filter(function (b) { return b.title === "Undo (Ctrl+Z)"; })[0]`);
         assert.strictEqual(await widthOf(), 110, 'the Undo button too');
         await clickAt(`Array.from(document.querySelectorAll("nexa-data-grid-editor button")).filter(function (b) { return b.title === "Redo (Ctrl+Y)"; })[0]`);
-        await clickAt(`Array.from(document.querySelectorAll(".nx-dialog-foot button")).filter(function (b) { return b.textContent.trim() === "Apply"; })[0]`);
+        await clickAt(`Array.from(document.querySelectorAll(".knx-dialog-foot button")).filter(function (b) { return b.textContent.trim() === "Apply"; })[0]`);
         await wait(120);
         const s = Object.fromEntries(await js('window.__sets'));
         assert.deepStrictEqual(Object.keys(s), ['sheets'], 'only the sheets: the rows went back to 100');
@@ -736,7 +736,7 @@ withHarness({
         assert.strictEqual(await js(`${pcell(1, 0)}.textContent.trim()`), '', 'one Undo: the whole fill');
         assert.strictEqual(await js(`${pcell(2, 2)}.textContent.trim()`), '1', 'the paste before it is still there');
         await js(`document.querySelector("nexa-data-grid-editor")._redo()`); await settle(); await wait(100);
-        await clickAt(`Array.from(document.querySelectorAll(".nx-dialog-foot button")).filter(function (b) { return b.textContent.trim() === "Apply"; })[0]`);
+        await clickAt(`Array.from(document.querySelectorAll(".knx-dialog-foot button")).filter(function (b) { return b.textContent.trim() === "Apply"; })[0]`);
         await wait(120);
         const s = Object.fromEntries(await js('window.__sets'));
         assert.deepStrictEqual(Object.keys(s), ['sheets']);
@@ -834,7 +834,7 @@ withHarness({
         assert.deepStrictEqual([await js(`${pc(0, 0)}.textContent.trim()`), await js(`${pc(0, 1)}.textContent.trim()`), await js(`${pc(2, 0)}.textContent.trim()`)], ['a', '1', 'c'], 'a row moved as one');
         await clickAt(`Array.from(document.querySelectorAll("nexa-data-grid-editor button")).filter(function (x) { return x.textContent.trim() === "Z→A"; })[0]`);
         assert.strictEqual(await js(`${pc(0, 0)}.textContent.trim()`), 'c');
-        await clickAt(`Array.from(document.querySelectorAll(".nx-dialog-foot button")).filter(function (x) { return x.textContent.trim() === "Apply"; })[0]`);
+        await clickAt(`Array.from(document.querySelectorAll(".knx-dialog-foot button")).filter(function (x) { return x.textContent.trim() === "Apply"; })[0]`);
         await wait(120);
         const s = Object.fromEntries(await js('window.__sets'));
         assert.deepStrictEqual(s.sheets[0].cells, { A1: 'c', B1: 3, A2: 'b', B2: 2, A3: 'a', B3: 1 });
@@ -930,7 +930,7 @@ withHarness({
             return NexaTest.rows(ed.querySelector(".dge-form")).map(function (x) { return x.id; }).filter(function (id) { return /^populate#0\\//.test(id); });
         })()`);
         for (const s of ['Where', 'Data', 'Type', 'Text', 'Cell']) assert.ok(r.indexOf('populate#0/' + s) !== -1, 'the section ' + s + ' in ' + r.join(' | '));
-        await clickAt(`Array.from(document.querySelectorAll(".nx-dialog-foot button")).filter(function (b) { return b.textContent.trim() === "Cancel"; })[0]`);
+        await clickAt(`Array.from(document.querySelectorAll(".knx-dialog-foot button")).filter(function (b) { return b.textContent.trim() === "Cancel"; })[0]`);
     });
 
     // ---- export to Excel ---------------------------------------------------------------------------------------------------------------------------
@@ -1034,7 +1034,7 @@ withHarness({
         assert.strictEqual(dd.name, 'sheet.xlsx');
         const sheet = readZip(dd.data)['xl/worksheets/sheet1.xml'];
         assert.ok(sheet.includes('typed') && sheet.includes('<v>5</v>'), 'the design as the preview shows it');
-        await clickAt(`Array.from(document.querySelectorAll(".nx-dialog-foot button")).filter(function (b) { return b.textContent.trim() === "Cancel"; })[0]`);
+        await clickAt(`Array.from(document.querySelectorAll(".knx-dialog-foot button")).filter(function (b) { return b.textContent.trim() === "Cancel"; })[0]`);
     });
 
     await ok('the Edit grid row of the inspector says what the sheets have', async () => {
@@ -1064,7 +1064,7 @@ withHarness({
         const labels = await js(`NexaTest.rows(document.querySelector("nexa-data-grid-editor .dge-form")).map(function (x) { return x.label; })`);
         for (const l of ['Selection', 'Sheet', 'Name', 'Shown as a tab', 'Mode', 'Rows', 'Columns', 'Column width', 'Row height', 'Area shown', 'Frozen rows', 'Frozen columns', 'Show the column letters and row numbers', 'Show the grid lines',
             'Populate from messages', 'Types and styles', 'Whole grid', 'Show the sheet tabs', 'Show the formula bar', 'The user can sort (on the page)']) assert.ok(labels.includes(l), 'dialog: ' + l + ' in ' + labels.join(' | '));
-        await clickAt(`Array.from(document.querySelectorAll(".nx-dialog-foot button")).filter(function (b) { return b.textContent.trim() === "Cancel"; })[0]`);
+        await clickAt(`Array.from(document.querySelectorAll(".knx-dialog-foot button")).filter(function (b) { return b.textContent.trim() === "Cancel"; })[0]`);
     });
 
     await ok('light and dark: the grid reads the theme (no fixed colours), and a screenshot of it', async () => {
@@ -1371,7 +1371,7 @@ withHarness({
         const dlg = (sel) => `document.querySelector("nexa-data-grid-editor ${sel}")`;
         const btn = (title) => `Array.from(document.querySelectorAll("nexa-data-grid-editor button")).filter(function (b) { return b.title === ${JSON.stringify(title)}; })[0]`;
         const ed = (code) => js(`(function () { var ed = document.querySelector("nexa-data-grid-editor"); ${code} })()`);
-        const foot = async (label) => { await clickAt(`Array.from(document.querySelectorAll(".nx-dialog-foot button")).filter(function (b) { return b.textContent.trim() === ${JSON.stringify(label)}; })[0]`); await wait(120); };
+        const foot = async (label) => { await clickAt(`Array.from(document.querySelectorAll(".knx-dialog-foot button")).filter(function (b) { return b.textContent.trim() === ${JSON.stringify(label)}; })[0]`); await wait(120); };
         await js(`window.__sets = []; window.__runEditor({ sheets: [{ name: "Main", cells: { A1: "=Data!A1+1", A2: "='Data'!A1" } }, { name: "Data", cells: { A1: 5 } }] }, { set: function (k, v) { window.__sets.push([k, v]); } })`);
         await settle(); await wait(300);
         assert.strictEqual(await js(dlg('.dge-sheet') + '.textContent'), 'Main (1 / 2)');
@@ -1454,7 +1454,7 @@ withHarness({
         const bad = await js(`(async function () { var ed = document.querySelector("nexa-data-grid-editor"); await ed._import(new File([new Uint8Array(40)], "nope.xlsx")); return ed._note; })()`);
         assert.ok(/Could not read nope\.xlsx/.test(bad), bad);
         assert.deepStrictEqual(await js(`document.querySelector("nexa-data-grid-editor").design().sheets.map(function (s) { return s.name; })`), ['Old'], 'nothing changed');
-        await clickAt(`Array.from(document.querySelectorAll(".nx-dialog-foot button")).filter(function (b) { return b.textContent.trim() === "Cancel"; })[0]`);
+        await clickAt(`Array.from(document.querySelectorAll(".knx-dialog-foot button")).filter(function (b) { return b.textContent.trim() === "Cancel"; })[0]`);
         function dlg0() { return 'document.querySelector("nexa-data-grid-editor .dge-prev")'; }
     });
 
@@ -1471,7 +1471,7 @@ withHarness({
             return { sheets: ed.design().sheets, note: ed._note };
         })()`);
         const open = async () => { await js(`window.__runEditor({ sheets: [{ name: "Plant", cells: { A1: "mine" }, cellRules: [{ range: "A1", italic: true }], merges: ["A5:B5"], freezeRows: 2 }, { name: "Mine only", cells: { A1: "keep" } }] }, { set: function () {} })`); await settle(); await wait(300); };
-        const cancel = () => clickAt(`Array.from(document.querySelectorAll(".nx-dialog-foot button")).filter(function (b) { return b.textContent.trim() === "Cancel"; })[0]`);
+        const cancel = () => clickAt(`Array.from(document.querySelectorAll(".knx-dialog-foot button")).filter(function (b) { return b.textContent.trim() === "Cancel"; })[0]`);
         await open();
         // the choice is there, "everything" first
         assert.ok((await js(`document.querySelector("nexa-data-grid-editor")._importMode`)) === 'all');

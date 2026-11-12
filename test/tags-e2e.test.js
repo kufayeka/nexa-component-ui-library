@@ -121,17 +121,39 @@ const host = { id: 'HOST', type: 'nexa-ui-tabs', x: 400, y: 20, w: 420, h: 1900,
     { id: 'HF2', type: '@frame', inSlot: 'trends', slotLabel: 'Trends', x: 0, y: 40, w: 420, h: 1860, layout: { mode: 'vertical' }, style: {}, children: [] },
     { id: 'HF3', type: '@frame', inSlot: 'alarms', slotLabel: 'Alarms', x: 0, y: 40, w: 420, h: 1860, layout: { mode: 'vertical' }, style: {}, children: [] }] };
 
-function writeFlows() {
+// The Node-RED of the test: an empty flows file and a Nexa Studio workspace of its own. The project and its connections are made through the
+// Studio's API (studioSetup below), not written into flows.json: the Studio keeps projects and connections as files (.agents/NEXA_STUDIO_STORE.md).
+function writeSettings() {
     const dir = path.join(S, 'nr-tags');
     fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, 'settings.js'), 'module.exports = { uiPort: ' + PORTS.editor + ', flowFile: "flows.json", nexaDashboard: { screenWorkerPort: ' + PORTS.pages + ' }, logging: { console: { level: "warn" } }, editorTheme: { tours: false, projects: { enabled: false } } };\n');
+    fs.writeFileSync(path.join(dir, 'settings.js'), 'module.exports = { uiPort: ' + PORTS.editor + ', flowFile: "flows.json", nexaDashboard: { screenWorkerPort: ' + PORTS.pages + ' }, nexa: { workspace: ' + JSON.stringify(path.join(dir, 'nexa-projects')) + ' }, logging: { console: { level: "warn" } }, editorTheme: { tours: false, projects: { enabled: false } } };\n');
     fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'nr-tags', version: '0.0.1', private: true }));
-    const project = { id: 'tagsproj', type: 'kufayeka-nexa-project', name: 'Tags', sparkplugConnection: 'spc',
-        screens: [{ id: 'sT', name: 'Tags', path: '/tags', width: 900, height: 2000, gridSize: 10, snap: false, treeVersion: 1, orphans: [], components: top.concat([host]), logic: LOGIC, variables: [{ id: 'cv', name: 'codeVar', type: 'number', defaultValue: 1 }] }],
-        templates: [], types: [], breakpoints: [], theme: null, variables: [] };
-    const conn = { id: 'spc', type: 'kufayeka-nexa-sparkplug', name: 'test', brokerUrl: 'mqtt://127.0.0.1:' + PORTS.mqtt, groupFilter: '+', edgeNodeFilter: '+', keepAlive: 30, protocolVersion: '4', reconnectPeriod: 1000, connectTimeout: 10000, clientIdOverride: '' };
-    fs.writeFileSync(path.join(dir, 'flows.json'), JSON.stringify([{ id: 'tab1', type: 'tab', label: 'T' }, conn, project], null, 1));
+    fs.writeFileSync(path.join(dir, 'flows.json'), '[]');
     return dir;
+}
+
+// One request to the Studio's routes (adminAuth is off in this Node-RED, so no token). A refusal stops the test with its message.
+async function studio(method, route, body) {
+    const response = await fetch('http://127.0.0.1:' + PORTS.editor + '/nexa-studio' + route, {
+        method, headers: body ? { 'Content-Type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined
+    });
+    const answer = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(method + ' ' + route + ' -> ' + response.status + ' ' + JSON.stringify(answer));
+    return answer;
+}
+
+// The broker and its Sparkplug group (any group, any edge node), the project "Tags" with the screen and its Logic as one "Main" sheet, saved
+// and deployed: what a person does in the Studio, through the same routes.
+async function studioSetup() {
+    const broker = await studio('POST', '/connections', { kind: 'mqtt', name: 'test', url: 'mqtt://127.0.0.1:' + PORTS.mqtt });
+    const group = await studio('POST', '/connections', { kind: 'sparkplug', name: 'test sp', broker: broker.id, groupId: '+', edgeNode: '+' });
+    const project = await studio('POST', '/projects', { name: 'Tags' });
+    await studio('PATCH', '/projects/' + project.slug, { connections: { sparkplug: group.id } });
+    const content = await studio('GET', '/projects/' + project.slug + '/content');
+    const screen = { id: 'sT', name: 'Tags', path: '/tags', width: 900, height: 2000, gridSize: 10, snap: false, treeVersion: 1, orphans: [], components: top.concat([host]), variables: [{ id: 'cv', name: 'codeVar', type: 'number', defaultValue: 1 }] };
+    const sheet = { id: 'main', name: 'Main', owner: { kind: 'screen', id: 'sT' }, order: 0, nodes: LOGIC.nodes, wires: LOGIC.wires };
+    await studio('PUT', '/projects/' + project.slug + '/content', { revision: content.revision, draft: Object.assign({}, content.draft, { screens: [screen], sheets: [sheet] }) });
+    await studio('POST', '/projects/' + project.slug + '/deploy');
 }
 
 // ---- broker + edge ---------------------------------------------------------------------
@@ -168,9 +190,11 @@ const portFree = (port) => new Promise((resolve) => { const t = net.createServer
         if (!(await portFree(p))) { console.error(`port ${p} is in use (a Node-RED running?) — stop it first`); process.exit(1); }
     }
     const edge = await startEdge();
-    const dir = writeFlows();
+    const dir = writeSettings();
     const nr = spawn(process.execPath, [RED_JS, '-u', dir], { cwd: path.resolve(RED_JS, '../../..'), stdio: ['ignore', fs.openSync(path.join(S, 'nr-tags.log'), 'w'), fs.openSync(path.join(S, 'nr-tags.err'), 'w')] });
     try {
+        for (let i = 0; i < 60; i++) { try { const ok = await fetch('http://127.0.0.1:' + PORTS.editor + '/nexa-studio/info').then((r) => r.status === 200); if (ok) break; } catch (e) { /* not yet */ } await wait(1000); }
+        await studioSetup();
         for (let i = 0; i < 60; i++) { try { const ok = await fetch('http://127.0.0.1:' + PORTS.pages + '/nexa/tags').then((r) => r.status === 200); if (ok) break; } catch (e) { /* not yet */ } await wait(1000); }
         await wait(2500); // the worker's MQTT client up, the birth seen
         edge.birth();
